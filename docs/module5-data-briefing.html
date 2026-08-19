@@ -1,0 +1,245 @@
+<title>Module 5 — Data Walkthrough</title>
+<style>
+@page { size: A4; margin: 17mm 16mm 15mm; }
+
+:root {
+  --ink:#14181c; --ink-soft:#4a545d; --ink-mute:#6d7780;
+  --rule:#d5dade; --rule-hi:#aab3ba;
+  --accent:#0d5f5c; --accent-bg:#eaf3f2;
+  --warn:#8a4f04; --warn-bg:#faf0e2;
+  --good:#2c6338; --good-bg:#e9f2eb;
+  --sunk:#f2f4f5;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:"Helvetica Neue",Helvetica,Arial,sans-serif;
+  --mono:"SF Mono",Menlo,Consolas,"Courier New",monospace;
+}
+* { box-sizing:border-box; }
+body { font-family:var(--serif); font-size:10.3pt; line-height:1.5; color:var(--ink);
+       background:#fff; margin:0; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+
+.masthead { border-bottom:1.5pt solid var(--ink); padding-bottom:5mm; margin-bottom:7mm; }
+.kicker { font-family:var(--mono); font-size:7.6pt; letter-spacing:.16em; text-transform:uppercase;
+          color:var(--accent); margin:0 0 3mm; }
+h1 { font-size:21pt; line-height:1.12; margin:0 0 3mm; font-weight:600; letter-spacing:-.01em; }
+.sub { font-size:10.5pt; color:var(--ink-soft); font-style:italic; margin:0; }
+
+h2 { font-size:13pt; margin:8mm 0 3mm; padding-bottom:1.8mm; font-weight:600;
+     border-bottom:1pt solid var(--rule-hi); page-break-after:avoid; page-break-inside:avoid; }
+h2 .num { font-family:var(--mono); font-size:8.6pt; color:var(--accent); margin-right:2.5mm; }
+h3 { font-size:10.8pt; margin:5.5mm 0 2mm; font-weight:600; page-break-after:avoid; }
+p { margin:0 0 2.8mm; }
+p, li { orphans:3; widows:3; }
+ul,ol { margin:0 0 3mm; padding-left:5.5mm; }
+li { margin-bottom:1.2mm; }
+code { font-family:var(--mono); font-size:8.4pt; background:var(--sunk); padding:.3mm 1mm; border-radius:1.5pt; }
+
+table { border-collapse:collapse; width:100%; font-size:8.6pt; margin:0 0 3.5mm;
+        page-break-inside:avoid; font-family:var(--sans); }
+th { font-family:var(--mono); font-size:7.2pt; letter-spacing:.06em; text-transform:uppercase;
+     text-align:left; color:var(--ink-mute); border-bottom:1pt solid var(--rule-hi);
+     padding:1.5mm 2mm; font-weight:600; }
+td { padding:1.4mm 2mm; border-bottom:.5pt solid var(--rule); vertical-align:top; }
+td.n, th.n { text-align:right; font-variant-numeric:tabular-nums; }
+td.step { font-family:var(--mono); color:var(--accent); font-weight:600; width:7mm; }
+tr.total td { border-top:1pt solid var(--rule-hi); border-bottom:none; font-weight:600; }
+
+.quote { border-left:2.5pt solid var(--accent); background:var(--accent-bg); padding:3.5mm 4mm;
+         margin:0 0 4mm; font-size:11pt; page-break-inside:avoid; }
+.quote p { margin:0; }
+.callout { border-left:2.5pt solid var(--accent); background:var(--accent-bg); padding:3mm 4mm;
+           margin:0 0 3.5mm; page-break-inside:avoid; }
+.callout.warn { border-left-color:var(--warn); background:var(--warn-bg); }
+.callout.good { border-left-color:var(--good); background:var(--good-bg); }
+.callout .tag { font-family:var(--mono); font-size:7pt; letter-spacing:.1em; text-transform:uppercase;
+                display:block; margin-bottom:1.5mm; color:var(--accent); }
+.callout.warn .tag { color:var(--warn); }
+.callout.good .tag { color:var(--good); }
+.callout p:last-child { margin-bottom:0; }
+
+.funnel { margin:0 0 4mm; page-break-inside:avoid; }
+.funnel .row { display:grid; grid-template-columns:24mm 1fr 52mm; align-items:center;
+               gap:3mm; margin-bottom:2.4mm; }
+.funnel .lbl { font-family:var(--mono); font-size:7.6pt; letter-spacing:.06em;
+               text-transform:uppercase; color:var(--ink-mute); text-align:right; }
+.funnel .bar { background:var(--accent); height:5.5mm; border-radius:1pt; min-width:2mm; }
+.funnel .val { font-family:var(--sans); font-size:8.4pt; font-weight:600; }
+.funnel .note { font-family:var(--sans); font-size:7.6pt; color:var(--ink-soft);
+                display:block; font-weight:400; }
+
+footer.end { margin-top:7mm; padding-top:3mm; border-top:1.5pt solid var(--ink);
+             font-size:7.8pt; color:var(--ink-mute); font-family:var(--sans); }
+</style>
+
+<div class="masthead">
+  <p class="kicker">Capacity Intelligence · Module 5</p>
+  <h1>Understanding the data</h1>
+  <p class="sub">What arrives in raw, what we do to reach silver and gold, and what the agent alerts on</p>
+</div>
+
+<div class="quote">
+  <p>We receive 60 capacity tickets with 9 fields each. <strong>Raw</strong> stores them exactly as
+  exported. <strong>Silver</strong> types and validates them. <strong>Gold</strong> joins customer
+  revenue onto them. Each ticket is then sorted into one of four outcomes, and the agent alerts on
+  the 30 that are genuine service failures.</p>
+</div>
+
+<!-- ================= 1 ================= -->
+<h2><span class="num">1</span>What arrives in the raw layer</h2>
+
+<p>60 tickets × 9 columns, stored as text exactly as ICM exported them. Nothing converted, nothing
+dropped, nothing corrected — so there is always an unaltered copy to compare against when a figure
+is questioned.</p>
+
+<table>
+  <tr><th>Column</th><th>Example</th><th>What it means</th></tr>
+  <tr><td><code>IncidentId</code></td><td>677681988</td><td>The support ticket</td></tr>
+  <tr><td><code>SubscriptionId</code></td><td>48840256-5fa3-…</td><td>Which customer</td></tr>
+  <tr><td><code>TenantId</code></td><td>f79c09b4-e935-…</td><td>Their tenant</td></tr>
+  <tr><td><code>Region</code></td><td>westeurope</td><td>Which Azure region</td></tr>
+  <tr><td><code>CurrentLimitCapacity</code></td><td>4</td><td>What they already had</td></tr>
+  <tr><td><code>AdditionalLimitCapacity</code></td><td>83</td><td>What they asked for on top</td></tr>
+  <tr><td><code>NewLimitCapacity</code></td><td>87</td><td>What they ended up with</td></tr>
+  <tr><td><code>DeniedDate</code></td><td>2025-10-06</td><td>When refused — blank means never refused</td></tr>
+  <tr><td><code>ApprovedDate</code></td><td>2025-11-01</td><td>When granted — blank means never granted</td></tr>
+</table>
+
+<h3>The three capacity columns — the only tricky part of the file</h3>
+
+<p>Their relationship is what lets us size a shortfall, so we verified it against the data rather
+than assuming it:</p>
+
+<table>
+  <tr><th>When a request was…</th><th>The data shows</th><th class="n">Held in</th></tr>
+  <tr><td><strong>Granted</strong></td><td><code>New = Current + Additional</code></td><td class="n">48 of 48 tickets</td></tr>
+  <tr><td><strong>Never fulfilled</strong></td><td><code>New = Current</code> — they ended with exactly what they started with</td><td class="n">every case</td></tr>
+</table>
+
+<div class="callout good">
+  <span class="tag">What this establishes</span>
+  <p><strong>Requested</strong> = Current + Additional. <strong>Granted</strong> = New. Every dollar
+  figure downstream rests on that reading, so it was confirmed against all 60 tickets before anything
+  was built on top of it.</p>
+</div>
+
+<h3>Two reference sheets arrive alongside the tickets</h3>
+<table>
+  <tr><th>Sheet</th><th class="n">Rows</th><th>What it gives us</th></tr>
+  <tr><td><code>Subscription_Reference</code></td><td class="n">26</td>
+      <td>Customer → tier and annual revenue. <strong>Placeholder data today.</strong></td></tr>
+  <tr><td><code>Expected_Classifications</code></td><td class="n">60</td>
+      <td>The hand-labelled correct answer for every ticket — used to test the classifier before
+      trusting it</td></tr>
+</table>
+
+<!-- ================= 2 ================= -->
+<h2><span class="num">2</span>Raw → Silver: making it trustworthy</h2>
+
+<p>Same 60 tickets, now typed and validated. Six operations:</p>
+
+<table>
+  <tr><th class="n">#</th><th>What we do</th><th>Why it is necessary</th></tr>
+  <tr><td class="step">1</td><td>Trim text; blank out literal <code>"nan"</code> and <code>"None"</code></td>
+      <td>Spreadsheet exports leave those as actual text, which would be read as real values</td></tr>
+  <tr><td class="step">2</td><td>Parse dates into proper UTC timestamps</td>
+      <td>You cannot subtract two pieces of text. Anything unreadable becomes empty — never a guess</td></tr>
+  <tr><td class="step">3</td><td>Convert capacity fields to numbers</td>
+      <td>Arithmetic is impossible on text</td></tr>
+  <tr><td class="step">4</td><td>Remove duplicate <code>IncidentId</code></td>
+      <td>Keeps the first; the rest are listed by ID, not silently discarded</td></tr>
+  <tr><td class="step">5</td><td>Drop rows with no region, or with <em>neither</em> date</td>
+      <td>Nothing meaningful can be said about them</td></tr>
+  <tr><td class="step">6</td><td>Flag approvals dated <em>before</em> their denial</td>
+      <td><strong>Flagged, not dropped</strong> — given their own category so a reviewer sees them</td></tr>
+</table>
+
+<div class="callout good">
+  <span class="tag">Result on this extract</span>
+  <p><strong>60 of 60 tickets usable — no problems found.</strong> No duplicates, no missing regions,
+  no rows without dates, no inverted date pairs, no negative capacities.</p>
+</div>
+
+<p>Every check produces both a count and the specific incident IDs. That report prints on every run
+and is carried into the Teams message, so rows can never disappear quietly and a shrinking total is
+always explained.</p>
+
+<!-- ================= 3 ================= -->
+<h2><span class="num">3</span>Silver → Gold: adding the business context</h2>
+
+<p>One operation: <strong>join each ticket to its customer's revenue</strong>, matching on
+<code>SubscriptionId</code>.</p>
+
+<table>
+  <tr><th>Layer</th><th class="n">Shape</th><th>Columns added</th></tr>
+  <tr><td>Silver</td><td class="n">60 × 9</td><td>—</td></tr>
+  <tr><td>Gold</td><td class="n">60 × 12</td><td><code>SubscriptionTier</code>, <code>ARR_USD</code>, join indicator</td></tr>
+</table>
+
+<p>Gold exists so the analysis has both halves of the story in a single row: the <em>technical</em>
+shortfall from the ticket, and the <em>business value</em> from the revenue reference. Units of
+capacity cannot be converted into dollars until those sit side by side.</p>
+
+<div class="callout">
+  <span class="tag">When a customer has no revenue record</span>
+  <p>They contribute $0 rather than failing the run, and are named in the data-quality report — so a
+  gap in the reference data looks like a gap, instead of being mistaken for good news.</p>
+</div>
+
+<!-- ================= 4 ================= -->
+<h2><span class="num">4</span>What the agent actually alerts on</h2>
+
+<p>Not all 60 tickets — only the 30 that represent genuine failures. Each Gold row is sorted by
+comparing its two dates:</p>
+
+<table>
+  <tr><th>Outcome</th><th class="n">Tickets</th><th>Alerted on?</th><th>Reasoning</th></tr>
+  <tr><td>Denied, then approved <strong>more than 48h later</strong></td><td class="n">18</td>
+      <td><strong>Yes</strong></td><td>Customer carried the shortfall while waiting</td></tr>
+  <tr><td>Denied, <strong>never approved</strong></td><td class="n">12</td>
+      <td><strong>Yes</strong></td><td>Still without the capacity; exposure still growing</td></tr>
+  <tr><td>Denied, approved within 48h</td><td class="n">15</td><td>No</td>
+      <td>Normal turnaround, not a service failure</td></tr>
+  <tr><td>Never denied at all</td><td class="n">15</td><td>No</td><td>Nothing went wrong</td></tr>
+  <tr class="total"><td>Total</td><td class="n">60</td><td>30 alerted</td><td></td></tr>
+</table>
+
+<h3>From 60 tickets to one message</h3>
+
+<div class="funnel">
+  <div class="row"><div class="lbl">Tickets in</div><div class="bar" style="width:100%"></div><div class="val">60 capacity requests<span class="note">all of them, every run</span></div></div>
+  <div class="row"><div class="lbl">Failures</div><div class="bar" style="width:50%"></div><div class="val">30 classified as failures<span class="note">18 late + 12 unfulfilled</span></div></div>
+  <div class="row"><div class="lbl">Grouped</div><div class="bar" style="width:24%"></div><div class="val">11 regions<span class="note">ranked by revenue exposure</span></div></div>
+  <div class="row"><div class="lbl">Reported</div><div class="bar" style="width:11%"></div><div class="val">top 3 regions<span class="note">one recommendation each</span></div></div>
+  <div class="row"><div class="lbl">Delivered</div><div class="bar" style="width:6%"></div><div class="val">1 message<span class="note">Teams, Mon 08:00 UTC, Approve / Reject</span></div></div>
+</div>
+
+<p>The 30 failures are priced into dollars, grouped by region, ranked by exposure, and the top three
+regions each get one specific recommendation. Nothing is executed automatically — every message is
+held for a person to approve.</p>
+
+<!-- ================= 5 ================= -->
+<h2><span class="num">5</span>Two things worth saying before being asked</h2>
+
+<p>Both concern how far the numbers can currently be trusted. Stating them unprompted is what makes
+the rest credible.</p>
+
+<div class="callout warn">
+  <span class="tag">1 · The revenue figures are placeholder</span>
+  <p>The customer ARR reference is synthetic. The <strong>ranking of regions holds</strong>, because
+  it depends on relative customer size — but the absolute dollar amounts will change when the real
+  revenue reference arrives. Every message carries this caveat on its face until it does.</p>
+</div>
+
+<div class="callout warn">
+  <span class="tag">2 · "Never fulfilled" is probably overstated</span>
+  <p>ICM gives us no ticket status, so we cannot separate <em>rejected permanently</em> from
+  <em>still being worked</em> — both are currently counted as failures. That affects
+  <strong>12 of the 30</strong> flagged requests, and because open tickets accrue exposure daily, it
+  inflates the headline. A status column from ICM is the single change that would most improve the
+  honesty of the number.</p>
+</div>
+
+<footer class="end">
+  Module 5 — Capacity-Denial Revenue Impact Calculator · Capacity Intelligence Platform<br>
+  Figures from the synthetic ICM extract, 60 tickets, as of 2026-01-28. Revenue figures illustrative.
+  Full detail in Module5_Reference.pdf.
+</footer>

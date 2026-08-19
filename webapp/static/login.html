@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in — Capacity Intelligence</title>
+<link rel="stylesheet" href="/static/base.css">
+</head>
+<body class="login-page">
+
+<form class="login-card" method="post" action="/login" autocomplete="on">
+  <div class="brandline">
+    <span class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+    <span class="ms">Microsoft</span>
+  </div>
+
+  <h1>Capacity Intelligence</h1>
+  <p class="lede">Capacity-denial revenue impact and lead-time-aware planning.</p>
+
+  <!-- Server-rendered on a failed attempt; removed entirely otherwise, so an
+       empty error box never flashes on first load. -->
+  <!--ERROR-->
+
+  <label for="u">Username</label>
+  <input id="u" name="username" type="text" required autofocus
+         autocapitalize="off" autocorrect="off" spellcheck="false">
+
+  <label for="p">Password</label>
+  <input id="p" name="password" type="password" required autocomplete="current-password">
+
+  <button class="btn" type="submit">Sign in</button>
+</form>
+
+</body>
+</html>

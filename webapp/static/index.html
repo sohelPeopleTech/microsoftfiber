@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Capacity Intelligence</title>
+<style>
+:root{
+  --surface:#fcfcfb; --surface-2:#f4f4f2; --surface-3:#ecebe8;
+  --ink:#0b0b0b; --ink-2:#52514e; --ink-3:#82817c;
+  --rule:#e3e2de; --rule-2:#cfcec9;
+  --series:#2a78d6;
+  --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme=light]){
+    --surface:#1a1a19; --surface-2:#222221; --surface-3:#2b2b29;
+    --ink:#fff; --ink-2:#c3c2b7; --ink-3:#8b8a84;
+    --rule:#333331; --rule-2:#45443f; --series:#3987e5;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--surface);color:var(--ink);font-family:var(--sans);
+  font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.top{position:sticky;top:0;z-index:20;background:var(--surface);
+  border-bottom:1px solid var(--rule);padding:.75rem 1.25rem;display:flex;
+  align-items:center;gap:1rem;flex-wrap:wrap}
+.brand{font-weight:650;letter-spacing:-.01em}
+.brand span{font-family:var(--mono);font-size:.62rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--series);display:block;font-weight:400}
+.controls{display:flex;gap:1rem;align-items:center;margin-left:auto;flex-wrap:wrap}
+label.ctl{font-family:var(--mono);font-size:.66rem;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--ink-3);display:flex;align-items:center;gap:.5rem}
+input[type=search]{font:inherit;font-size:.85rem;padding:.35rem .6rem;border-radius:5px;
+  border:1px solid var(--rule-2);background:var(--surface-2);color:var(--ink);width:160px}
+input[type=range]{accent-color:var(--series);width:120px}
+select{font:inherit;font-size:.82rem;padding:.3rem .45rem;border-radius:5px;
+  border:1px solid var(--rule-2);background:var(--surface-2);color:var(--ink)}
+main{padding:1.25rem;max-width:96rem;margin:0 auto}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1px;
+  background:var(--rule);border:1px solid var(--rule);border-radius:8px;overflow:hidden;
+  margin-bottom:1.25rem}
+.kpi{background:var(--surface);padding:.8rem .95rem}
+.kpi b{display:block;font-size:1.65rem;font-weight:650;letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;margin:.1rem 0}
+.kpi i{font-style:normal;font-family:var(--mono);font-size:.62rem;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--ink-3)}
+.kpi em{font-style:normal;font-size:.76rem;color:var(--ink-2)}
+.layout{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(340px,1fr);gap:1.25rem}
+@media(max-width:1080px){.layout{grid-template-columns:1fr}}
+.panel{border:1px solid var(--rule);border-radius:8px;background:var(--surface);
+  margin-bottom:1.25rem;overflow:hidden}
+.panel>h2{margin:0;padding:.7rem .95rem;font-size:.82rem;font-weight:650;
+  border-bottom:1px solid var(--rule);display:flex;align-items:center;gap:.5rem}
+.panel>h2 small{font-family:var(--mono);font-size:.62rem;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--series);font-weight:400}
+.panel>h2 .hint{margin-left:auto;font-family:var(--mono);font-size:.6rem;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:400}
+.body{padding:.85rem .95rem}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th{font-family:var(--mono);font-size:.62rem;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--ink-3);text-align:left;padding:.4rem .6rem;border-bottom:1px solid var(--rule-2);
+  font-weight:600;cursor:pointer;user-select:none;white-space:nowrap}
+th:hover{color:var(--ink)}
+th.sorted::after{content:" ▾";color:var(--series)}
+th.sorted.asc::after{content:" ▴"}
+td{padding:.4rem .6rem;border-bottom:1px solid var(--rule)}
+td.mono{white-space:nowrap}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--surface-2)}
+tbody tr.sel{background:var(--surface-3);box-shadow:inset 3px 0 0 var(--series)}
+.reg{font-weight:600}
+.mono{font-family:var(--mono);font-size:.78rem}
+.pill{display:inline-block;font-family:var(--mono);font-size:.6rem;letter-spacing:.06em;
+  text-transform:uppercase;padding:.1rem .4rem;border-radius:3px;border:1px solid currentColor;
+  white-space:nowrap}
+.s-breached,.s-overdue{color:var(--critical)}
+.s-due_now{color:var(--serious)}
+.s-approaching{color:var(--warning)}
+.s-stable{color:var(--good)}
+.chart{width:100%;height:auto;display:block}
+.cat{font-size:11px;fill:var(--ink-2)}
+.val{font-size:11px;fill:var(--ink);font-variant-numeric:tabular-nums}
+.tick{font-size:10px;fill:var(--ink-3)}
+.grid{stroke:var(--rule)}
+.zero{stroke:var(--rule-2);stroke-dasharray:3 3}
+g.row:hover rect,g.row:hover circle{opacity:.8}
+.empty{color:var(--ink-3);font-size:.82rem;padding:.5rem 0}
+.calc{display:grid;grid-template-columns:auto 1fr;gap:.5rem .7rem;align-items:center;
+  font-size:.8rem;margin-bottom:.7rem}
+.calc label{font-family:var(--mono);font-size:.62rem;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--ink-3)}
+.result{background:var(--surface-2);border-radius:6px;padding:.7rem .8rem;font-size:.82rem}
+.result .big{font-size:1.15rem;font-weight:650;font-variant-numeric:tabular-nums}
+.result dl{display:grid;grid-template-columns:auto 1fr;gap:.2rem .7rem;margin:.5rem 0 0}
+.result dt{font-family:var(--mono);font-size:.62rem;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink-3)}
+.result dd{margin:0;font-variant-numeric:tabular-nums}
+.note{margin:0 0 .7rem;font-size:.78rem;color:var(--ink-2)}
+.slide{display:flex;align-items:center;gap:.5rem}
+.slide input[type=range]{width:100%}
+.slide span{min-width:2ch;text-align:right;color:var(--ink-2)}
+/* verdict — the answer before the arithmetic */
+.verdict{display:flex;align-items:baseline;gap:.6rem;padding:.55rem .75rem;
+  border-radius:6px;border-left:3px solid;margin-bottom:.7rem}
+.verdict b{font-size:.95rem;font-weight:650;letter-spacing:-.01em}
+.verdict span{font-size:.8rem;color:var(--ink-2)}
+.verdict.go{border-left-color:var(--good);background:color-mix(in srgb,var(--good) 8%,var(--surface-2))}
+.verdict.go b{color:var(--good)}
+.verdict.nogo{border-left-color:var(--critical);background:color-mix(in srgb,var(--critical) 8%,var(--surface-2))}
+.verdict.nogo b{color:var(--critical)}
+.plan h4{margin:.9rem 0 .35rem;font-family:var(--mono);font-size:.62rem;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:400}
+.opts{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}
+.opts li{background:var(--surface-2);border-radius:5px;padding:.45rem .65rem;font-size:.8rem}
+.opts b{display:block;font-size:.78rem}
+.opts em{font-style:normal;color:var(--ink-2)}
+table.steps{width:100%;border-collapse:collapse;font-size:.78rem;
+  font-variant-numeric:tabular-nums}
+table.steps th{font-family:var(--mono);font-size:.58rem;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink-3);font-weight:400;text-align:right;
+  padding:.2rem .4rem;border-bottom:1px solid var(--rule)}
+table.steps th:first-child{text-align:left}
+table.steps td{padding:.25rem .4rem;text-align:right;border-bottom:1px solid var(--rule)}
+table.steps td:first-child{text-align:left;font-family:var(--mono)}
+.spike{border-left:3px solid var(--rule-2);padding:.45rem .7rem;margin-bottom:.5rem;
+  background:var(--surface-2);border-radius:0 5px 5px 0;font-size:.8rem}
+.spike.strong{border-left-color:var(--series)}
+.spike.weak,.spike.none{border-left-color:var(--warning)}
+.spike b{font-size:.84rem}
+.spike p{margin:.15rem 0 0;color:var(--ink-2)}
+.fgrid{display:grid;gap:2px;font-size:.62rem}
+.fcell{height:22px;border-radius:3px;display:flex;align-items:center;justify-content:center;
+  color:#fff;font-family:var(--mono);font-size:.55rem}
+.f-live{background:#1c5cab}.f-preview{background:#5598e7}
+.f-planned{background:#b7d3f6;color:#0b0b0b}.f-unavailable{background:var(--surface-3);color:var(--ink-3)}
+.frow{font-size:.72rem;color:var(--ink-2);display:flex;align-items:center}
+.legend{display:flex;gap:.8rem;flex-wrap:wrap;font-family:var(--mono);font-size:.58rem;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-top:.6rem}
+.legend i{width:12px;height:9px;border-radius:2px;display:inline-block;margin-right:.25rem}
+.detail-head{display:flex;align-items:baseline;gap:.6rem}
+.detail-head b{font-size:1rem}
+.muted{color:var(--ink-3);font-size:.76rem}
+.reason{font-size:.8rem;color:var(--ink-2);margin:.4rem 0 0}
+.loading{color:var(--ink-3);font-size:.82rem;padding:2rem;text-align:center}
+.prov td{font-size:.76rem}
+.tickets{width:100%;font-size:.78rem;margin-top:.3rem}
+.tickets td,.tickets th{padding:.35rem .5rem}
+.work{font-family:var(--mono);font-size:.68rem;color:var(--ink-3);padding:0 .5rem .45rem;
+  border-bottom:1px solid var(--rule)}
+.cust{font-family:var(--mono);font-size:.72rem}
+.scope{font-size:.75rem;color:var(--ink-2);margin:0 0 .5rem}
+.scope b{color:var(--ink)}
+.clear{font-family:var(--mono);font-size:.6rem;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--series);cursor:pointer;background:none;border:none;padding:0}
+#chat{max-height:290px;overflow-y:auto;margin-bottom:.5rem}
+#chat:empty{display:none}
+.msg{margin-bottom:.55rem;font-size:.84rem;line-height:1.5}
+.msg .who{font-family:var(--mono);font-size:.58rem;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--ink-3);display:block;margin-bottom:.12rem}
+.msg.you .bubble{background:var(--surface-3);border-radius:6px;padding:.35rem .6rem;
+  display:inline-block}
+.msg.bot .bubble{border-left:2px solid var(--series);padding-left:.6rem;color:var(--ink)}
+.msg.bot.fallback .bubble{border-left-color:var(--warning)}
+.msg .tag{font-family:var(--mono);font-size:.55rem;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--ink-3);margin-left:.4rem}
+.chips{display:flex;gap:.35rem;flex-wrap:wrap;margin-bottom:.5rem}
+.chip{font-size:.72rem;border:1px solid var(--rule-2);background:var(--surface-2);
+  color:var(--ink-2);border-radius:20px;padding:.2rem .6rem;cursor:pointer}
+.chip:hover{border-color:var(--series);color:var(--ink)}
+#ask-form{display:flex;gap:.4rem}
+#ask-input{flex:1;font:inherit;font-size:.84rem;padding:.4rem .6rem;border-radius:6px;
+  border:1px solid var(--rule-2);background:var(--surface-2);color:var(--ink)}
+#ask-send{font:inherit;font-size:.8rem;padding:.4rem .85rem;border-radius:6px;border:none;
+  background:var(--series);color:#fff;cursor:pointer;font-weight:600}
+#ask-send:disabled{opacity:.5;cursor:default}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand"><span>Capacity Intelligence</span>Capacity operations</div>
+  <div class="controls">
+    <label class="ctl">Search
+      <input type="search" id="q" placeholder="region…" autocomplete="off">
+    </label>
+    <label class="ctl">Safety threshold
+      <input type="range" id="thr" min="60" max="98" value="85" step="1">
+      <b id="thrv" style="font-family:var(--mono);color:var(--ink)">85%</b>
+    </label>
+    <span class="ctl" id="actionable"></span>
+  </div>
+</div>
+
+<main>
+  <div class="kpis" id="kpis"><div class="loading">Loading…</div></div>
+
+  <div class="layout">
+    <div>
+      <section class="panel">
+        <h2><small>All modules</small> Every region we operate
+          <span class="hint">click a row for detail · click a header to sort</span></h2>
+        <div class="body" style="padding:0"><div id="table"></div></div>
+      </section>
+
+      <section class="panel">
+        <h2><small>Module 5</small> Customers we are failing
+          <span class="hint">click one to see every request they raised</span></h2>
+        <div class="body" style="padding:0"><div id="customers"></div></div>
+      </section>
+
+      <section class="panel">
+        <h2><small>Module 1</small> Time left to order
+          <span class="hint">left of the line is already late</span></h2>
+        <div class="body"><div id="urgency"></div></div>
+      </section>
+
+      <section class="panel">
+        <h2><small>Module 4</small> Unusual demand<span class="hint" id="spike-scope"></span></h2>
+        <div class="body"><div id="spikes"></div></div>
+      </section>
+    </div>
+
+    <div>
+      <section class="panel" id="ask-panel">
+        <h2><small>Assistant</small> Ask about this data
+          <span class="hint" id="ask-state">answers only from these numbers</span></h2>
+        <div class="body">
+          <div id="chat"></div>
+          <div id="chips" class="chips"></div>
+          <form id="ask-form" autocomplete="off">
+            <input id="ask-input" type="text" placeholder="e.g. which region should we fix first?" maxlength="500">
+            <button type="submit" id="ask-send">Ask</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2><small>Detail</small> <span id="detail-title">Nothing selected</span></h2>
+        <div class="body"><div id="detail"><p class="empty">Select a region or a customer to see the detail.</p></div></div>
+      </section>
+
+      <section class="panel">
+        <h2><small>Module 2</small> Hardware migration <span class="hint">recalculates live</span></h2>
+        <div class="body">
+          <div class="calc">
+            <label for="calc-to">New hardware</label>
+            <select id="calc-to"></select>
+            <label for="calc-mode">Mode</label>
+            <select id="calc-mode">
+              <option value="same_footprint">Keep the same amount of hardware</option>
+              <option value="like_for_like">Keep the same capacity</option>
+            </select>
+          </div>
+          <div id="calc-result"><p class="empty">Select a region to model a hardware change.</p></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2><small>Module 2b</small> Can it be done<span class="hint">during, not after</span></h2>
+        <div class="body">
+          <p class="note">A conversion takes hardware offline while it happens. This
+            checks whether the region can spare it, using the new hardware chosen above.</p>
+          <div class="calc">
+            <label for="plan-dc">Datacentres to convert</label>
+            <div class="slide"><input id="plan-dc" type="range" min="1" max="10" step="1" value="1">
+              <span id="plan-dcv" class="mono">1</span></div>
+            <label for="plan-total">Datacentres in region</label>
+            <div class="slide"><input id="plan-total" type="range" min="2" max="20" step="1" value="10">
+              <span id="plan-totalv" class="mono">10</span></div>
+          </div>
+          <div id="plan-result"><p class="empty">Select a region to test a conversion.</p></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2><small>Module 3</small> Capacity requested<span class="hint" id="trend-scope"></span></h2>
+        <div class="body"><div id="trend"></div></div>
+      </section>
+
+      <section class="panel">
+        <h2><small>Module 6</small> Feature availability</h2>
+        <div class="body"><div id="features"></div></div>
+      </section>
+
+      <section class="panel">
+        <h2><small>Provenance</small> Which data is real</h2>
+        <div class="body" style="padding:0"><div id="prov"></div></div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

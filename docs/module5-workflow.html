@@ -1,0 +1,425 @@
+<title>Module 5 — The Operating Workflow</title>
+<style>
+  :root {
+    --ground:#f6f7f8; --surface:#ffffff; --sunk:#eef0f2;
+    --ink:#12181d; --ink-soft:#48545e; --ink-faint:#6f7c86;
+    --rule:#dde1e5; --rule-hi:#c2c9cf;
+    --accent:#0d5f5c; --accent-soft:#e2efee; --accent-ink:#0a4f4d;
+    --warn:#8a4f04; --warn-soft:#f8efe0;
+    --good:#2c6338; --good-soft:#e7f0e9;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#0f1418; --surface:#161d23; --sunk:#1c252b;
+      --ink:#e6ebef; --ink-soft:#a8b4bd; --ink-faint:#7d8992;
+      --rule:#2a343c; --rule-hi:#3d4a53;
+      --accent:#5fbdb8; --accent-soft:#16302e; --accent-ink:#8ed6d1;
+      --warn:#d9a05b; --warn-soft:#2b2114;
+      --good:#77b785; --good-soft:#16271a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#0f1418; --surface:#161d23; --sunk:#1c252b;
+    --ink:#e6ebef; --ink-soft:#a8b4bd; --ink-faint:#7d8992;
+    --rule:#2a343c; --rule-hi:#3d4a53;
+    --accent:#5fbdb8; --accent-soft:#16302e; --accent-ink:#8ed6d1;
+    --warn:#d9a05b; --warn-soft:#2b2114;
+    --good:#77b785; --good-soft:#16271a;
+  }
+
+  * { box-sizing:border-box; }
+  body { background:var(--ground); color:var(--ink); font-family:var(--serif);
+         font-size:17px; line-height:1.6; margin:0; padding:0 1.25rem 5rem;
+         -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:52rem; margin:0 auto; }
+
+  header.top { padding:3.5rem 0 1.5rem; border-bottom:2px solid var(--ink); margin-bottom:2rem; }
+  .kicker { font-family:var(--mono); font-size:.72rem; letter-spacing:.15em;
+            text-transform:uppercase; color:var(--accent); margin:0 0 .8rem; }
+  h1 { font-size:clamp(1.9rem,4.5vw,2.6rem); line-height:1.1; margin:0 0 .7rem;
+       font-weight:600; letter-spacing:-.015em; text-wrap:balance; }
+  .stand { font-size:1.05rem; color:var(--ink-soft); margin:0; max-width:36rem; }
+
+  h2 { font-size:1.35rem; margin:3rem 0 .9rem; font-weight:600; padding-bottom:.4rem;
+       border-bottom:1px solid var(--rule-hi); letter-spacing:-.01em; }
+  h3 { font-size:1.05rem; margin:2rem 0 .5rem; font-weight:600; }
+  h4 { font-family:var(--mono); font-size:.78rem; letter-spacing:.06em; margin:1.5rem 0 .4rem;
+       color:var(--ink-soft); font-weight:600; }
+  p { margin:0 0 .9rem; }
+  .lede { color:var(--ink-soft); }
+  ul,ol { margin:0 0 1rem; padding-left:1.3rem; }
+  li { margin-bottom:.3rem; }
+  code { font-family:var(--mono); font-size:.86em; background:var(--sunk);
+         padding:.1em .35em; border-radius:3px; }
+
+  figure { margin:1.5rem 0 .8rem; }
+  figure svg { width:100%; height:auto; display:block; }
+  figcaption { font-size:.86rem; color:var(--ink-faint); margin-top:.7rem;
+               font-family:var(--sans); }
+
+  .legend { display:flex; gap:1.4rem; flex-wrap:wrap; font-family:var(--mono);
+            font-size:.72rem; color:var(--ink-faint); margin:.4rem 0 0;
+            text-transform:uppercase; letter-spacing:.06em; }
+  .legend span { display:flex; align-items:center; gap:.45rem; }
+  .swatch { width:22px; height:0; border-top:2px solid var(--ink-soft); }
+  .swatch.todo { border-top:2px dashed var(--accent); }
+
+  .table-scroll { overflow-x:auto; margin:0 0 1.2rem; }
+  table { border-collapse:collapse; width:100%; font-size:.9rem; font-family:var(--sans); }
+  th { font-family:var(--mono); font-size:.7rem; letter-spacing:.07em; text-transform:uppercase;
+       text-align:left; color:var(--ink-faint); border-bottom:1px solid var(--rule-hi);
+       padding:.5rem .6rem; font-weight:600; }
+  td { padding:.55rem .6rem; border-bottom:1px solid var(--rule); vertical-align:top; }
+
+  .callout { border-left:3px solid var(--accent); background:var(--accent-soft);
+             padding:.85rem 1rem; margin:0 0 1.2rem; border-radius:0 5px 5px 0; }
+  .callout.warn { border-left-color:var(--warn); background:var(--warn-soft); }
+  .callout.good { border-left-color:var(--good); background:var(--good-soft); }
+  .callout .tag { font-family:var(--mono); font-size:.68rem; letter-spacing:.1em;
+                  text-transform:uppercase; display:block; margin-bottom:.35rem; color:var(--accent); }
+  .callout.warn .tag { color:var(--warn); }
+  .callout.good .tag { color:var(--good); }
+  .callout p:last-child { margin-bottom:0; }
+
+  /* card mock */
+  .mock { border:1px solid var(--rule-hi); border-radius:6px; background:var(--surface);
+          padding:0; margin:0 0 1.2rem; overflow:hidden; font-family:var(--sans); }
+  .mock .hd { background:var(--sunk); padding:.6rem .9rem; font-family:var(--mono);
+              font-size:.7rem; letter-spacing:.08em; text-transform:uppercase;
+              color:var(--ink-faint); border-bottom:1px solid var(--rule); }
+  .mock .bd { padding:.9rem; font-size:.88rem; }
+  .mock .region { border:1px solid var(--rule); border-radius:5px; padding:0;
+                  margin-bottom:.8rem; overflow:hidden; }
+  .mock .rhd { display:flex; justify-content:space-between; align-items:baseline;
+               background:var(--accent-soft); padding:.5rem .75rem;
+               border-bottom:1px solid var(--rule); }
+  .mock .rname { font-family:var(--mono); font-weight:600; color:var(--accent-ink); }
+  .mock .rval { font-weight:700; color:var(--accent-ink); }
+  .mock dl { display:grid; grid-template-columns:5.6rem 1fr; gap:.3rem .8rem;
+             margin:0; padding:.65rem .75rem; font-size:.84rem; }
+  .mock dt { font-family:var(--mono); font-size:.66rem; letter-spacing:.08em;
+             text-transform:uppercase; color:var(--ink-faint); padding-top:.15rem; }
+  .mock dd { margin:0; }
+  .mock .btns { padding:.7rem .9rem; border-top:1px solid var(--rule); background:var(--sunk); }
+  .mock .btn { display:inline-block; font-size:.78rem; border:1px solid var(--rule-hi);
+               border-radius:4px; padding:.25rem .9rem; margin-right:.4rem;
+               background:var(--surface); }
+
+  .q { border:1px solid var(--rule-hi); border-radius:6px; padding:1rem 1.1rem;
+       margin:0 0 1rem; background:var(--surface); }
+  .q .num { font-family:var(--mono); font-size:.72rem; letter-spacing:.1em;
+            color:var(--accent); text-transform:uppercase; }
+  .q h4 { margin:.3rem 0 .5rem; font-family:var(--serif); font-size:1.05rem;
+          letter-spacing:0; text-transform:none; color:var(--ink); }
+  .q p:last-child { margin-bottom:0; }
+
+  @media print {
+    @page { size:A4; margin:16mm 15mm; }
+    body { background:#fff; color:#000; font-size:10.4pt; padding:0; line-height:1.45; }
+    .wrap { max-width:none; }
+    /* Pull the first figure onto page one -- a near-empty opening page reads as
+       a mistake, and the diagram is the point of the document. */
+    header.top { padding:0 0 .8rem; margin-bottom:1rem; }
+    h1 { font-size:20pt; }
+    h2 { font-size:13pt; margin:1.4rem 0 .5rem; page-break-after:avoid; }
+    h3 { page-break-after:avoid; }
+    figure { margin:.8rem 0 .5rem; }
+    figure svg { max-height:150mm; }
+    figure, .mock, .q, .callout, table { page-break-inside:avoid; }
+    p, li { orphans:3; widows:3; }
+  }
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <p class="kicker">Capacity Intelligence · Module 5</p>
+  <h1>Where the alert sits, and what happens after someone reads it</h1>
+  <p class="stand">The analysis is built and running. This is the operating workflow around it —
+  who receives a finding, what they do with it, what the system does in response, and how the
+  loop closes.</p>
+</header>
+
+<!-- ============ THE LOOP ============ -->
+<h2>1 · The operating loop</h2>
+
+<p class="lede">Solid boxes exist and run today. Dashed boxes are the workflow around them —
+the part that turns an alert into an action with an owner and an outcome.</p>
+
+<figure>
+<svg viewBox="0 0 800 690" role="img"
+     aria-label="Operating loop: weekly schedule and data-change triggers feed the analysis pipeline, which posts a Teams card; a human approves, asks, or rejects; approval creates a work item for the capacity team; the next run verifies whether exposure fell and re-evaluates.">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
+            orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="ar-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
+            orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"/>
+    </marker>
+  </defs>
+
+  <g font-family="ui-sans-serif, system-ui, sans-serif" fill="currentColor">
+
+    <!-- TRIGGERS -->
+    <rect x="210" y="24" width="170" height="50" rx="4" fill="none"
+          stroke="currentColor" stroke-width="1.5"/>
+    <text x="295" y="45" text-anchor="middle" font-size="13" font-weight="600">Weekly schedule</text>
+    <text x="295" y="62" text-anchor="middle" font-size="11" opacity=".7">Mon 08:00 UTC</text>
+
+    <rect x="420" y="24" width="170" height="50" rx="4" fill="none"
+          stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="505" y="45" text-anchor="middle" font-size="13" font-weight="600"
+          fill="var(--accent)">Data change</text>
+    <text x="505" y="62" text-anchor="middle" font-size="11" fill="var(--accent)" opacity=".85">new tickets · SLA edit</text>
+
+    <line x1="295" y1="74" x2="295" y2="118" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+    <line x1="505" y1="74" x2="505" y2="118" stroke="var(--accent)" stroke-width="1.5"
+          stroke-dasharray="5 4" marker-end="url(#ar-a)"/>
+
+    <!-- ANALYSIS -->
+    <rect x="210" y="120" width="380" height="82" rx="4" fill="none"
+          stroke="currentColor" stroke-width="1.5"/>
+    <text x="400" y="145" text-anchor="middle" font-size="13" font-weight="600">Analysis pipeline</text>
+    <text x="400" y="164" text-anchor="middle" font-size="11" opacity=".75"
+          font-family="ui-monospace, monospace">bronze → silver → gold → classify → price → rank</text>
+    <text x="400" y="186" text-anchor="middle" font-size="11" opacity=".75">gate: classifier must score 60/60 or nothing is sent</text>
+
+    <line x1="400" y1="202" x2="400" y2="248" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+
+    <!-- CARD -->
+    <rect x="210" y="250" width="380" height="82" rx="4" fill="none"
+          stroke="currentColor" stroke-width="1.5"/>
+    <text x="400" y="275" text-anchor="middle" font-size="13" font-weight="600">Teams card</text>
+    <text x="400" y="294" text-anchor="middle" font-size="11" opacity=".75">#capacity-findings</text>
+    <text x="400" y="316" text-anchor="middle" font-size="11" opacity=".75">Capacity Ops acts · Finance &amp; Sales see the number</text>
+
+    <!-- fan out -->
+    <line x1="400" y1="332" x2="400" y2="360" stroke="currentColor" stroke-width="1.5"/>
+    <polyline points="150,360 650,360" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <line x1="150" y1="360" x2="150" y2="396" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+    <line x1="400" y1="360" x2="400" y2="396" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+    <line x1="650" y1="360" x2="650" y2="396" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+
+    <!-- DECISIONS -->
+    <rect x="45" y="398" width="210" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="150" y="426" text-anchor="middle" font-size="13" font-weight="600">Approve</text>
+
+    <rect x="295" y="398" width="210" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="400" y="420" text-anchor="middle" font-size="13" font-weight="600">Ask a question</text>
+    <text x="400" y="436" text-anchor="middle" font-size="10.5" opacity=".7">"why is uksouth lower?"</text>
+
+    <rect x="545" y="398" width="210" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="650" y="426" text-anchor="middle" font-size="13" font-weight="600">Reject</text>
+
+    <line x1="150" y1="444" x2="150" y2="482" stroke="var(--accent)" stroke-width="1.5"
+          stroke-dasharray="5 4" marker-end="url(#ar-a)"/>
+    <line x1="400" y1="444" x2="400" y2="482" stroke="var(--accent)" stroke-width="1.5"
+          stroke-dasharray="5 4" marker-end="url(#ar-a)"/>
+    <line x1="650" y1="444" x2="650" y2="482" stroke="var(--accent)" stroke-width="1.5"
+          stroke-dasharray="5 4" marker-end="url(#ar-a)"/>
+
+    <!-- OUTCOMES -->
+    <rect x="45" y="484" width="210" height="62" rx="4" fill="none"
+          stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="150" y="506" text-anchor="middle" font-size="12" font-weight="600" fill="var(--accent)">Work item raised</text>
+    <text x="150" y="523" text-anchor="middle" font-size="10.5" fill="var(--accent)" opacity=".85">owner + due date</text>
+    <text x="150" y="538" text-anchor="middle" font-size="10.5" fill="var(--accent)" opacity=".85">decision logged</text>
+
+    <rect x="295" y="484" width="210" height="62" rx="4" fill="none"
+          stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="400" y="506" text-anchor="middle" font-size="12" font-weight="600" fill="var(--accent)">Answered in thread</text>
+    <text x="400" y="523" text-anchor="middle" font-size="10.5" fill="var(--accent)" opacity=".85">engine built —</text>
+    <text x="400" y="538" text-anchor="middle" font-size="10.5" fill="var(--accent)" opacity=".85">needs a Teams bot</text>
+
+    <rect x="545" y="484" width="210" height="62" rx="4" fill="none"
+          stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="650" y="506" text-anchor="middle" font-size="12" font-weight="600" fill="var(--accent)">Reason recorded</text>
+    <text x="650" y="523" text-anchor="middle" font-size="10.5" fill="var(--accent)" opacity=".85">tunes the threshold</text>
+    <text x="650" y="538" text-anchor="middle" font-size="10.5" fill="var(--accent)" opacity=".85">or the SLA</text>
+
+    <!-- VERIFY -->
+    <line x1="150" y1="546" x2="150" y2="588" stroke="var(--accent)" stroke-width="1.5"
+          stroke-dasharray="5 4" marker-end="url(#ar-a)"/>
+    <rect x="45" y="590" width="210" height="56" rx="4" fill="none"
+          stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="150" y="614" text-anchor="middle" font-size="12" font-weight="600" fill="var(--accent)">Next run verifies</text>
+    <text x="150" y="631" text-anchor="middle" font-size="10.5" fill="var(--accent)" opacity=".85">did exposure actually fall?</text>
+
+    <!-- feedback loop -->
+    <polyline points="45,618 18,618 18,49 210,49" fill="none" stroke="var(--accent)"
+              stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ar-a)"/>
+    <text x="26" y="330" font-size="10.5" fill="var(--accent)" transform="rotate(-90 26 330)"
+          text-anchor="middle" font-family="ui-monospace, monospace"
+          letter-spacing="1">re-evaluate on next cycle</text>
+  </g>
+</svg>
+<figcaption><strong>The loop today stops at the Teams card.</strong> Everything dashed — the
+change trigger, what an Approve produces, the answer path, and the verification that closes the
+loop — is the workflow that has to exist for the alert to sit inside a solution rather than beside
+one.</figcaption>
+</figure>
+
+<div class="legend">
+  <span><i class="swatch"></i> built and running</span>
+  <span><i class="swatch todo"></i> to build</span>
+</div>
+
+<div class="callout warn">
+  <span class="tag">The gap, stated plainly</span>
+  <p>Today a finding is <em>read</em>. Nothing records that it was read, nobody is assigned, and
+  next Monday the same finding is posted again with a slightly larger number — because unfulfilled
+  tickets keep accruing. Without the dashed half, the alert repeats rather than resolves.</p>
+</div>
+
+<!-- ============ WHAT APPROVE DOES ============ -->
+<h2>2 · What Approve and Reject actually do</h2>
+
+<p class="lede">This is the decision that unblocks everything else, and it is not ours to make
+alone. Approve cannot mean "raise the threshold automatically" — that is a capacity policy change
+requiring authority the agent does not have, and the design explicitly forbids auto-execution.</p>
+
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Option</th><th>On Approve</th><th>Needs</th><th>Effort</th></tr></thead>
+  <tbody>
+    <tr><td><strong>A · Acknowledge</strong></td>
+        <td>Log who approved and when; @mention the region owner in-thread; suppress the repeat
+            for N cycles</td>
+        <td>Nothing beyond Teams</td><td>Small</td></tr>
+    <tr><td><strong>B · Raise a work item</strong> <em>(recommended)</em></td>
+        <td>Create an ADO / ICM item with the region, the sized threshold, the evidence incidents
+            and a due date; link it back into the thread</td>
+        <td>ADO or ICM project + service account</td><td>Medium</td></tr>
+    <tr><td><strong>C · Draft the change</strong></td>
+        <td>Generate the actual capacity-policy change request, routed for a second approval
+            before submission</td>
+        <td>Access to the capacity-request system</td><td>Large</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>B is what "the capacity team who's working on it" implies</strong> — Approve should put
+something in someone's queue, with the sizing and evidence already attached, so the work does not
+have to be re-derived from the message.</p>
+
+<h4>Reject is not a dead end</h4>
+<p>A rejection carries a reason, and the reason is a signal worth keeping:</p>
+<ul>
+  <li><em>"Threshold is already being raised"</em> → suppress this region until the next quarter</li>
+  <li><em>"That customer is churning"</em> → exclude the subscription from exposure</li>
+  <li><em>"48h is the wrong cut-off for Standard tier"</em> → change the SLA in config, which
+      re-scores every ticket</li>
+</ul>
+<p>Recorded rejections are how the alert stops crying wolf. Without them it repeats the same
+finding indefinitely.</p>
+
+<!-- ============ THE CARD ============ -->
+<h2>3 · The card, restructured</h2>
+
+<p class="lede">The current card states the problem, cause, impact and action — but in prose, so
+the number has to be read for. Same content, fixed fields, scannable in five seconds.</p>
+
+<div class="mock">
+  <div class="hd">Teams · #capacity-findings · Mon 08:00</div>
+  <div class="bd">
+    <p style="margin:0 0 .8rem"><strong>$146K of customer revenue is exposed to capacity denials.</strong>
+    30 of 60 requests failed this period. Three regions carry 88% of it.<br>
+    <span style="color:var(--ink-faint);font-size:.82rem">For: Capacity Operations · FYI: Finance &amp; Sales leadership</span></p>
+
+    <div class="region">
+      <div class="rhd"><span class="rname">westeurope</span><span class="rval">$76,309</span></div>
+      <dl>
+        <dt>Problem</dt><dd>4 of 9 requests failed — 3 approved late (median 10 days), 1 never fulfilled</dd>
+        <dt>Cause</dt><dd>Approval latency, not capacity shortage. Every request was eventually granted</dd>
+        <dt>Impact</dt><dd>3 customers · $690K ARR affected · <strong>$76,309 at risk</strong></dd>
+        <dt>Action</dt><dd>Raise the auto-approval ceiling to <strong>166 units</strong></dd>
+        <dt>Effect</dt><dd>Would have cleared 100% of these without review</dd>
+        <dt>Evidence</dt><dd>INC 677681988 — 83u, 25 days late, $37K</dd>
+        <dt>Owner</dt><dd>Capacity Operations — westeurope</dd>
+      </dl>
+    </div>
+
+    <p style="color:var(--ink-faint);font-size:.8rem;margin:.2rem 0 0">
+      northcentralus $42,352 · eastus2 $10,785 — same structure, two more blocks.<br>
+      Figures illustrative: ARR reference is placeholder. Rankings hold; dollars do not.</p>
+  </div>
+  <div class="btns"><span class="btn">Approve</span><span class="btn">Reject</span><span class="btn">Ask</span></div>
+</div>
+
+<p>Every field is already computed — this is a rendering change, not new analysis. The one new
+element is <strong>Owner</strong>, which needs a region-to-team mapping we do not currently have.</p>
+
+<!-- ============ CHANGE ============ -->
+<h2>4 · Keeping the alert true when things change</h2>
+
+<p class="lede">His question — <em>"if thresholds get increased or cores get increased, is my alert
+calling out the same thing?"</em> — is the sharpest one asked, and today the answer is no.</p>
+
+<div class="table-scroll">
+<table>
+  <thead><tr><th>What changes</th><th>Today</th><th>Should be</th></tr></thead>
+  <tbody>
+    <tr><td>New tickets arrive in ICM</td><td>Picked up next Monday</td>
+        <td>Trigger a run on arrival</td></tr>
+    <tr><td>A threshold is actually raised</td><td>Not detected — the same finding reappears</td>
+        <td>Detected; the finding closes and the loop reports the drop in exposure</td></tr>
+    <tr><td>The SLA cut-off is changed</td><td>Needs a config edit and a manual re-run</td>
+        <td>Config change re-scores every ticket automatically</td></tr>
+    <tr><td>An unfulfilled ticket is finally granted</td><td>Silently stops accruing</td>
+        <td>Reported as resolved, with the final cost of the delay</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout">
+  <span class="tag">Per-tier SLA — a change to the model</span>
+  <p>He described <strong>different cut-offs per subscription tier</strong> — 48h for Enterprise,
+  24h or 32h for others. Today there is a single global 48-hour cut-off applied to everyone.
+  Making it per-tier changes which tickets count as failures, and therefore every number in the
+  report. This needs the real SLA table before it can be implemented.</p>
+</div>
+
+<!-- ============ DECISIONS ============ -->
+<h2>5 · What we need decided</h2>
+
+<div class="q">
+  <span class="num">Decision 1</span>
+  <h4>What does Approve produce?</h4>
+  <p>Acknowledge in-thread (A), raise a work item (B), or draft the policy change (C). If B, which
+  system — ADO or ICM — and which project.</p>
+</div>
+
+<div class="q">
+  <span class="num">Decision 2</span>
+  <h4>What is the SLA per subscription tier?</h4>
+  <p>Enterprise 48h was mentioned, with 24h and 32h for others. The real table changes what counts
+  as a failure and every figure downstream.</p>
+</div>
+
+<div class="q">
+  <span class="num">Decision 3</span>
+  <h4>Who owns each region?</h4>
+  <p>The card should name an owner. A region-to-team mapping does not exist yet — without it,
+  "Owner" stays generic and nobody is actually accountable for a finding.</p>
+</div>
+
+<div class="q">
+  <span class="num">Decision 4</span>
+  <h4>Should the agent answer questions in the channel?</h4>
+  <p>The engine is built — ranking, totals, per-customer, per-incident, methodology, all answered
+  from the same computed tables. Making it two-way needs a registered Teams bot rather than the
+  current one-way webhook. That is an integration and an app registration, not new analysis.</p>
+</div>
+
+<footer style="margin-top:3rem;padding-top:1rem;border-top:2px solid var(--ink);
+               font-size:.85rem;color:var(--ink-faint);font-family:var(--sans)">
+  Module 5 — Capacity-Denial Revenue Impact Calculator · Capacity Intelligence Platform<br>
+  The analysis is deployed and running weekly. This document covers the workflow around it.
+</footer>
+
+</div>

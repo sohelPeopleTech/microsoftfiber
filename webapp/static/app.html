@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Capacity Intelligence</title>
+<link rel="stylesheet" href="/static/base.css">
+</head>
+<body>
+
+<!-- The shell renders the header, sidebar and assistant; the router fills
+     <main>. Every tab is a real URL served by FastAPI, so deep links and
+     browser back both work without a build step or a routing library. -->
+
+<header class="appbar">
+  <button class="iconbtn menu-toggle" id="menu" aria-label="Toggle navigation">☰</button>
+  <span class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+  <span class="ms">Microsoft</span>
+  <span class="divider"></span>
+  <span class="product">Capacity Intelligence</span>
+  <div class="right">
+    <span class="period" id="asof" title="">—</span>
+    <button class="iconbtn" id="alerts" title="Regions needing action">
+      🔔<span class="badge" id="alert-count" hidden>0</span>
+    </button>
+    <a class="iconbtn" href="/methodology" title="Methodology">?</a>
+    <span class="avatar brand" id="me-initials" title="">··</span>
+  </div>
+</header>
+
+<nav class="sidebar" id="sidebar">
+  <div class="whoami">
+    <span class="avatar lg" id="who-initials">··</span>
+    <span>
+      <b id="who-name">—</b>
+      <span id="who-scope">—</span>
+    </span>
+  </div>
+  <div class="nav" id="nav"></div>
+  <div class="foot">
+    <div class="nav">
+      <a href="/logout"><span class="ico">⏻</span> Sign out</a>
+    </div>
+  </div>
+</nav>
+
+<!-- Always on screen, on every tab, not dismissable. The page carries the
+     Microsoft mark next to dollar figures; a screenshot that leaves the room
+     without this line reads as real Microsoft capacity and revenue data. -->
+<main id="view"><p class="loading">Loading…</p></main>
+
+<button class="chat-fab" id="chat-open">✦ <span id="chat-name">Assistant</span></button>
+
+<section class="chat-panel" id="chat-panel" aria-label="Assistant">
+  <header>
+    ✦ <span id="chat-title">Assistant</span>
+    <button class="iconbtn close" id="chat-close" aria-label="Close assistant">✕</button>
+  </header>
+  <div class="chat-log" id="chat-log"></div>
+  <div class="chips" id="chat-chips"></div>
+  <form class="chat-form" id="chat-form">
+    <input id="chat-input" type="text" placeholder="Ask about this data…"
+           autocomplete="off" aria-label="Ask the assistant">
+    <button class="btn" type="submit">Ask</button>
+  </form>
+</section>
+
+<script src="/static/shell.js"></script>
+<script src="/static/pages.js"></script>
+<script>start();</script>
+</body>
+</html>

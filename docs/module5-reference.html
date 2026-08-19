@@ -1,0 +1,673 @@
+<title>Module 5 — Capacity-Denial Revenue Impact Calculator</title>
+<style>
+@page { size: A4; margin: 18mm 16mm 16mm; }
+
+:root {
+  --ink:      #14181c;
+  --ink-soft: #4a545d;
+  --ink-mute: #6d7780;
+  --rule:     #d5dade;
+  --rule-hi:  #aab3ba;
+  --accent:   #0d5f5c;
+  --accent-bg:#eaf3f2;
+  --warn:     #8a4f04;
+  --warn-bg:  #faf0e2;
+  --good:     #2c6338;
+  --good-bg:  #e9f2eb;
+  --sunk:     #f2f4f5;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --mono: "SF Mono", Menlo, Consolas, "Courier New", monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: var(--serif);
+  font-size: 10.2pt;
+  line-height: 1.5;
+  color: var(--ink);
+  background: #fff;
+  margin: 0;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* ---------- Cover ---------- */
+.cover { height: 245mm; display: flex; flex-direction: column; justify-content: center;
+         page-break-after: always; }
+.cover .kicker { font-family: var(--mono); font-size: 8pt; letter-spacing: .18em;
+                 text-transform: uppercase; color: var(--accent); margin-bottom: 10mm; }
+.cover h1 { font-size: 30pt; line-height: 1.1; margin: 0 0 6mm; font-weight: 600;
+            letter-spacing: -.01em; }
+.cover .sub { font-size: 13pt; color: var(--ink-soft); font-style: italic; margin: 0 0 14mm; }
+.cover .abstract { font-size: 10.5pt; max-width: 118mm; color: var(--ink-soft); margin-bottom: 16mm; }
+.cover dl { display: grid; grid-template-columns: 42mm 1fr; gap: 2.2mm 4mm;
+            font-size: 9pt; border-top: 1.5pt solid var(--ink); padding-top: 5mm; margin: 0; }
+.cover dt { font-family: var(--mono); font-size: 7.6pt; letter-spacing: .1em;
+            text-transform: uppercase; color: var(--ink-mute); }
+.cover dd { margin: 0; }
+
+/* ---------- Structure ---------- */
+h2 { font-size: 16pt; margin: 0 0 4mm; padding-bottom: 2mm; font-weight: 600;
+     border-bottom: 1.5pt solid var(--ink); letter-spacing: -.01em;
+     page-break-after: avoid; page-break-inside: avoid; }
+h2 .num { font-family: var(--mono); font-size: 10pt; color: var(--accent); margin-right: 3mm; }
+h3 { font-size: 11.5pt; margin: 7mm 0 2.5mm; font-weight: 600; page-break-after: avoid; }
+h4 { font-family: var(--mono); font-size: 8.6pt; letter-spacing: .06em; margin: 5mm 0 2mm;
+     color: var(--ink-soft); font-weight: 600; page-break-after: avoid; }
+caption { page-break-after: avoid; }
+section { page-break-before: auto; margin-top: 9mm; }
+section:first-of-type { margin-top: 0; }
+p, li { orphans: 3; widows: 3; }
+p { margin: 0 0 3mm; }
+.lede { color: var(--ink-soft); font-size: 10.8pt; }
+ul, ol { margin: 0 0 3mm; padding-left: 6mm; }
+li { margin-bottom: 1.2mm; }
+strong { font-weight: 600; }
+
+code { font-family: var(--mono); font-size: 8.4pt; background: var(--sunk);
+       padding: .3mm 1mm; border-radius: 1.5pt; }
+
+/* ---------- Tables ---------- */
+table { border-collapse: collapse; width: 100%; font-size: 8.6pt; margin: 0 0 4mm;
+        page-break-inside: avoid; font-family: var(--sans); }
+th { font-family: var(--mono); font-size: 7.4pt; letter-spacing: .06em; text-transform: uppercase;
+     text-align: left; color: var(--ink-mute); border-bottom: 1pt solid var(--rule-hi);
+     padding: 1.6mm 2mm; font-weight: 600; }
+td { padding: 1.5mm 2mm; border-bottom: .5pt solid var(--rule); vertical-align: top; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+tr.total td { border-top: 1pt solid var(--rule-hi); border-bottom: none; font-weight: 600; }
+table.tight td, table.tight th { padding: 1.1mm 2mm; }
+caption { caption-side: top; text-align: left; font-family: var(--mono); font-size: 7.4pt;
+          letter-spacing: .08em; text-transform: uppercase; color: var(--ink-mute);
+          padding-bottom: 1.5mm; }
+
+/* ---------- Blocks ---------- */
+.callout { border-left: 2.5pt solid var(--accent); background: var(--accent-bg);
+           padding: 3mm 4mm; margin: 0 0 4mm; page-break-inside: avoid; }
+.callout.warn { border-left-color: var(--warn); background: var(--warn-bg); }
+.callout.good { border-left-color: var(--good); background: var(--good-bg); }
+.callout .tag { font-family: var(--mono); font-size: 7.2pt; letter-spacing: .1em;
+                text-transform: uppercase; display: block; margin-bottom: 1.5mm; color: var(--accent); }
+.callout.warn .tag { color: var(--warn); }
+.callout.good .tag { color: var(--good); }
+.callout p:last-child { margin-bottom: 0; }
+
+.formula { font-family: var(--mono); font-size: 9pt; background: var(--sunk);
+           border: .5pt solid var(--rule); border-radius: 2pt; padding: 3.5mm 4mm;
+           margin: 0 0 4mm; page-break-inside: avoid; line-height: 1.7; }
+.formula .hl { color: var(--accent); font-weight: 600; }
+
+.flow { font-family: var(--mono); font-size: 8.2pt; line-height: 1.75; background: var(--sunk);
+        border: .5pt solid var(--rule); padding: 4mm; margin: 0 0 4mm; page-break-inside: avoid; }
+
+.msg { border: .5pt solid var(--rule-hi); border-radius: 2pt; padding: 4mm; margin: 0 0 4mm;
+       font-family: var(--sans); font-size: 8.8pt; page-break-inside: avoid; }
+.msg .from { font-family: var(--mono); font-size: 7.2pt; letter-spacing: .08em;
+             text-transform: uppercase; color: var(--ink-mute); margin-bottom: 2.5mm;
+             padding-bottom: 2mm; border-bottom: .5pt solid var(--rule); }
+.msg .head { font-weight: 600; margin-bottom: 2.5mm; }
+.msg .btns { margin-top: 3.5mm; padding-top: 3mm; border-top: .5pt solid var(--rule); }
+.msg .btn { font-family: var(--sans); font-size: 8pt; border: .5pt solid var(--rule-hi);
+            border-radius: 2pt; padding: 1.2mm 4mm; margin-right: 2mm; display: inline-block; }
+
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm; page-break-inside: avoid; }
+.avoid { page-break-inside: avoid; }
+footer.end { margin-top: 8mm; padding-top: 3mm; border-top: 1.5pt solid var(--ink);
+             font-size: 8pt; color: var(--ink-mute); font-family: var(--sans); }
+</style>
+
+<!-- ============================ COVER ============================ -->
+<div class="cover">
+  <div class="kicker">Capacity Intelligence Platform</div>
+  <h1>Module 5<br>Capacity-Denial<br>Revenue Impact Calculator</h1>
+  <p class="sub">How it works, end to end — data, math, and alerts</p>
+  <p class="abstract">When a customer's capacity request is denied and only fixed later — or never
+  fixed at all — that shortfall stays invisible. It sits as an individual support ticket with no
+  roll-up, so finance and sales leadership never see it as a business risk. This module reads those
+  tickets, separates the ones that were denied-and-later-approved from the ones denied-and-never-fulfilled,
+  converts each into a revenue figure, ranks regions by exposure, and posts a written recommendation
+  into Teams for a person to approve.</p>
+  <dl>
+    <dt>Status</dt><dd>Deployed and live — weekly, Mondays 08:00 UTC</dd>
+    <dt>Workspace</dt><dd>Fabric Accelerators · <code>f78efe69-fe5e-494b-8433-77d828725ad1</code></dd>
+    <dt>Lakehouse</dt><dd>Fabric_Capacity_Intelligence</dd>
+    <dt>Data in this document</dt><dd>Synthetic ICM extract, 60 tickets, as of 2026-01-28</dd>
+    <dt>Revenue figures</dt><dd>Illustrative — the ARR reference is placeholder data</dd>
+    <dt>Document date</dt><dd>11 August 2026</dd>
+  </dl>
+</div>
+
+<!-- ============================ 1. WHAT EXISTS ============================ -->
+<section class="cont">
+<h2><span class="num">1</span>What was built</h2>
+
+<p class="lede">Seven stages. Everything numeric happens in pandas and is fully deterministic;
+the language model touches only wording, at stage 6, and never a figure.</p>
+
+<div class="flow">
+  ICM extract (.xlsx / Delta)
+      │
+      ▼
+  <span style="color:#0d5f5c">1. BRONZE</span>  raw rows, nothing coerced ............ 60 rows × 9 cols
+      │
+      ▼
+  <span style="color:#0d5f5c">2. SILVER</span>  typed, trimmed, de-duplicated ....... 60 rows + DQ report
+      │
+      ▼
+  <span style="color:#0d5f5c">3. GOLD</span>    joined to subscription/ARR .......... 60 rows × 12 cols
+      │
+      ▼
+  <span style="color:#0d5f5c">4. CLASSIFY</span> four outcomes from date comparison
+      │       └─ GATE: must score 60/60 vs labelled sample, or delivery is blocked
+      ▼
+  <span style="color:#0d5f5c">5. PRICE</span>   ARR × capacity share × days ÷ 365
+      │
+      ▼
+  <span style="color:#0d5f5c">6. RANK</span>    group by region, order by exposure .. 11 regions
+      │
+      ▼
+  <span style="color:#0d5f5c">7. RECOMMEND</span> one action per top-3 region  (LLM wording, grounding-checked)
+      │
+      ▼
+  <span style="color:#0d5f5c">8. DELIVER</span>  Teams card + Approve / Reject → held for a human
+</div>
+
+<h3>Where it runs</h3>
+<table>
+  <tr><th>Component</th><th>Identity</th><th>What it does</th></tr>
+  <tr><td>Notebook <code>nb_module5_capacity_denial</code></td><td><code>4f3bb0a5…af0a</code></td>
+      <td>Runs all eight stages; writes five Delta tables</td></tr>
+  <tr><td>Pipeline <code>PL_Module5_CapacityDenialRevenueImpact</code></td><td><code>16a11c2b…3af5</code></td>
+      <td>Triggers the notebook weekly, Mon 08:00 UTC</td></tr>
+  <tr><td>Key Vault <code>kv-fabcap-ptg</code></td><td>Rg-IPTool-Dev, eastus</td>
+      <td>Holds the Teams webhook and the Foundry API key</td></tr>
+  <tr><td>Teams channel</td><td><code>capacity-findings-test</code></td>
+      <td>Receives the written finding</td></tr>
+  <tr><td>LLM</td><td>DeepSeek-V4-Flash (Azure AI Foundry)</td>
+      <td>Wording only — never a number</td></tr>
+</table>
+
+<div class="callout good">
+  <span class="tag">Verified end to end</span>
+  <p>The analysis produces byte-identical figures on a laptop and inside Fabric. 81 automated tests
+  pass in under a second, and the classifier reproduces all 60 known answers in the pre-labelled
+  sample.</p>
+</div>
+</section>
+
+<!-- ============================ 2. BRONZE ============================ -->
+<section>
+<h2><span class="num">2</span>Bronze — the raw layer</h2>
+
+<p class="lede">Exactly what the ICM export contained. Nothing is typed, trimmed, or corrected here,
+so there is always an unaltered copy to compare against when a number is questioned.</p>
+
+<p><strong>60 rows × 9 columns, every value a string.</strong> Dates are still ISO text, capacities
+are still text, and nothing has been dropped.</p>
+
+<table class="tight">
+  <caption>Bronze schema — the ICM ticket columns</caption>
+  <tr><th>Column</th><th>Example</th><th>What it is</th></tr>
+  <tr><td><code>IncidentId</code></td><td>677681988</td><td>The support ticket</td></tr>
+  <tr><td><code>SubscriptionId</code></td><td>48840256-5fa3-…</td><td>Which customer</td></tr>
+  <tr><td><code>TenantId</code></td><td>f79c09b4-e935-…</td><td>Their tenant</td></tr>
+  <tr><td><code>Region</code></td><td>westeurope</td><td>Azure region requested</td></tr>
+  <tr><td><code>CurrentLimitCapacity</code></td><td>4</td><td>Capacity they already had</td></tr>
+  <tr><td><code>AdditionalLimitCapacity</code></td><td>83</td><td>Extra capacity asked for</td></tr>
+  <tr><td><code>NewLimitCapacity</code></td><td>87</td><td>Capacity they ended up with</td></tr>
+  <tr><td><code>DeniedDate</code></td><td>2025-10-06T16:30:29.000Z</td><td>When it was refused (blank if never)</td></tr>
+  <tr><td><code>ApprovedDate</code></td><td>2025-11-01T03:30:29.000Z</td><td>When it was granted (blank if never)</td></tr>
+</table>
+
+<h3>Two reference tables arrive alongside it</h3>
+<table class="tight">
+  <tr><th>Sheet</th><th class="n">Rows</th><th>Purpose</th></tr>
+  <tr><td><code>Subscription_Reference</code></td><td class="n">26</td>
+      <td>Subscription → tier and ARR. <strong>Placeholder data today.</strong></td></tr>
+  <tr><td><code>Expected_Classifications</code></td><td class="n">60</td>
+      <td>Hand-labelled correct answer for every ticket — the classifier's exam</td></tr>
+</table>
+
+<table class="tight">
+  <caption>Subscription reference — tiers present</caption>
+  <tr><th>Tier</th><th class="n">Customers</th><th class="n">ARR range (USD)</th></tr>
+  <tr><td>Enterprise</td><td class="n">7</td><td class="n">330,818 – 565,026</td></tr>
+  <tr><td>Premium</td><td class="n">4</td><td class="n">91,844 – 127,297</td></tr>
+  <tr><td>Standard</td><td class="n">8</td><td class="n">17,927 – 34,718</td></tr>
+  <tr><td>Free</td><td class="n">5</td><td class="n">0</td></tr>
+</table>
+
+<div class="callout warn">
+  <span class="tag">Why Free tier matters</span>
+  <p>Five customers carry $0 ARR. They still appear in every ticket count, but contribute zero
+  dollars of exposure. That is intentional — a free customer waiting on capacity is a real service
+  failure but not a revenue risk, and conflating the two would inflate the headline figure.</p>
+</div>
+</section>
+
+<!-- ============================ 3. SILVER ============================ -->
+<section>
+<h2><span class="num">3</span>Silver — the cleaned layer</h2>
+
+<p class="lede">Same 60 tickets, now typed and checked. Every correction is recorded rather than
+applied silently, so nothing disappears without appearing in a report.</p>
+
+<h4>What changes</h4>
+<table class="tight">
+  <tr><th>Operation</th><th>Detail</th></tr>
+  <tr><td>Text trimmed</td><td>IDs and region names stripped of whitespace; <code>"nan"</code> and <code>"None"</code> become empty</td></tr>
+  <tr><td>Dates parsed</td><td>ISO strings → UTC timestamps. Unparseable becomes null, not a guess</td></tr>
+  <tr><td>Capacities parsed</td><td>Text → numbers; missing becomes 0</td></tr>
+  <tr><td>Duplicates removed</td><td>Repeated <code>IncidentId</code> — first kept, rest listed in the report</td></tr>
+  <tr><td>Unusable rows dropped</td><td>No region, or neither date present — nothing can be said about these</td></tr>
+  <tr><td>Inversions flagged, <em>not</em> dropped</td><td>Approved before denied → own category, visible downstream</td></tr>
+</table>
+
+<h4>Data-quality result on this extract</h4>
+<div class="callout good">
+  <span class="tag">Clean</span>
+  <p><strong>60 of 60 tickets usable.</strong> No duplicates, no missing regions, no rows without
+  dates, no inverted date pairs, no negative capacities, and every subscription matched the ARR
+  reference. Nothing was dropped.</p>
+</div>
+
+<p>Had anything failed, the count and the specific incident IDs would appear in the run output and
+in the Teams message, rather than the total quietly shrinking.</p>
+
+<h3>Gold — adding the business context</h3>
+<p>Silver joins to the subscription reference on <code>SubscriptionId</code>, producing the layer the
+analysis actually reads: <strong>60 rows × 12 columns</strong> — the nine ticket columns plus
+<code>SubscriptionTier</code>, <code>ARR_USD</code>, and the join indicator.</p>
+
+<table class="tight">
+  <caption>Gold — three representative rows</caption>
+  <tr><th>Incident</th><th>Region</th><th>Tier</th><th class="n">ARR (USD)</th><th>Denied</th><th>Approved</th></tr>
+  <tr><td>603081913</td><td>eastus2</td><td>Enterprise</td><td class="n">330,818</td><td>2025-11-27</td><td>—</td></tr>
+  <tr><td>613636224</td><td>centralindia</td><td>Enterprise</td><td class="n">562,514</td><td>—</td><td>2025-09-12</td></tr>
+  <tr><td>677681988</td><td>westeurope</td><td>Enterprise</td><td class="n">562,514</td><td>2025-10-06</td><td>2025-11-01</td></tr>
+</table>
+
+<div class="callout">
+  <span class="tag">Unmatched subscriptions</span>
+  <p>A subscription with no ARR record contributes $0 exposure rather than crashing the run. It still
+  appears in ticket counts and is named in the data-quality report, so the gap is visible instead of
+  being mistaken for good news.</p>
+</div>
+</section>
+
+<!-- ============================ 4. CLASSIFIER ============================ -->
+<section>
+<h2><span class="num">4</span>The classifier — what counts as a failure</h2>
+
+<p class="lede">A date comparison, not a model. Two dates go in, one of five categories comes out.
+It is simple on purpose: simple is testable, and this decides which tickets cost money.</p>
+
+<div class="formula">
+delay = ApprovedDate − DeniedDate
+
+no DeniedDate,   has ApprovedDate  →  <span class="hl">no_denial</span>            never refused
+has DeniedDate,  no ApprovedDate   →  <span class="hl">denied_unfulfilled</span>   ← FAILURE
+delay ≤ 48 hours                   →  <span class="hl">same_day_approved</span>    normal turnaround
+delay &gt; 48 hours                   →  <span class="hl">denied_then_approved_late</span> ← FAILURE
+delay &lt; 0                          →  <span class="hl">data_quality_error</span>   never counted, always surfaced
+</div>
+
+<p>Only the two marked FAILURE carry revenue impact. Everything else scores zero and stays in the
+data for context.</p>
+
+<table>
+  <caption>Result on this extract</caption>
+  <tr><th>Category</th><th class="n">Tickets</th><th class="n">Share</th><th>Counts as failure</th></tr>
+  <tr><td>Denied, then approved late</td><td class="n">18</td><td class="n">30%</td><td>Yes</td></tr>
+  <tr><td>Denied, never fulfilled</td><td class="n">12</td><td class="n">20%</td><td>Yes</td></tr>
+  <tr><td>Approved inside the cut-off</td><td class="n">15</td><td class="n">25%</td><td>No</td></tr>
+  <tr><td>No denial on record</td><td class="n">15</td><td class="n">25%</td><td>No</td></tr>
+  <tr><td>Data quality error</td><td class="n">0</td><td class="n">0%</td><td>Never</td></tr>
+  <tr class="total"><td>Total</td><td class="n">60</td><td class="n">100%</td><td>30 failures</td></tr>
+</table>
+
+<h3>Where the 48-hour cut-off comes from</h3>
+<p>The labelled sample settles it. Among tickets with both dates, the
+<code>same_day_approved</code> group runs up to <strong>29 hours</strong> and the
+<code>denied_then_approved_late</code> group starts at <strong>145 hours</strong>. Nothing sits in
+between, so any cut-off in <strong>[29, 145) hours</strong> reproduces the labels exactly. 48 hours —
+two business days — sits comfortably inside that band and is generous to the capacity team: nothing
+under two days is called a failure.</p>
+
+<div class="callout warn">
+  <span class="tag">This becomes a policy decision on real data</span>
+  <p>The clean gap between 29h and 145h is an artefact of synthetic data. Real ICM tickets will fill
+  it in, at which point the cut-off stops being data-derived and becomes a judgement owned by whoever
+  owns the capacity SLA. It lives in <code>config.json</code>, and every output states the value it
+  ran with.</p>
+</div>
+
+<h3>The gate</h3>
+<p>Before any figure is published, the classifier is scored against all 60 hand-labelled answers.
+It currently scores <strong>60/60</strong>. If it ever scores less, the run still produces every
+artefact for debugging but <strong>delivery is blocked</strong> — nothing reaches a leadership
+channel from a classifier that just got a known answer wrong.</p>
+</section>
+
+<!-- ============================ 5. THE MATH ============================ -->
+<section>
+<h2><span class="num">5</span>The math — turning a shortfall into dollars</h2>
+
+<p class="lede">Two different figures are reported because they answer two different questions.
+Keeping them apart is the whole point; conflating them is how a credible estimate becomes a number
+nobody trusts.</p>
+
+<div class="two">
+  <div>
+    <h4>ARR affected — blast radius</h4>
+    <p>The <em>entire</em> annual revenue of every customer who hit a failure, each counted once no
+    matter how many bad tickets they had.</p>
+    <p><strong>Answers:</strong> how much of our customer base was touched by this?</p>
+    <p><strong>This period: $1.93M</strong> across 15 customers.</p>
+  </div>
+  <div>
+    <h4>Revenue exposure — risk-adjusted</h4>
+    <p>Only the portion of revenue genuinely at stake: the share of capacity they were missing, for
+    only the days they went without it.</p>
+    <p><strong>Answers:</strong> what was actually put at risk?</p>
+    <p><strong>This period: $146K</strong> — 7.6% of the blast radius.</p>
+  </div>
+</div>
+
+<div class="formula">
+<span class="hl">exposure = ARR × capacity_share × (days_unavailable ÷ 365)</span>
+
+  ARR                = the customer's annual recurring revenue
+  capacity_share     = blocked units ÷ requested units      how much they were missing
+  requested units    = CurrentLimit + AdditionalLimit
+  days_unavailable   = late approval  → the delay itself
+                       unfulfilled    → denial date to today, capped at 365 days
+</div>
+
+<div class="callout">
+  <span class="tag">Why divide by 365</span>
+  <p>ARR is an annual figure, so it is converted to a daily rate before being multiplied by the days
+  a customer went without capacity. A customer missing 100% of their capacity for a full year would
+  show exposure equal to their entire ARR; missing half of it for half a year shows a quarter.</p>
+</div>
+<h3>Worked example 1 — a late approval</h3>
+<p><strong>Incident 677681988</strong>, westeurope, Enterprise customer. Denied 6 October 2025,
+approved 1 November 2025.</p>
+
+<table class="tight">
+  <tr><th>Input</th><th class="n">Value</th><th>Where it comes from</th></tr>
+  <tr><td>Customer ARR</td><td class="n">$562,514</td><td>Subscription reference</td></tr>
+  <tr><td>Capacity they had</td><td class="n">4 units</td><td><code>CurrentLimitCapacity</code></td></tr>
+  <tr><td>Capacity requested</td><td class="n">83 units</td><td><code>AdditionalLimitCapacity</code></td></tr>
+  <tr><td>Total requested</td><td class="n">87 units</td><td>4 + 83</td></tr>
+  <tr><td>Blocked while waiting</td><td class="n">83 units</td><td>the part they didn't have</td></tr>
+  <tr><td>Capacity share</td><td class="n">95.4%</td><td>83 ÷ 87</td></tr>
+  <tr><td>Days unavailable</td><td class="n">25.5</td><td>6 Oct → 1 Nov</td></tr>
+</table>
+
+<div class="formula">
+exposure = 562,514 × 0.954 × (25.5 ÷ 365)
+         = 562,514 × 0.954 × 0.0697
+         = <span class="hl">$37,431</span>
+</div>
+
+<p>Read plainly: this customer was missing 95% of the capacity they needed for 25 days. Charged
+against their annual revenue at a daily rate, that shortfall is worth roughly $37K — the single
+largest exposure in the period.</p>
+
+<h3>Worked example 2 — never fulfilled</h3>
+<p><strong>Incident 603961530</strong>, westeurope, same Enterprise customer. Denied 3 January 2026,
+still not approved. They asked for 128 units on top of 10, and ended the period with the same 10 they
+started with.</p>
+
+<div class="formula">
+capacity_share   = 128 ÷ 138 = 92.8%
+days_unavailable = 3 Jan → 28 Jan (as-of) = 24.9 days   <span style="color:#6d7780">← still accruing</span>
+
+exposure = 562,514 × 0.928 × (24.9 ÷ 365) = <span class="hl">$35,622</span>
+</div>
+
+<p>The difference from example 1 matters: a late approval's clock has <em>stopped</em>. This one is
+still running, and grows every day the ticket stays open.</p>
+
+<h3>Worked example 3 — not a failure</h3>
+<p><strong>Incident 618092636</strong>, southcentralus. Denied and approved 22 hours later — inside
+the 48-hour cut-off, so it is classed <code>same_day_approved</code> and its exposure is
+<strong>$0.00</strong>. It stays in the ticket counts, contributing nothing to the ranking.</p>
+
+</section>
+
+<!-- ============================ 6. RANKING ============================ -->
+<section>
+<h2><span class="num">6</span>Ranking — which region to fix first</h2>
+
+<p class="lede">Every ticket's exposure is summed by region and ordered. Regions with no failures keep
+their row: "that region had nine requests and none failed" is an answer someone will ask for.</p>
+
+<table>
+  <caption>All 11 regions, ranked by revenue exposure</caption>
+  <tr><th class="n">#</th><th>Region</th><th class="n">Failed</th><th class="n">Late</th>
+      <th class="n">Unfulfilled</th><th class="n">Customers</th><th class="n">ARR affected</th>
+      <th class="n">Exposure</th><th class="n">Share</th></tr>
+  <tr><td class="n">1</td><td>westeurope</td><td class="n">4</td><td class="n">3</td><td class="n">1</td><td class="n">3</td><td class="n">$690K</td><td class="n">$76,309</td><td class="n">52.1%</td></tr>
+  <tr><td class="n">2</td><td>northcentralus</td><td class="n">2</td><td class="n">1</td><td class="n">1</td><td class="n">2</td><td class="n">$439K</td><td class="n">$42,352</td><td class="n">28.9%</td></tr>
+  <tr><td class="n">3</td><td>eastus2</td><td class="n">5</td><td class="n">2</td><td class="n">3</td><td class="n">5</td><td class="n">$502K</td><td class="n">$10,785</td><td class="n">7.4%</td></tr>
+  <tr><td class="n">4</td><td>centralindia</td><td class="n">1</td><td class="n">0</td><td class="n">1</td><td class="n">1</td><td class="n">$108K</td><td class="n">$5,856</td><td class="n">4.0%</td></tr>
+  <tr><td class="n">5</td><td>uksouth</td><td class="n">1</td><td class="n">1</td><td class="n">0</td><td class="n">1</td><td class="n">$565K</td><td class="n">$2,786</td><td class="n">1.9%</td></tr>
+  <tr><td class="n">6</td><td>canadacentral</td><td class="n">5</td><td class="n">4</td><td class="n">1</td><td class="n">5</td><td class="n">$720K</td><td class="n">$2,456</td><td class="n">1.7%</td></tr>
+  <tr><td class="n">7</td><td>northeurope</td><td class="n">1</td><td class="n">1</td><td class="n">0</td><td class="n">1</td><td class="n">$35K</td><td class="n">$2,268</td><td class="n">1.5%</td></tr>
+  <tr><td class="n">8</td><td>eastus</td><td class="n">2</td><td class="n">2</td><td class="n">0</td><td class="n">2</td><td class="n">$55K</td><td class="n">$1,759</td><td class="n">1.2%</td></tr>
+  <tr><td class="n">9</td><td>westus2</td><td class="n">2</td><td class="n">1</td><td class="n">1</td><td class="n">2</td><td class="n">$92K</td><td class="n">$1,289</td><td class="n">0.9%</td></tr>
+  <tr><td class="n">10</td><td>southcentralus</td><td class="n">3</td><td class="n">1</td><td class="n">2</td><td class="n">3</td><td class="n">$35K</td><td class="n">$599</td><td class="n">0.4%</td></tr>
+  <tr><td class="n">11</td><td>canadaeast</td><td class="n">4</td><td class="n">2</td><td class="n">2</td><td class="n">4</td><td class="n">$108K</td><td class="n">$10</td><td class="n">0.0%</td></tr>
+  <tr class="total"><td></td><td>Total</td><td class="n">30</td><td class="n">18</td><td class="n">12</td><td class="n">15*</td><td class="n">$1.93M*</td><td class="n">$146,470</td><td class="n">100%</td></tr>
+</table>
+<p style="font-size:8pt;color:#6d7780">* Customers and ARR are de-duplicated across regions, so the
+totals are lower than the column sums — one customer failing in three regions is still one customer.</p>
+
+<div class="callout">
+  <span class="tag">Why more failures can rank lower</span>
+  <p>canadacentral had <strong>5 failures</strong> but ranks 6th at $2.5K, while westeurope's
+  <strong>4 failures</strong> rank 1st at $76K. Exposure scales with customer size, the share of
+  capacity missing, and duration — so a handful of large customers blocked on most of their capacity
+  for weeks outranks more numerous small, brief, partial shortfalls. Ticket counts alone would have
+  pointed the team at the wrong region.</p>
+</div>
+
+<h3>Is it getting worse?</h3>
+<table class="tight">
+  <caption>Exposure by month of denial</caption>
+  <tr><th>Month</th><th class="n">Failed requests</th><th class="n">Exposure</th></tr>
+  <tr><td>2025-09</td><td class="n">5</td><td class="n">$4,445</td></tr>
+  <tr><td>2025-10</td><td class="n">6</td><td class="n">$38,864</td></tr>
+  <tr><td>2025-11</td><td class="n">6</td><td class="n">$10,134</td></tr>
+  <tr><td>2025-12</td><td class="n">10</td><td class="n">$56,806</td></tr>
+  <tr><td>2026-01</td><td class="n">3</td><td class="n">$36,221</td></tr>
+</table>
+<p>December is the worst month on both counts. January looks better on volume but not on value —
+three failures carrying $36K, because the unfulfilled ones are still accruing.</p>
+</section>
+
+<!-- ============================ 7. RECOMMENDATION ============================ -->
+<section>
+<h2><span class="num">7</span>The recommendation — what to actually change</h2>
+
+<p class="lede">One recommendation per top-3 region. Rule-based, because a number a reviewer can check
+beats a fluent paragraph they cannot.</p>
+
+<h4>Step 1 — diagnose the failure mode</h4>
+<table class="tight">
+  <tr><th>Pattern</th><th>Diagnosis</th><th>Lever</th></tr>
+  <tr><td>Mostly late approvals</td><td>Capacity existed; approval was slow</td><td>Raise the auto-approval threshold</td></tr>
+  <tr><td>Mostly unfulfilled</td><td>Requests fell out of the process entirely</td><td>Named owner + fulfilment SLA</td></tr>
+  <tr><td>Both</td><td>Two problems at once</td><td>Threshold <em>and</em> a fulfilment check</td></tr>
+</table>
+<p>The distinction matters: a faster approval queue does nothing for requests that were never
+fulfilled, because nobody was waiting on an approval in the first place.</p>
+
+<h4>Step 2 — size the threshold against real request sizes</h4>
+<p>Capacity is provisioned in discrete sizes (3, 4, 8, 16, 44, 83, 128, 512 …). The module walks the
+ladder of request sizes that actually failed in that region and picks the smallest rung clearing 80%
+of them — so the recommendation is a number someone can actually provision, not an average.</p>
+
+<h4>Step 3 — attach the evidence</h4>
+<p>Each recommendation names its two or three worst tickets with their arithmetic, so a reviewer can
+disagree with the <em>policy</em> without having to re-derive the <em>evidence</em>.</p>
+
+<h3>The three recommendations this period</h3>
+
+<table>
+  <tr><th class="n">#</th><th>Region</th><th>Diagnosis</th><th>Recommended action</th></tr>
+  <tr><td class="n">1</td><td>westeurope<br><span style="font-size:7.6pt;color:#6d7780">$76K</span></td>
+      <td>Delay-dominant — 3 late, 1 unfulfilled. Median 10 days late, worst 26.</td>
+      <td>Raise the auto-approval threshold to <strong>166 units</strong>. Would have cleared 100% of
+      failed requests without review.</td></tr>
+  <tr><td class="n">2</td><td>northcentralus<br><span style="font-size:7.6pt;color:#6d7780">$42K</span></td>
+      <td>Mixed — 1 late, 1 never fulfilled.</td>
+      <td>Raise the baseline ceiling to <strong>512 units</strong> and add a fulfilment check on
+      denials open past 7 days.</td></tr>
+  <tr><td class="n">3</td><td>eastus2<br><span style="font-size:7.6pt;color:#6d7780">$11K</span></td>
+      <td>Mixed, unfulfilled-leaning — 2 late, 3 never fulfilled.</td>
+      <td>Raise the baseline ceiling to <strong>132 units</strong> and add the same 7-day fulfilment
+      check.</td></tr>
+</table>
+
+<h3>Where the language model fits</h3>
+<p>Every figure above is computed in pandas before the model is called. DeepSeek-V4-Flash is given
+the finished finding and asked only to write it up. Its output is then checked:</p>
+<ul>
+  <li>Every dollar figure must already have appeared in its input, or the rewrite is discarded</li>
+  <li>Region names must be exact Azure identifiers — <code>westeurope</code>, not "West Europe" —
+      because someone will paste them into ICM</li>
+  <li>Aggregates it might want, like the top-3 subtotal, are pre-computed and handed over, so it
+      never performs arithmetic</li>
+</ul>
+<p>If the check fails, or the model is unreachable, the deterministic text is posted instead and the
+run still succeeds. <strong>The model cannot change a number, only how it reads.</strong></p>
+</section>
+
+<!-- ============================ 8. THE ALERT ============================ -->
+<section>
+<h2><span class="num">8</span>The alert — what gets sent, and to whom</h2>
+
+<p class="lede">The point of the module is that nobody should have to open a report and interpret it.
+Every Monday at 08:00 UTC the agent posts the finding into Teams by itself.</p>
+
+<div class="msg">
+  <div class="from">Workflows → capacity-findings-test · Monday 08:00 UTC</div>
+  <div class="head">Capacity-Denial Revenue Impact</div>
+  <p><strong>westeurope, northcentralus, and eastus2 account for 88% of the $146K risk-adjusted
+  revenue exposure from 30 failed capacity requests across 11 regions.</strong></p>
+  <p>Of 60 capacity requests reviewed for the period ending 2026-01-28, 30 failed (18 approved past
+  the 48h cut-off, 12 never fulfilled), affecting 15 customers with $1.93M ARR.</p>
+  <p><strong>westeurope</strong> — Raise the auto-approval threshold to 166 units. 3 requests were
+  approved a median of 10 days after denial (worst: 26 days); a 166-unit ceiling would have cleared
+  100% of failed requests without review.<br>
+  <em>Evidence: Incident 677681988 — 83 units requested, approved 25 days late, $37K exposure.</em></p>
+  <p><strong>northcentralus</strong> — Raise the baseline ceiling to 512 units and add a fulfilment
+  check on denials open past 7 days.</p>
+  <p><strong>eastus2</strong> — Raise the baseline ceiling to 132 units and add the same check.</p>
+  <p style="color:#6d7780;font-size:8pt">Figures are illustrative: the subscription ARR reference is
+  still placeholder data. Rankings hold; absolute dollars do not. This finding is pending human
+  review; nothing has been changed.</p>
+  <div class="btns"><span class="btn">Approve</span><span class="btn">Reject</span></div>
+</div>
+
+<h3>What else the run produces</h3>
+<table class="tight">
+  <tr><th>Delta table</th><th>One row per</th><th>Used for</th></tr>
+  <tr><td><code>dbo.module5_tickets_classified</code></td><td>ticket (60)</td><td>Audit and drill-through</td></tr>
+  <tr><td><code>dbo.module5_region_exposure</code></td><td>region (11)</td><td>The ranking; Power BI</td></tr>
+  <tr><td><code>dbo.module5_customer_exposure</code></td><td>affected customer (15)</td><td>Account follow-up</td></tr>
+  <tr><td><code>dbo.module5_exposure_trend</code></td><td>month (5)</td><td>Is this getting worse?</td></tr>
+  <tr><td><code>dbo.module5_recommendations</code></td><td>top region (3)</td><td>The human review queue</td></tr>
+</table>
+<h3>Follow-up questions in the same thread</h3>
+<p>Anyone can ask the agent directly rather than opening a dashboard. Answers come from the same
+computed tables that produced the card, so the chat can never contradict the message:</p>
+
+<table class="tight">
+  <tr><th>Question</th><th>What comes back</th></tr>
+  <tr><td>"why is uksouth ranked lower?"</td><td>Its rank, exposure, failure counts, and the gap to #1, with the reason exposure scales the way it does</td></tr>
+  <tr><td>"which region is worst?"</td><td>Top region with its figures and the recommended action</td></tr>
+  <tr><td>"which customers are affected?"</td><td>The five largest by exposure, with tier and regions</td></tr>
+  <tr><td>"show me incident 603081913"</td><td>That ticket's full arithmetic, line by line</td></tr>
+  <tr><td>"how is exposure calculated?"</td><td>The formula, the cut-off, and the ARR-affected distinction</td></tr>
+</table>
+
+<h3>Nothing is ever executed automatically</h3>
+<p>Every card carries Approve / Reject. The module reports and recommends; it does not change a
+capacity policy, submit a request, or alter a ticket. Two independent safeguards sit in front of
+delivery:</p>
+<ol>
+  <li><strong>The classifier gate</strong> — a run that fails the 60-answer exam publishes nothing</li>
+  <li><strong>The grounding check</strong> — a write-up containing an unverifiable figure is discarded
+      in favour of the deterministic text</li>
+</ol>
+
+</section>
+
+<!-- ============================ 9. CAVEATS ============================ -->
+<section>
+<h2><span class="num">9</span>What is real, and what is not</h2>
+
+<p class="lede">The machinery is production-ready. The inputs are not yet, and the difference matters
+before anyone acts on a dollar figure.</p>
+
+<table>
+  <tr><th>Element</th><th>Status</th></tr>
+  <tr><td>Classifier logic</td><td><strong>Real.</strong> 60/60 on the labelled sample, boundary cases tested either side of the cut-off</td></tr>
+  <tr><td>Exposure formula</td><td><strong>Real.</strong> Arithmetic verified against hand-computed answers</td></tr>
+  <tr><td>Ranking and aggregation</td><td><strong>Real.</strong> Totals reconcile to the ticket table; de-duplication tested</td></tr>
+  <tr><td>Delivery, gate, grounding check</td><td><strong>Real.</strong> Live in Fabric, verified end to end</td></tr>
+  <tr><td>Ticket data</td><td><strong>Synthetic.</strong> 60 generated tickets mirroring the real ICM schema</td></tr>
+  <tr><td>ARR figures</td><td><strong>Placeholder.</strong> Every output says so until the real reference lands</td></tr>
+</table>
+
+<h3>Three things that would change the numbers</h3>
+
+<h4>1 · The revenue reference — changes every dollar</h4>
+<p>Rankings hold because they depend on relative customer size, which the placeholder preserves
+roughly. Absolute dollars do not. Worth deciding at the same time: <strong>ARR or ACR?</strong> Azure
+Consumed Revenue may be the more defensible basis, since a customer blocked on capacity cannot
+consume — which is the shortfall being measured.</p>
+
+<h4>2 · Ticket status — likely overstates exposure today</h4>
+<p>Without a status field, "denied with no approval date" cannot be separated into
+<em>rejected permanently</em> and <em>still being worked</em>. Both are currently counted as failures.
+That affects <strong>12 of the 30</strong> flagged requests and, because unfulfilled tickets accrue
+exposure every day, it inflates the headline. A status column from ICM is the single change that
+would most improve the honesty of this number.</p>
+
+<h4>3 · Multiple denial rounds</h4>
+<p>The schema carries one denial date and one approval date. If ICM records a history, a request
+denied twice before approval is a worse outcome than this model can currently express.</p>
+
+<div class="callout warn">
+  <span class="tag">Read the headline this way</span>
+  <p>"$146K of revenue exposure" today means: <em>given placeholder ARR figures and treating every
+  open denial as a failure, this is the scale and, more usefully, this is the ordering of regions.</em>
+  The ordering is the actionable part. The dollars become trustworthy when the ARR reference and the
+  ticket status column arrive.</p>
+</div>
+
+<h3>Policy settings, all in one place</h3>
+<table class="tight">
+  <tr><th>Setting</th><th class="n">Value</th><th>Effect of changing it</th></tr>
+  <tr><td><code>meaningful_delay_hours</code></td><td class="n">48</td><td>What counts as a failure at all</td></tr>
+  <tr><td><code>severity_medium_days</code></td><td class="n">7</td><td>When a delay stops being routine</td></tr>
+  <tr><td><code>severity_high_days</code></td><td class="n">21</td><td>When a delay becomes a headline</td></tr>
+  <tr><td><code>unfulfilled_cap_days</code></td><td class="n">365</td><td>How much one old open ticket can dominate</td></tr>
+  <tr><td><code>annualisation_days</code></td><td class="n">365</td><td>ARR → daily rate conversion</td></tr>
+  <tr><td><code>top_n_regions</code></td><td class="n">3</td><td>How many recommendations per message</td></tr>
+</table>
+<p>All live in <code>config.json</code>. Every output prints the values it ran with, so a reader can
+always see the assumptions behind a figure.</p>
+
+<footer class="end">
+  Module 5 — Capacity-Denial Revenue Impact Calculator · Capacity Intelligence Platform<br>
+  Figures from the synthetic ICM extract, 60 tickets, as of 2026-01-28. Revenue figures illustrative.
+</footer>
+</section>

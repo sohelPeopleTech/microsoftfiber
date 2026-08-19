@@ -1,0 +1,173 @@
+<title>Capacity Intelligence</title>
+<style>
+:root {
+  --surface:#fcfcfb; --surface-2:#f4f4f2; --ink:#0b0b0b; --ink-2:#52514e; --ink-3:#82817c;
+  --rule:#e3e2de; --rule-2:#cfcec9;
+  --series:#2a78d6;
+  --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface:#1a1a19; --surface-2:#222221; --ink:#ffffff; --ink-2:#c3c2b7; --ink-3:#8b8a84;
+    --rule:#333331; --rule-2:#45443f; --series:#3987e5;
+  }
+}
+:root[data-theme="dark"] {
+  --surface:#1a1a19; --surface-2:#222221; --ink:#ffffff; --ink-2:#c3c2b7; --ink-3:#8b8a84;
+  --rule:#333331; --rule-2:#45443f; --series:#3987e5;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:0 1.5rem 5rem;background:var(--surface);color:var(--ink);
+  font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:74rem;margin:0 auto}
+header{padding:3rem 0 1.25rem;border-bottom:2px solid var(--ink);margin-bottom:2rem}
+.eyebrow{font-family:var(--mono);font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--series);margin:0 0 .6rem}
+h1{font-size:clamp(1.7rem,3.6vw,2.3rem);margin:0 0 .4rem;letter-spacing:-.02em;font-weight:650}
+.sub{color:var(--ink-2);margin:0}
+h2{font-size:1.15rem;margin:2.6rem 0 .3rem;font-weight:650;letter-spacing:-.01em}
+h2 .mod{font-family:var(--mono);font-size:.7rem;color:var(--series);letter-spacing:.1em;
+  display:block;margin-bottom:.15rem}
+.lede{color:var(--ink-2);margin:0 0 1rem;font-size:.94rem}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:1px;
+  background:var(--rule);border:1px solid var(--rule);border-radius:8px;overflow:hidden}
+.kpi{background:var(--surface);padding:1rem 1.1rem}
+.kpi-label{font-family:var(--mono);font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3)}
+.kpi-value{font-size:2rem;font-weight:650;letter-spacing:-.02em;margin:.15rem 0;
+  font-variant-numeric:tabular-nums}
+.kpi-note{font-size:.8rem;color:var(--ink-2)}
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:8px;
+  padding:1.1rem 1.2rem;margin-bottom:1rem}
+table{width:100%;border-collapse:collapse;font-size:.86rem}
+th{font-family:var(--mono);font-size:.66rem;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--ink-3);text-align:left;padding:.45rem .55rem;border-bottom:1px solid var(--rule-2);
+  font-weight:600}
+td{padding:.45rem .55rem;border-bottom:1px solid var(--rule)}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+td.reg{font-weight:600}
+.mono{font-family:var(--mono);font-size:.8rem}
+.pill{display:inline-block;font-family:var(--mono);font-size:.63rem;letter-spacing:.06em;
+  text-transform:uppercase;padding:.14rem .45rem;border-radius:3px;border:1px solid currentColor}
+.p-breached,.p-overdue{color:var(--critical)}
+.p-due_now{color:var(--serious)}
+.p-approaching{color:var(--warning)}
+.p-stable{color:var(--good)}
+.p-synth{color:var(--ink-3)}
+.p-real{color:var(--series)}
+.chart{width:100%;height:auto;display:block;margin:.4rem 0 .2rem;overflow:visible}
+.cat{font-size:11.5px;fill:var(--ink-2);font-family:var(--sans)}
+.val{font-size:11.5px;fill:var(--ink);font-family:var(--sans);font-variant-numeric:tabular-nums}
+.tick{font-size:10.5px;fill:var(--ink-3);font-family:var(--sans)}
+.grid{stroke:var(--rule);stroke-width:1}
+.zero{stroke:var(--rule-2);stroke-width:1;stroke-dasharray:3 3}
+.bar-row:hover rect,.bar-row:hover circle{opacity:.82}
+.pt:hover circle{r:6}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+@media (max-width:70rem){.two{grid-template-columns:1fr}}
+.spike{border-left:3px solid var(--rule-2);padding:.5rem .8rem;margin-bottom:.55rem;
+  background:var(--surface-2);border-radius:0 5px 5px 0}
+.spike.matched{border-left-color:var(--series)}
+.spike.unmatched{border-left-color:var(--warning)}
+.spike-head{display:flex;gap:.55rem;align-items:baseline;font-size:.88rem}
+.tagline{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3);margin-left:auto}
+.spike-body{font-size:.83rem;color:var(--ink-2);margin-top:.15rem}
+ul.due{margin:.2rem 0 0;padding-left:1.1rem;font-size:.86rem}
+ul.due li{margin-bottom:.4rem;color:var(--ink-2)}
+ul.due b{color:var(--ink)}
+table.grid-wrap{width:100%}
+table.grid{font-size:.75rem;table-layout:fixed}
+table.grid th.rot{height:74px;vertical-align:bottom;padding:0 0 .3rem}
+table.grid th.rot span{writing-mode:vertical-rl;transform:rotate(180deg);font-family:var(--mono);
+  font-size:.64rem;color:var(--ink-3);letter-spacing:.04em}
+table.grid th[scope=row]{text-align:left;font-family:var(--sans);font-size:.76rem;
+  text-transform:none;letter-spacing:0;color:var(--ink-2);white-space:nowrap;padding-right:.6rem;
+  border-bottom:1px solid var(--rule)}
+td.cell{height:26px;border:2px solid var(--surface);border-radius:3px}
+.s-live{background:#1c5cab}
+.s-preview{background:#5598e7}
+.s-planned{background:#b7d3f6}
+.s-unavailable{background:var(--surface-2)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.legend{display:flex;gap:1rem;flex-wrap:wrap;font-family:var(--mono);font-size:.64rem;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-top:.6rem}
+.legend i{width:14px;height:10px;border-radius:2px;display:inline-block;margin-right:.3rem;
+  vertical-align:middle}
+footer{margin-top:3rem;padding-top:1rem;border-top:2px solid var(--ink);font-size:.8rem;
+  color:var(--ink-3)}
+.empty{color:var(--ink-3);font-size:.85rem}
+</style>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">Capacity Intelligence</p>
+  <h1>Capacity health across 11 regions</h1>
+  <p class="sub">Period ending 2026-01-28 · six analyses over one shared model · 253 automated tests</p>
+</header>
+
+<div class="kpis"><div class="kpi"><div class="kpi-label">Revenue exposure</div><div class="kpi-value">$146K</div><div class="kpi-note">30 of 60 requests failed</div></div><div class="kpi"><div class="kpi-label">Regions needing action</div><div class="kpi-value">4</div><div class="kpi-note">of 11 — lead time already exceeded</div></div><div class="kpi"><div class="kpi-label">Demand spikes</div><div class="kpi-value">7 of 11</div><div class="kpi-note">matched to a business event</div></div><div class="kpi"><div class="kpi-label">ARR affected</div><div class="kpi-value">$1.93M</div><div class="kpi-note">15 customers</div></div></div>
+
+<h2><span class="mod">All modules</span>Every region, every view</h2>
+<p class="lede">One row per region. Status and lead time from Module&nbsp;1, exposure from
+Module&nbsp;5, growth from Module&nbsp;3, feature coverage from Module&nbsp;6 — the same
+entities throughout, so the numbers agree.</p>
+<div class="card">
+<table>
+<thead><tr><th>Region</th><th>Threshold</th><th class="n">Used</th><th>Hardware</th>
+<th class="n">Lead</th><th class="n">Exposure</th><th class="n">Failed</th>
+<th class="n">Growth</th><th class="n">Features</th></tr></thead>
+<tbody><tr><td class="reg">southcentralus</td><td><span class="pill p-breached">breached</span></td><td class="n">97%</td><td class="mono">Intel-highmem</td><td class="n">45d</td><td class="n">$599</td><td class="n">3</td><td class="n">-523</td><td class="n">83%</td></tr><tr><td class="reg">northcentralus</td><td><span class="pill p-breached">breached</span></td><td class="n">89%</td><td class="mono">GPU-class</td><td class="n">30d</td><td class="n">$42K</td><td class="n">2</td><td class="n">+248</td><td class="n">0%</td></tr><tr><td class="reg">centralindia</td><td><span class="pill p-overdue">overdue</span></td><td class="n">82%</td><td class="mono">Intel-highmem</td><td class="n">45d</td><td class="n">$6K</td><td class="n">1</td><td class="n">-160</td><td class="n">17%</td></tr><tr><td class="reg">westeurope</td><td><span class="pill p-overdue">overdue</span></td><td class="n">83%</td><td class="mono">GPU-class</td><td class="n">30d</td><td class="n">$76K</td><td class="n">4</td><td class="n">+172</td><td class="n">33%</td></tr><tr><td class="reg">canadaeast</td><td><span class="pill p-approaching">approaching</span></td><td class="n">81%</td><td class="mono">AMD-highmem</td><td class="n">10d</td><td class="n">$10</td><td class="n">4</td><td class="n">-16</td><td class="n">67%</td></tr><tr><td class="reg">canadacentral</td><td><span class="pill p-approaching">approaching</span></td><td class="n">75%</td><td class="mono">AMD-highmem</td><td class="n">10d</td><td class="n">$2K</td><td class="n">5</td><td class="n">-15</td><td class="n">50%</td></tr><tr><td class="reg">westus2</td><td><span class="pill p-approaching">approaching</span></td><td class="n">74%</td><td class="mono">AMD-standard</td><td class="n">21d</td><td class="n">$1K</td><td class="n">2</td><td class="n">+1</td><td class="n">0%</td></tr><tr><td class="reg">uksouth</td><td><span class="pill p-approaching">approaching</span></td><td class="n">69%</td><td class="mono">AMD-highmem</td><td class="n">10d</td><td class="n">$3K</td><td class="n">1</td><td class="n">-80</td><td class="n">0%</td></tr><tr><td class="reg">northeurope</td><td><span class="pill p-approaching">approaching</span></td><td class="n">69%</td><td class="mono">AMD-standard</td><td class="n">21d</td><td class="n">$2K</td><td class="n">1</td><td class="n">+10</td><td class="n">33%</td></tr><tr><td class="reg">eastus2</td><td><span class="pill p-approaching">approaching</span></td><td class="n">66%</td><td class="mono">AMD-highmem</td><td class="n">10d</td><td class="n">$11K</td><td class="n">5</td><td class="n">-100</td><td class="n">17%</td></tr><tr><td class="reg">eastus</td><td><span class="pill p-approaching">approaching</span></td><td class="n">66%</td><td class="mono">AMD-highmem</td><td class="n">10d</td><td class="n">$2K</td><td class="n">2</td><td class="n">-40</td><td class="n">17%</td></tr></tbody></table>
+</div>
+
+<div class="two">
+  <div>
+    <h2><span class="mod">Module 5</span>Revenue exposure by region</h2>
+    <p class="lede">Risk-adjusted: customer revenue × capacity missing × days without it.</p>
+    <div class="card"><svg viewBox="0 0 680 298" role="img" aria-label="Ranked bar chart" class="chart"><g class="bar-row"><title>westeurope: $76K</title><text x="122" y="19" text-anchor="end" class="cat">westeurope</text><rect x="132" y="9" width="470.0" height="14" rx="4" fill="var(--series)"/><text x="610.0" y="20" class="val">$76K</text></g><g class="bar-row"><title>northcentralus: $42K</title><text x="122" y="45" text-anchor="end" class="cat">northcentralus</text><rect x="132" y="35" width="260.9" height="14" rx="4" fill="var(--series)"/><text x="400.9" y="46" class="val">$42K</text></g><g class="bar-row"><title>eastus2: $11K</title><text x="122" y="71" text-anchor="end" class="cat">eastus2</text><rect x="132" y="61" width="66.4" height="14" rx="4" fill="var(--series)"/><text x="206.4" y="72" class="val">$11K</text></g><g class="bar-row"><title>centralindia: $6K</title><text x="122" y="97" text-anchor="end" class="cat">centralindia</text><rect x="132" y="87" width="36.1" height="14" rx="4" fill="var(--series)"/><text x="176.1" y="98" class="val">$6K</text></g><g class="bar-row"><title>uksouth: $3K</title><text x="122" y="123" text-anchor="end" class="cat">uksouth</text><rect x="132" y="113" width="17.2" height="14" rx="4" fill="var(--series)"/><text x="157.2" y="124" class="val">$3K</text></g><g class="bar-row"><title>canadacentral: $2K</title><text x="122" y="149" text-anchor="end" class="cat">canadacentral</text><rect x="132" y="139" width="15.1" height="14" rx="4" fill="var(--series)"/><text x="155.1" y="150" class="val">$2K</text></g><g class="bar-row"><title>northeurope: $2K</title><text x="122" y="175" text-anchor="end" class="cat">northeurope</text><rect x="132" y="165" width="14.0" height="14" rx="4" fill="var(--series)"/><text x="154.0" y="176" class="val">$2K</text></g><g class="bar-row"><title>eastus: $2K</title><text x="122" y="201" text-anchor="end" class="cat">eastus</text><rect x="132" y="191" width="10.8" height="14" rx="4" fill="var(--series)"/><text x="150.8" y="202" class="val">$2K</text></g><g class="bar-row"><title>westus2: $1K</title><text x="122" y="227" text-anchor="end" class="cat">westus2</text><rect x="132" y="217" width="7.9" height="14" rx="4" fill="var(--series)"/><text x="147.9" y="228" class="val">$1K</text></g><g class="bar-row"><title>southcentralus: $599</title><text x="122" y="253" text-anchor="end" class="cat">southcentralus</text><rect x="132" y="243" width="3.7" height="14" rx="4" fill="var(--series)"/><text x="143.7" y="254" class="val">$599</text></g><g class="bar-row"><title>canadaeast: $10</title><text x="122" y="279" text-anchor="end" class="cat">canadaeast</text><rect x="132" y="269" width="2.0" height="14" rx="4" fill="var(--series)"/><text x="142.0" y="280" class="val">$10</text></g></svg></div>
+  </div>
+  <div>
+    <h2><span class="mod">Module 1</span>Time left to order</h2>
+    <p class="lede">Crossing date minus provisioning lead time. Left of the line is already late.</p>
+    <div class="card"><svg viewBox="0 0 680 312" role="img" class="chart" aria-label="Days until a capacity request must be raised, by region"><line x1="200.4" y1="4" x2="200.4" y2="292" class="zero"/><text x="200.4" y="306" text-anchor="middle" class="tick">today</text><g class="bar-row"><title>southcentralus: breached, 45 late</title><text x="122" y="20" text-anchor="end" class="cat">southcentralus</text><line x1="200.4" y1="16" x2="132.0" y2="16" stroke="var(--critical)" stroke-width="2"/><circle cx="132.0" cy="16" r="5" fill="var(--critical)" stroke="var(--surface)" stroke-width="2"/><text x="674" y="20" class="val" text-anchor="end">45d late</text></g><g class="bar-row"><title>northcentralus: breached, 30 late</title><text x="122" y="46" text-anchor="end" class="cat">northcentralus</text><line x1="200.4" y1="42" x2="154.8" y2="42" stroke="var(--critical)" stroke-width="2"/><circle cx="154.8" cy="42" r="5" fill="var(--critical)" stroke="var(--surface)" stroke-width="2"/><text x="674" y="46" class="val" text-anchor="end">30d late</text></g><g class="bar-row"><title>centralindia: overdue, 32 late</title><text x="122" y="72" text-anchor="end" class="cat">centralindia</text><line x1="200.4" y1="68" x2="151.8" y2="68" stroke="var(--critical)" stroke-width="2"/><circle cx="151.8" cy="68" r="5" fill="var(--critical)" stroke="var(--surface)" stroke-width="2"/><text x="674" y="72" class="val" text-anchor="end">32d late</text></g><g class="bar-row"><title>westeurope: overdue, 22 late</title><text x="122" y="98" text-anchor="end" class="cat">westeurope</text><line x1="200.4" y1="94" x2="167.0" y2="94" stroke="var(--critical)" stroke-width="2"/><circle cx="167.0" cy="94" r="5" fill="var(--critical)" stroke="var(--surface)" stroke-width="2"/><text x="674" y="98" class="val" text-anchor="end">22d late</text></g><g class="bar-row"><title>canadaeast: approaching, 11 days</title><text x="122" y="124" text-anchor="end" class="cat">canadaeast</text><line x1="200.4" y1="120" x2="217.2" y2="120" stroke="var(--warning)" stroke-width="2"/><circle cx="217.2" cy="120" r="5" fill="var(--warning)" stroke="var(--surface)" stroke-width="2"/><text x="674" y="124" class="val" text-anchor="end">11d</text></g><g class="bar-row"><title>canadacentral: approaching, 40 days</title><text x="122" y="150" text-anchor="end" class="cat">canadacentral</text><line x1="200.4" y1="146" x2="261.3" y2="146" stroke="var(--warning)" stroke-width="2"/><circle cx="261.3" cy="146" r="5" fill="var(--warning)" stroke="var(--surface)" stroke-width="2"/><text x="674" y="150" class="val" text-anchor="end">40d</text></g><g class="bar-row"><title>westus2: approaching, 127 days</title><text x="122" y="176" text-anchor="end" class="cat">westus2</text><line x1="200.4" y1="172" x2="393.6" y2="172" stroke="var(--warning)" stroke-width="2"/><circle cx="393.6" cy="172" r="5" fill="var(--warning)" stroke="var(--surface)" stroke-width="2"/><text x="674" y="176" class="val" text-anchor="end">127d</text></g><g class="bar-row"><title>uksouth: approaching, 150 days</title><text x="122" y="202" text-anchor="end" class="cat">uksouth</text><line x1="200.4" y1="198" x2="428.5" y2="198" stroke="var(--warning)" stroke-width="2"/><circle cx="428.5" cy="198" r="5" fill="var(--warning)" stroke="var(--surface)" stroke-width="2"/><text x="674" y="202" class="val" text-anchor="end">150d</text></g><g class="bar-row"><title>northeurope: approaching, 163 days</title><text x="122" y="228" text-anchor="end" class="cat">northeurope</text><line x1="200.4" y1="224" x2="448.3" y2="224" stroke="var(--warning)" stroke-width="2"/><circle cx="448.3" cy="224" r="5" fill="var(--warning)" stroke="var(--surface)" stroke-width="2"/><text x="674" y="228" class="val" text-anchor="end">163d</text></g><g class="bar-row"><title>eastus2: approaching, 181 days</title><text x="122" y="254" text-anchor="end" class="cat">eastus2</text><line x1="200.4" y1="250" x2="475.7" y2="250" stroke="var(--warning)" stroke-width="2"/><circle cx="475.7" cy="250" r="5" fill="var(--warning)" stroke="var(--surface)" stroke-width="2"/><text x="674" y="254" class="val" text-anchor="end">181d</text></g><g class="bar-row"><title>eastus: approaching, 268 days</title><text x="122" y="280" text-anchor="end" class="cat">eastus</text><line x1="200.4" y1="276" x2="608.0" y2="276" stroke="var(--warning)" stroke-width="2"/><circle cx="608.0" cy="276" r="5" fill="var(--warning)" stroke="var(--surface)" stroke-width="2"/><text x="674" y="280" class="val" text-anchor="end">268d</text></g></svg></div>
+  </div>
+</div>
+
+<h2><span class="mod">Module 1</span>What needs a decision now</h2>
+<div class="card"><ul class="due"><li><b>southcentralus</b> — already at 97.2%, past the 85% threshold; with a 45-day lead time this is 45 days late.</li><li><b>northcentralus</b> — already at 89.1%, past the 85% threshold; with a 30-day lead time this is 30 days late.</li><li><b>centralindia</b> — projected to hit 85% on 2026-02-10 (14 days), but Intel-highmem takes 45 days to provision -- the request needed raising 32 days ago.</li><li><b>westeurope</b> — projected to hit 85% on 2026-02-05 (9 days), but GPU-class takes 30 days to provision -- the request needed raising 22 days ago.</li></ul></div>
+
+<h2><span class="mod">Module 3</span>Total requested capacity per month</h2>
+<p class="lede">Demand across all regions, from the ticket dates.</p>
+<div class="card"><svg viewBox="0 0 680 190" role="img" class="chart" aria-label="Total requested capacity per month"><line x1="42" y1="148.0" x2="652" y2="148.0" class="grid"/><text x="34" y="152.0" text-anchor="end" class="tick">0</text><line x1="42" y1="85.0" x2="652" y2="85.0" class="grid"/><text x="34" y="89.0" text-anchor="end" class="tick">842</text><line x1="42" y1="22.0" x2="652" y2="22.0" class="grid"/><text x="34" y="26.0" text-anchor="end" class="tick">1,684</text><polyline points="42.0,73.8 194.5,22.0 347.0,49.2 499.5,90.1 652.0,81.0" fill="none" stroke="var(--series)" stroke-width="2" stroke-linejoin="round"/><g class="pt"><title>2025-09: 992 units</title><circle cx="42.0" cy="73.8" r="4.5" fill="var(--series)" stroke="var(--surface)" stroke-width="2"/></g><g class="pt"><title>2025-10: 1,684 units</title><circle cx="194.5" cy="22.0" r="4.5" fill="var(--series)" stroke="var(--surface)" stroke-width="2"/></g><g class="pt"><title>2025-11: 1,321 units</title><circle cx="347.0" cy="49.2" r="4.5" fill="var(--series)" stroke="var(--surface)" stroke-width="2"/></g><g class="pt"><title>2025-12: 774 units</title><circle cx="499.5" cy="90.1" r="4.5" fill="var(--series)" stroke="var(--surface)" stroke-width="2"/></g><g class="pt"><title>2026-01: 896 units</title><circle cx="652.0" cy="81.0" r="4.5" fill="var(--series)" stroke="var(--surface)" stroke-width="2"/></g><text x="42.0" y="176" text-anchor="middle" class="tick">2025-09</text><text x="194.5" y="176" text-anchor="middle" class="tick">2025-10</text><text x="347.0" y="176" text-anchor="middle" class="tick">2025-11</text><text x="499.5" y="176" text-anchor="middle" class="tick">2025-12</text><text x="652.0" y="176" text-anchor="middle" class="tick">2026-01</text></svg></div>
+
+<h2><span class="mod">Module 4</span>Demand spikes, and whether we know why</h2>
+<p class="lede">A spike with no matching business event is itself a finding.</p>
+<div class="spike matched"><div class="spike-head"><b>canadaeast</b> <span class="mono">2025-11</span><span class="tagline">explained</span></div><div class="spike-body">canadaeast demand in 2025-11 is 12,900% above its 4-unit baseline, matching a deal closed 1 day into the period. Pre-provision capacity in canadaeast rather than waiting for the next request to be denied.</div></div><div class="spike unmatched"><div class="spike-head"><b>eastus2</b> <span class="mono">2025-10</span><span class="tagline">unexplained</span></div><div class="spike-body">eastus2 demand in 2025-10 is 1,010% above its 19-unit baseline. The only event on record is a marketing campaign 0 days into the period, which carries no expected capacity -- treat the spike as unexplained until someone confirms a cause.</div></div><div class="spike matched"><div class="spike-head"><b>southcentralus</b> <span class="mono">2025-09</span><span class="tagline">explained</span></div><div class="spike-body">southcentralus demand in 2025-09 is 866% above its 58-unit baseline, matching a renewal upsized 6 days into the period. Pre-provision capacity in southcentralus rather than waiting for the next request to be denied.</div></div><div class="spike matched"><div class="spike-head"><b>southcentralus</b> <span class="mono">2025-10</span><span class="tagline">explained</span></div><div class="spike-body">southcentralus demand in 2025-10 is 838% above its 58-unit baseline, matching a renewal upsized 24 days before the period. Pre-provision capacity in southcentralus rather than waiting for the next request to be denied.</div></div><div class="spike matched"><div class="spike-head"><b>westeurope</b> <span class="mono">2026-01</span><span class="tagline">explained</span></div><div class="spike-body">westeurope demand in 2026-01 is 671% above its 83-unit baseline, matching an expansion signed 0 days into the period. Pre-provision capacity in westeurope rather than waiting for the next request to be denied.</div></div><div class="spike matched"><div class="spike-head"><b>northcentralus</b> <span class="mono">2025-12</span><span class="tagline">explained</span></div><div class="spike-body">northcentralus demand in 2025-12 is 560 units above a near-zero baseline, matching a deal closed 10 days into the period. Pre-provision capacity in northcentralus rather than waiting for the next request to be denied.</div></div>
+
+<h2><span class="mod">Module 6</span>Feature availability</h2>
+<p class="lede">Before recommending capacity somewhere, what can that region actually run?</p>
+<div class="card">
+<table class="grid"><thead><tr><th></th><th class="rot"><span>southcentralus</span></th><th class="rot"><span>northcentralus</span></th><th class="rot"><span>centralindia</span></th><th class="rot"><span>westeurope</span></th><th class="rot"><span>canadaeast</span></th><th class="rot"><span>canadacentral</span></th><th class="rot"><span>westus2</span></th><th class="rot"><span>uksouth</span></th><th class="rot"><span>northeurope</span></th><th class="rot"><span>eastus2</span></th><th class="rot"><span>eastus</span></th></tr></thead><tbody><tr><th scope="row">Copilot in Fabric</th><td class="cell s-live" title="Copilot in Fabric in southcentralus: Live"><span class="sr">Live</span></td><td class="cell s-preview" title="Copilot in Fabric in northcentralus: Preview"><span class="sr">Preview</span></td><td class="cell s-planned" title="Copilot in Fabric in centralindia: Planned"><span class="sr">Planned</span></td><td class="cell s-planned" title="Copilot in Fabric in westeurope: Planned"><span class="sr">Planned</span></td><td class="cell s-live" title="Copilot in Fabric in canadaeast: Live"><span class="sr">Live</span></td><td class="cell s-preview" title="Copilot in Fabric in canadacentral: Preview"><span class="sr">Preview</span></td><td class="cell s-planned" title="Copilot in Fabric in westus2: Planned"><span class="sr">Planned</span></td><td class="cell s-unavailable" title="Copilot in Fabric in uksouth: Unavailable"><span class="sr">Unavailable</span></td><td class="cell s-preview" title="Copilot in Fabric in northeurope: Preview"><span class="sr">Preview</span></td><td class="cell s-planned" title="Copilot in Fabric in eastus2: Planned"><span class="sr">Planned</span></td><td class="cell s-live" title="Copilot in Fabric in eastus: Live"><span class="sr">Live</span></td></tr><tr><th scope="row">Data Activator</th><td class="cell s-live" title="Data Activator in southcentralus: Live"><span class="sr">Live</span></td><td class="cell s-unavailable" title="Data Activator in northcentralus: Unavailable"><span class="sr">Unavailable</span></td><td class="cell s-planned" title="Data Activator in centralindia: Planned"><span class="sr">Planned</span></td><td class="cell s-preview" title="Data Activator in westeurope: Preview"><span class="sr">Preview</span></td><td class="cell s-live" title="Data Activator in canadaeast: Live"><span class="sr">Live</span></td><td class="cell s-preview" title="Data Activator in canadacentral: Preview"><span class="sr">Preview</span></td><td class="cell s-unavailable" title="Data Activator in westus2: Unavailable"><span class="sr">Unavailable</span></td><td class="cell s-unavailable" title="Data Activator in uksouth: Unavailable"><span class="sr">Unavailable</span></td><td class="cell s-live" title="Data Activator in northeurope: Live"><span class="sr">Live</span></td><td class="cell s-planned" title="Data Activator in eastus2: Planned"><span class="sr">Planned</span></td><td class="cell s-unavailable" title="Data Activator in eastus: Unavailable"><span class="sr">Unavailable</span></td></tr><tr><th scope="row">Fabric SQL Database</th><td class="cell s-live" title="Fabric SQL Database in southcentralus: Live"><span class="sr">Live</span></td><td class="cell s-planned" title="Fabric SQL Database in northcentralus: Planned"><span class="sr">Planned</span></td><td class="cell s-preview" title="Fabric SQL Database in centralindia: Preview"><span class="sr">Preview</span></td><td class="cell s-live" title="Fabric SQL Database in westeurope: Live"><span class="sr">Live</span></td><td class="cell s-preview" title="Fabric SQL Database in canadaeast: Preview"><span class="sr">Preview</span></td><td class="cell s-live" title="Fabric SQL Database in canadacentral: Live"><span class="sr">Live</span></td><td class="cell s-preview" title="Fabric SQL Database in westus2: Preview"><span class="sr">Preview</span></td><td class="cell s-planned" title="Fabric SQL Database in uksouth: Planned"><span class="sr">Planned</span></td><td class="cell s-live" title="Fabric SQL Database in northeurope: Live"><span class="sr">Live</span></td><td class="cell s-live" title="Fabric SQL Database in eastus2: Live"><span class="sr">Live</span></td><td class="cell s-planned" title="Fabric SQL Database in eastus: Planned"><span class="sr">Planned</span></td></tr><tr><th scope="row">Mirrored Databases</th><td class="cell s-live" title="Mirrored Databases in southcentralus: Live"><span class="sr">Live</span></td><td class="cell s-planned" title="Mirrored Databases in northcentralus: Planned"><span class="sr">Planned</span></td><td class="cell s-planned" title="Mirrored Databases in centralindia: Planned"><span class="sr">Planned</span></td><td class="cell s-live" title="Mirrored Databases in westeurope: Live"><span class="sr">Live</span></td><td class="cell s-planned" title="Mirrored Databases in canadaeast: Planned"><span class="sr">Planned</span></td><td class="cell s-live" title="Mirrored Databases in canadacentral: Live"><span class="sr">Live</span></td><td class="cell s-unavailable" title="Mirrored Databases in westus2: Unavailable"><span class="sr">Unavailable</span></td><td class="cell s-unavailable" title="Mirrored Databases in uksouth: Unavailable"><span class="sr">Unavailable</span></td><td class="cell s-unavailable" title="Mirrored Databases in northeurope: Unavailable"><span class="sr">Unavailable</span></td><td class="cell s-preview" title="Mirrored Databases in eastus2: Preview"><span class="sr">Preview</span></td><td class="cell s-planned" title="Mirrored Databases in eastus: Planned"><span class="sr">Planned</span></td></tr><tr><th scope="row">OneLake Shortcuts</th><td class="cell s-live" title="OneLake Shortcuts in southcentralus: Live"><span class="sr">Live</span></td><td class="cell s-preview" title="OneLake Shortcuts in northcentralus: Preview"><span class="sr">Preview</span></td><td class="cell s-live" title="OneLake Shortcuts in centralindia: Live"><span class="sr">Live</span></td><td class="cell s-preview" title="OneLake Shortcuts in westeurope: Preview"><span class="sr">Preview</span></td><td class="cell s-live" title="OneLake Shortcuts in canadaeast: Live"><span class="sr">Live</span></td><td class="cell s-preview" title="OneLake Shortcuts in canadacentral: Preview"><span class="sr">Preview</span></td><td class="cell s-unavailable" title="OneLake Shortcuts in westus2: Unavailable"><span class="sr">Unavailable</span></td><td class="cell s-unavailable" title="OneLake Shortcuts in uksouth: Unavailable"><span class="sr">Unavailable</span></td><td class="cell s-preview" title="OneLake Shortcuts in northeurope: Preview"><span class="sr">Preview</span></td><td class="cell s-planned" title="OneLake Shortcuts in eastus2: Planned"><span class="sr">Planned</span></td><td class="cell s-unavailable" title="OneLake Shortcuts in eastus: Unavailable"><span class="sr">Unavailable</span></td></tr><tr><th scope="row">Real-Time Intelligence</th><td class="cell s-preview" title="Real-Time Intelligence in southcentralus: Preview"><span class="sr">Preview</span></td><td class="cell s-preview" title="Real-Time Intelligence in northcentralus: Preview"><span class="sr">Preview</span></td><td class="cell s-preview" title="Real-Time Intelligence in centralindia: Preview"><span class="sr">Preview</span></td><td class="cell s-unavailable" title="Real-Time Intelligence in westeurope: Unavailable"><span class="sr">Unavailable</span></td><td class="cell s-live" title="Real-Time Intelligence in canadaeast: Live"><span class="sr">Live</span></td><td class="cell s-live" title="Real-Time Intelligence in canadacentral: Live"><span class="sr">Live</span></td><td class="cell s-planned" title="Real-Time Intelligence in westus2: Planned"><span class="sr">Planned</span></td><td class="cell s-unavailable" title="Real-Time Intelligence in uksouth: Unavailable"><span class="sr">Unavailable</span></td><td class="cell s-unavailable" title="Real-Time Intelligence in northeurope: Unavailable"><span class="sr">Unavailable</span></td><td class="cell s-preview" title="Real-Time Intelligence in eastus2: Preview"><span class="sr">Preview</span></td><td class="cell s-unavailable" title="Real-Time Intelligence in eastus: Unavailable"><span class="sr">Unavailable</span></td></tr></tbody></table>
+<div class="legend">
+  <span><i style="background:#1c5cab"></i>Live</span>
+  <span><i style="background:#5598e7"></i>Preview</span>
+  <span><i style="background:#b7d3f6"></i>Planned</span>
+  <span><i style="background:var(--surface-2);border:1px solid var(--rule-2)"></i>Unavailable</span>
+</div>
+</div>
+
+<h2><span class="mod">Provenance</span>What is real and what we generated</h2>
+<p class="lede">The ICM extract carries nine columns. Everything else on this page was
+generated to make the platform buildable, and is labelled as such.</p>
+<div class="card">
+<table><thead><tr><th>Entity</th><th class="n">Rows</th><th>Source</th><th>Grain</th></tr></thead>
+<tbody><tr><td class="mono">dim_sku</td><td class="n">5</td><td><span class="pill p-synth">generated</span></td><td>one row per hardware class</td></tr><tr><td class="mono">dim_region</td><td class="n">11</td><td><span class="pill p-real">real + generated</span></td><td>one row per Azure region</td></tr><tr><td class="mono">dim_subscription</td><td class="n">23</td><td><span class="pill p-real">real + generated</span></td><td>one row per customer subscription</td></tr><tr><td class="mono">dim_feature</td><td class="n">6</td><td><span class="pill p-synth">generated</span></td><td>one row per product feature</td></tr><tr><td class="mono">fact_capacity_request</td><td class="n">60</td><td><span class="pill p-real">real + generated</span></td><td>one row per capacity ticket</td></tr><tr><td class="mono">fact_usage_daily</td><td class="n">1,650</td><td><span class="pill p-synth">generated</span></td><td>one row per region per day</td></tr><tr><td class="mono">fact_event</td><td class="n">18</td><td><span class="pill p-synth">generated</span></td><td>one row per business event</td></tr><tr><td class="mono">bridge_feature_region</td><td class="n">66</td><td><span class="pill p-synth">generated</span></td><td>one row per feature per region</td></tr></tbody></table>
+</div>
+
+<footer>
+Capacity Intelligence Platform · generated from the ontology, not transcribed.<br>
+Revenue figures are illustrative while the subscription ARR reference is placeholder data.
+</footer>
+</div>

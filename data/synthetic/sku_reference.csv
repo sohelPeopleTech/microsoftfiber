@@ -1,0 +1,6 @@
+SKUClass,RelativeCostPerUnit,RelativePerformance,LeadTimeDays,IsSynthetic,Provenance
+AMD-standard,1.0,1.0,21,True,"SYNTHETIC - generated, not a business source: relative cost/performance index, AMD-standard = 1.0"
+AMD-highmem,1.45,1.3,10,True,"SYNTHETIC - generated, not a business source: relative cost/performance index, AMD-standard = 1.0"
+Intel-standard,1.1,0.95,21,True,"SYNTHETIC - generated, not a business source: relative cost/performance index, AMD-standard = 1.0"
+Intel-highmem,1.7,1.4,45,True,"SYNTHETIC - generated, not a business source: relative cost/performance index, AMD-standard = 1.0"
+GPU-class,3.2,2.6,30,True,"SYNTHETIC - generated, not a business source: relative cost/performance index, AMD-standard = 1.0"

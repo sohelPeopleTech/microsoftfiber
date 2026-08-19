@@ -1,0 +1,12 @@
+Region,SKUClass,TotalRequestedUnits,IsSynthetic,Provenance
+southcentralus,Intel-highmem,1166,True,"SYNTHETIC - generated, not a business source: hardware class inferred from observed request volume"
+centralindia,Intel-highmem,942,True,"SYNTHETIC - generated, not a business source: hardware class inferred from observed request volume"
+westeurope,GPU-class,941,True,"SYNTHETIC - generated, not a business source: hardware class inferred from observed request volume"
+northcentralus,GPU-class,624,True,"SYNTHETIC - generated, not a business source: hardware class inferred from observed request volume"
+canadacentral,AMD-highmem,600,True,"SYNTHETIC - generated, not a business source: hardware class inferred from observed request volume"
+canadaeast,AMD-highmem,566,True,"SYNTHETIC - generated, not a business source: hardware class inferred from observed request volume"
+eastus2,AMD-highmem,282,True,"SYNTHETIC - generated, not a business source: hardware class inferred from observed request volume"
+uksouth,AMD-highmem,208,True,"SYNTHETIC - generated, not a business source: hardware class inferred from observed request volume"
+westus2,AMD-standard,134,True,"SYNTHETIC - generated, not a business source: hardware class inferred from observed request volume"
+eastus,AMD-highmem,107,True,"SYNTHETIC - generated, not a business source: hardware class inferred from observed request volume"
+northeurope,AMD-standard,97,True,"SYNTHETIC - generated, not a business source: hardware class inferred from observed request volume"

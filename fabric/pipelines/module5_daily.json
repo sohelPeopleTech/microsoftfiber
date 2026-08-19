@@ -1,0 +1,113 @@
+{
+  "_comment": [
+    "Fabric Data Factory pipeline for Module 5. Import into the Fabric",
+    "Accelerators workspace (f78efe69-fe5e-494b-8433-77d828725ad1), which is",
+    "already filled in below. Three values remain, none of which exist until",
+    "the artifacts are created in Fabric:",
+    "  notebookId  - assigned when nb_module5_capacity_denial is imported",
+    "  objectId    - assigned when this pipeline is created",
+    "  key_vault_name / ops alert target - your choice of vault and mailbox",
+    "",
+    "Shape: run the notebook -> on success, do nothing further (the notebook",
+    "writes the Gold tables and the finding the web application serves); on",
+    "failure, send a short operational alert so a silent break is impossible."
+  ],
+  "name": "PL_Module5_CapacityDenialRevenueImpact",
+  "objectId": "16a11c2b-a5a0-4099-ad72-25bc33c23af5",
+  "properties": {
+    "description": "Module 5 -- classify capacity denials, size revenue exposure, publish the ranked finding for human review in the web application.",
+    "activities": [
+      {
+        "name": "Run Module 5 notebook",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.02:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 300,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "4f3bb0a5-edd5-46d6-870f-ead14c38af0a",
+          "workspaceId": "f78efe69-fe5e-494b-8433-77d828725ad1",
+          "parameters": {
+            "ticket_source": {
+              "value": {
+                "value": "@pipeline().parameters.ticket_source",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "config_path": {
+              "value": {
+                "value": "@pipeline().parameters.config_path",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "use_llm": {
+              "value": {
+                "value": "@pipeline().parameters.use_llm",
+                "type": "Expression"
+              },
+              "type": "bool"
+            },
+            "key_vault_name": {
+              "value": {
+                "value": "@pipeline().parameters.key_vault_name",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "Alert on failure",
+        "type": "Office365Outlook",
+        "dependsOn": [
+          {
+            "activity": "Run Module 5 notebook",
+            "dependencyConditions": ["Failed"]
+          }
+        ],
+        "typeProperties": {
+          "_comment": "Operational alert only -- findings are never delivered this way; the web application is the only surface for them.",
+          "to": "<CAPACITY_OPS_DISTRIBUTION_LIST>",
+          "subject": "Module 5 run failed",
+          "body": {
+            "value": "@concat('Module 5 failed at ', utcNow(), '. Error: ', activity('Run Module 5 notebook').output.error?.message, '. No finding was published for this run.')",
+            "type": "Expression"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "ticket_source": {
+        "type": "string",
+        "defaultValue": "Files/module5/Synthetic_ICM_Capacity_Data.xlsx"
+      },
+      "config_path": {
+        "type": "string",
+        "defaultValue": "Files/module5/config.json"
+      },
+      "use_llm": {
+        "type": "bool",
+        "defaultValue": false
+      },
+      "key_vault_name": {
+        "type": "string",
+        "defaultValue": "<KEY_VAULT_NAME>"
+      }
+    },
+    "annotations": ["module5", "capacity-intelligence", "pilot"]
+  },
+  "schedule": {
+    "_comment": "Configure in the Fabric UI (Pipeline > Schedule). Weekly matches the design doc's 'this period' framing; daily is fine once the ICM feed is incremental.",
+    "frequency": "Week",
+    "interval": 1,
+    "startTime": "08:00",
+    "timeZone": "UTC"
+  }
+}

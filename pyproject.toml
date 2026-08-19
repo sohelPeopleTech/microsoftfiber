@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fabric-capacity-intelligence"
+version = "0.1.0"
+description = "Module 5 -- Capacity-Denial Revenue Impact Calculator"
+requires-python = ">=3.10"
+# Azure OpenAI goes over stdlib urllib, and .env parsing is hand-rolled in
+# `module5.env`, so neither pulls a package in.
+#
+# The thin-dependency principle held until the forecast candidate set was asked
+# to include ARIMA and SARIMA, which only statsmodels provides. That was a
+# deliberate trade accepted in review, not drift: the cost is that a Fabric
+# Spark pool now needs these installed at session start rather than running on
+# the stock image. Everything here is imported by code in `src/`; nothing is
+# aspirational.
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "openpyxl>=3.1",
+    "certifi",             # module5.transport, for TLS verification
+    "scipy>=1.10",         # forecast.theil_sen
+    "statsmodels>=0.14",   # forecast.arima and forecast.sarima
+    "scikit-learn>=1.3",   # propensity.model
+]
+
+[project.optional-dependencies]
+# The analysis modules run headless without these; only the web UI needs them.
+webapp = ["fastapi>=0.110", "uvicorn>=0.27"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+module5 = "module5.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]

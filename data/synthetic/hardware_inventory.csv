@@ -1,0 +1,12 @@
+Region,SKUClass,DeployedUnits,LargestObservedCustomerLimit,IsSynthetic,Provenance
+southcentralus,Intel-highmem,826,83,True,"SYNTHETIC - generated, not a business source: deployed units scaled from the largest observed customer limit"
+centralindia,Intel-highmem,560,83,True,"SYNTHETIC - generated, not a business source: deployed units scaled from the largest observed customer limit"
+westeurope,GPU-class,916,32,True,"SYNTHETIC - generated, not a business source: deployed units scaled from the largest observed customer limit"
+northcentralus,GPU-class,2476,512,True,"SYNTHETIC - generated, not a business source: deployed units scaled from the largest observed customer limit"
+canadacentral,AMD-highmem,3560,512,True,"SYNTHETIC - generated, not a business source: deployed units scaled from the largest observed customer limit"
+canadaeast,AMD-highmem,2597,512,True,"SYNTHETIC - generated, not a business source: deployed units scaled from the largest observed customer limit"
+eastus2,AMD-highmem,2852,512,True,"SYNTHETIC - generated, not a business source: deployed units scaled from the largest observed customer limit"
+uksouth,AMD-highmem,3653,512,True,"SYNTHETIC - generated, not a business source: deployed units scaled from the largest observed customer limit"
+westus2,AMD-standard,581,128,True,"SYNTHETIC - generated, not a business source: deployed units scaled from the largest observed customer limit"
+eastus,AMD-highmem,725,64,True,"SYNTHETIC - generated, not a business source: deployed units scaled from the largest observed customer limit"
+northeurope,AMD-standard,585,20,True,"SYNTHETIC - generated, not a business source: deployed units scaled from the largest observed customer limit"
