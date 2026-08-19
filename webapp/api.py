@@ -17,6 +17,7 @@ means here:
 from __future__ import annotations
 
 import os
+import logging
 import sys
 from contextlib import asynccontextmanager
 from functools import lru_cache
@@ -28,6 +29,10 @@ import pandas as pd
 from fastapi import Body, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+
+#: Warm-up progress goes here. Container Apps collects stdout, so the startup
+#: timings are visible in Log Analytics without extra wiring.
+log = logging.getLogger("capacity")
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -69,16 +74,36 @@ async def _lifespan(_app: FastAPI):
     logged in and reached the tab.
     """
     import threading
+    import time
 
     def warm() -> None:
-        try:
-            forecast_all()
-        except Exception:
-            # A cold cache is a slow page, not a broken one. Never let warming
-            # take down a server that would otherwise serve.
-            pass
+        # Order matters: each of these builds something the next one needs, and
+        # doing them explicitly means the log shows which stage is slow rather
+        # than one opaque wait.
+        #
+        # Warming only the forecast was not enough. On a 0.5-CPU container the
+        # first /api/overview still took 144 seconds, because the ontology and
+        # the module 5 pipeline were built on that request while the forecast
+        # thread competed for the same core. The health probe had already passed,
+        # so the platform reported the app ready while the first real visitor
+        # waited over two minutes.
+        for label, fn in (
+            ("ontology", get_ontology),
+            ("module5", get_module5),
+            ("anomalies", get_anomalies),
+            ("overview", overview),
+            ("forecast", forecast_all),
+        ):
+            start = time.monotonic()
+            try:
+                fn()
+                log.info("warmed %s in %.1fs", label, time.monotonic() - start)
+            except Exception:
+                # A cold cache is a slow page, not a broken one. Never let
+                # warming take down a server that would otherwise serve.
+                log.warning("warming %s failed; it will build on first use", label)
 
-    threading.Thread(target=warm, name="warm-forecast", daemon=True).start()
+    threading.Thread(target=warm, name="warm-caches", daemon=True).start()
     yield
 
 

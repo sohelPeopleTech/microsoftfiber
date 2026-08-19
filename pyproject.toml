@@ -28,7 +28,10 @@ dependencies = [
 
 [project.optional-dependencies]
 # The analysis modules run headless without these; only the web UI needs them.
-webapp = ["fastapi>=0.110", "uvicorn>=0.27"]
+# python-multipart is not imported anywhere -- FastAPI reaches for it at runtime
+# the moment a route declares Form(...), which the login does. It was present in
+# the dev environment by accident, so this only surfaced in a clean container.
+webapp = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.9"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]

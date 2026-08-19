@@ -1,0 +1,167 @@
+# Capacity Intelligence Platform — build and deploy
+#
+# Three stages, in the order the dependencies actually require:
+#
+#   Test      pytest, before anything is built. A red suite stops the pipeline.
+#   Platform  registry, logs workspace and container-apps environment (Bicep).
+#   Deploy    build the image, push it, then point the app at that exact tag.
+#
+# Platform runs every time and is idempotent -- Bicep converges rather than
+# recreating, so a no-op deploy costs seconds and the infrastructure can never
+# drift away from what is in this repo.
+
+trigger:
+  branches:
+    include: [main]
+
+pr:
+  branches:
+    include: [main]
+
+variables:
+  # Supply these in a variable group named capacity-intelligence-dev:
+  #   azureServiceConnection  service connection with Contributor on the RG
+  #   appUsers                user:salt:hash entries, marked secret
+  #   appSecretKey            session signing key, marked secret
+  - group: capacity-intelligence-dev
+  - name: resourceGroup
+    value: Rg-CapacityIntelligence-Dev
+  - name: appName
+    value: capacityintelligence
+  - name: environmentName
+    value: dev
+  - name: imageTag
+    value: $(Build.BuildId)
+  - name: vmImage
+    value: ubuntu-latest
+
+stages:
+
+# --------------------------------------------------------------------------
+- stage: Test
+  displayName: Run the test suite
+  jobs:
+    - job: Pytest
+      pool: { vmImage: $(vmImage) }
+      steps:
+        - task: UsePythonVersion@0
+          inputs: { versionSpec: '3.12' }
+        - script: |
+            set -euo pipefail
+            python -m pip install --upgrade pip
+            pip install -e ".[webapp,dev]"
+          displayName: Install
+        - script: |
+            set -euo pipefail
+            pytest -q --junitxml=junit.xml
+          displayName: pytest
+        - task: PublishTestResults@2
+          condition: succeededOrFailed()
+          inputs:
+            testResultsFiles: junit.xml
+            testRunTitle: Capacity Intelligence
+
+# --------------------------------------------------------------------------
+- stage: Platform
+  displayName: Provision platform
+  dependsOn: Test
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+    - job: Bicep
+      pool: { vmImage: $(vmImage) }
+      steps:
+        - task: AzureCLI@2
+          name: platform
+          displayName: Deploy platform.bicep
+          inputs:
+            azureSubscription: $(azureServiceConnection)
+            scriptType: bash
+            scriptLocation: inlineScript
+            inlineScript: |
+              set -euo pipefail
+              az deployment group create \
+                -g "$(resourceGroup)" \
+                -f infra/platform.bicep \
+                --parameters appName=$(appName) env=$(environmentName) \
+                -o none
+              ACR=$(az deployment group show -g "$(resourceGroup)" \
+                     -n platform --query properties.outputs.acrLoginServer.value -o tsv)
+              echo "##vso[task.setvariable variable=acrLoginServer;isOutput=true]$ACR"
+
+# --------------------------------------------------------------------------
+- stage: Deploy
+  displayName: Build image and deploy app
+  dependsOn: Platform
+  condition: succeeded()
+  jobs:
+    - job: BuildAndDeploy
+      pool: { vmImage: $(vmImage) }
+      steps:
+        - task: AzureCLI@2
+          displayName: Build and push image
+          inputs:
+            azureSubscription: $(azureServiceConnection)
+            scriptType: bash
+            scriptLocation: inlineScript
+            inlineScript: |
+              set -euo pipefail
+              # Built by ACR rather than on the agent: the image is ~800MB and
+              # pushing it back over the agent's network is the slowest part of
+              # the run. az acr build keeps it inside Azure.
+              az acr build \
+                --registry acr$(appName)$(environmentName) \
+                --image $(appName):$(imageTag) \
+                --image $(appName):latest \
+                --file Dockerfile .
+
+        - task: AzureCLI@2
+          name: deployApp
+          displayName: Deploy app.bicep
+          inputs:
+            azureSubscription: $(azureServiceConnection)
+            scriptType: bash
+            scriptLocation: inlineScript
+            inlineScript: |
+              set -euo pipefail
+              az deployment group create \
+                -g "$(resourceGroup)" \
+                -f infra/app.bicep \
+                --parameters appName=$(appName) env=$(environmentName) \
+                             imageTag=$(imageTag) \
+                             appUsers='$(appUsers)' \
+                             appSecretKey='$(appSecretKey)' \
+                -o none
+              URL=$(az deployment group show -g "$(resourceGroup)" \
+                     -n app --query properties.outputs.appUrl.value -o tsv)
+              echo "Deployed: $URL"
+              echo "##vso[task.setvariable variable=appUrl;isOutput=true]$URL"
+
+        - task: AzureCLI@2
+          displayName: Verify the deployment is healthy and not on the demo login
+          inputs:
+            azureSubscription: $(azureServiceConnection)
+            scriptType: bash
+            scriptLocation: inlineScript
+            inlineScript: |
+              set -euo pipefail
+              URL=$(az containerapp show -g "$(resourceGroup)" \
+                     -n ca-$(appName)-$(environmentName) \
+                     --query properties.configuration.ingress.fqdn -o tsv)
+              for i in $(seq 1 30); do
+                code=$(curl -s -o /dev/null -w '%{http_code}' "https://$URL/health" || true)
+                [ "$code" = "200" ] && break
+                sleep 10
+              done
+              [ "$code" = "200" ] || { echo "health check failed: $code"; exit 1; }
+
+              # If APP_USERS did not bind, the app falls back to a built-in demo
+              # login and starts normally. That would put a working URL online
+              # with a known password and no sign anything was wrong, so the
+              # pipeline refuses to pass rather than leaving it to be noticed.
+              if curl -s -X POST "https://$URL/login" \
+                   -d 'username=capacity&password=fabric2026' \
+                   -o /dev/null -w '%{http_code}' | grep -q '^303$'; then
+                echo "FAIL: the built-in demo login works — APP_USERS did not bind."
+                exit 1
+              fi
+              echo "Healthy, and the demo login is rejected: https://$URL"
