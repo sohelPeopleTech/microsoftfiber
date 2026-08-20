@@ -290,10 +290,19 @@ function demandChart(d) {
       html: `<b>${esc(m.month)}</b><br>${num(Math.round(m.cores))} cores`
         + (m.isProjection
             ? `<br><span class="t-mute">forecast — ${esc(d.model || "")}</span>`
-            : `<br><span class="t-mute">${m.tickets ? `${m.tickets} request(s)` : "no tickets recorded"}`
-              + `${m.isReal === false ? " · generated month" : ""}</span>`)
+            : `<br><span class="${m.isReal === false ? "t-warn" : "t-mute"}">${
+                m.isReal === false
+                  // Cores with no requests behind them is the first thing anyone
+                  // asks about, and it had no answer. The generated months now
+                  // carry a request count derived from the recorded
+                  // cores-per-request, so both halves of the chart describe the
+                  // same kind of place -- and the point says it is modelled.
+                  ? `${m.tickets} request(s) · modelled — our records start ${esc(d.firstRecordedMonth || "later")}`
+                  : `${m.tickets} recorded request(s)`}</span>`)
         + (m.events && m.events.length
-            ? `<br><span class="t-warn">${esc(m.events.map((e) => e.type).join(", "))}</span>` : ""),
+            ? `<br><span class="t-warn">${m.isReal === false
+                  ? "unusually large month"
+                  : esc(m.events.map((e) => e.type).join(", "))}</span>` : ""),
     })),
   };
 
@@ -329,9 +338,7 @@ function demandChart(d) {
     ${projPts.length ? `<path d="${line(projPts)}" fill="none" stroke="var(--brand)"
       stroke-width="1.9" stroke-dasharray="6 3"/>` : ""}
     ${hist.map((m, i) => m.eventDriven ? `
-      <circle cx="${x(i)}" cy="${y(m.cores)}" r="4.5" fill="var(--warn)"/>
-      <text x="${x(i)}" y="${y(m.cores) - 9}" font-size="8.5" text-anchor="middle"
-        fill="var(--warn)">${esc((m.events[0] || {}).type || "deal")}</text>` : "").join("")}
+      <circle cx="${x(i)}" cy="${y(m.cores)}" r="4.5" fill="var(--warn)"/>` : "").join("")}
     ${all.map((m, i) => (i % everyNth === 0 || i === all.length - 1) ? `
       <text x="${x(i)}" y="${H - B + 26}" font-size="9" text-anchor="middle"
         fill="var(--ink-3)">${esc(m.month.slice(2))}</text>` : "").join("")}
@@ -427,6 +434,11 @@ async function demandPanels(scope, id) {
     return panel("Demand", `<p class="error">Could not load demand for ${esc(id)}.</p>`);
   }
   const spikes = (d.demand || []).filter((m) => m.eventDriven);
+  // Two different things wear the same amber. A recorded month is amber because
+  // an event names the ticket in it; a generated month is amber because it is
+  // several times an ordinary month. Only the first is evidence of a deal.
+  const attributed = spikes.filter((m) => m.isReal !== false);
+  const flagged = spikes.filter((m) => m.isReal === false);
   const peak = (d.demand || []).reduce((a, b) => (b.cores > (a?.cores ?? -1) ? b : a), null);
 
   return panel("Demand — capacity requested per month", `
@@ -436,18 +448,29 @@ async function demandPanels(scope, id) {
       <b>In plain terms:</b> an ordinary month here is about
       <b>${num(Math.round(d.baselineCores))} cores</b>.
       ${spikes.length
-        ? `${spikes.length} month(s) ran well above that, and each one is a signed
-           deal rather than growth — ${esc(spikes.map((m) =>
-             `${m.month} (${m.events[0].type})`).join(", "))}.
+        ? `${spikes.length} month(s) ran well above that.
+           ${attributed.length
+             ? `${attributed.length} of them ${attributed.length === 1 ? "is" : "are"}
+                tied to a recorded business event — ${esc(attributed.map((m) =>
+                  `${m.month} (${(m.events[0] || {}).type || "event"})`).join(", "))}.`
+             : ""}
+           ${flagged.length
+             ? `${flagged.length} ${flagged.length === 1 ? "falls" : "fall"} in the
+                generated part of the history and ${flagged.length === 1 ? "is" : "are"}
+                marked deal-sized on size alone, not on a recorded event —
+                ${esc(flagged.map((m) => m.month).join(", "))}.`
+             : ""}
            ${peak ? `The largest was <b>${num(Math.round(peak.cores))} cores</b> in ${esc(peak.month)}.` : ""}
-           A deal-driven month is a one-off, not a trend, which is why these are
-           excluded before any forecast is fitted.`
+           These months stay in the forecast: a signed deal is part of what this
+           place asks for, and removing them would project somewhere that never
+           signs anything.`
         : `No month here was driven by a recorded business event.`}
     </p>
     <p style="color:var(--ink-3);font-size:.78rem;margin:.5rem 0 0">
-      Bars are capacity asked for, not capacity granted. Amber months contain a
-      request linked to a business event; the link is recorded on the event, so the
-      attribution is direct rather than inferred from timing.
+      The line is capacity asked for, not capacity granted. Amber points to the
+      right of the divider contain a request linked to a business event, and the
+      link is recorded on the event rather than inferred from timing. Amber points
+      to the left sit in the generated history and are marked on size alone.
     </p>`)
   + (d.thresholdSeries?.length
       ? panel("Position against the safety threshold, by month", `
@@ -668,10 +691,11 @@ PAGES["/region"] = async (view, name, showAll = false) => {
               "Requests that breached their SLA before being granted, or were never granted at all. Requests denied and then approved inside SLA are normal turnaround and are not counted.")}
       </div>
 
-      <h4 style="margin:1.25rem 0 .4rem;font-size:.9rem">Data centres in scope</h4>
+      <h4 style="margin:1.25rem 0 .4rem;font-size:.9rem">Every data centre in this region</h4>
       <div class="scroll-x"><table>
         <thead><tr><th>Data centre</th><th class="n">Cores</th><th class="n">Free</th>
-          <th class="n">Threshold</th><th class="n">Requests</th>
+          <th class="n">Threshold</th><th class="n">Utilisation</th>
+          <th>Threshold status</th><th class="n">Requests</th>
           <th class="n">Failed</th>
           <th class="n">Oldest open</th><th class="n">Revenue loss</th>
           <th>Denial cause and recommended action</th></tr></thead>
@@ -679,8 +703,11 @@ PAGES["/region"] = async (view, name, showAll = false) => {
           <td class="mono"><b>${esc(x.datacentre)}</b></td>
           <td class="n">${num(Math.round(x.cores))}</td>
           <td class="n">${x.coresFree <= 0 ? `<b style="color:var(--bad)">0</b>` : num(Math.round(x.coresFree))}</td>
-          <td class="n">${pct(x.thresholdPct)}${x.headroom < 0
-            ? ` <span class="pill bad">over</span>` : ""}</td>
+          <td class="n">${pct(x.thresholdPct)}</td>
+          <td class="n"><b style="color:${x.overThreshold ? "var(--bad)" : "inherit"}">${pct(x.utilisationPct, 1)}</b></td>
+          <td>${x.overThreshold
+            ? `<span class="pill bad">In risk</span>`
+            : `<span class="pill good">Not in risk</span>`}</td>
           <td class="n">${num(x.requests)}</td>
           <td class="n">${x.failed ? `<b style="color:var(--bad)">${num(x.failed)}</b>` : "—"}</td>
           <td class="n">${x.oldestOpenDays != null
@@ -695,10 +722,16 @@ PAGES["/region"] = async (view, name, showAll = false) => {
             : "—"}</td>
         </tr>`).join("")}</tbody></table></div>
       <p style="color:var(--ink-2);font-size:.82rem;margin:.5rem 0 0">
-        ${r.sitesWithActivity} of ${r.siteCount} sites in this region carry a denial;
-        the rest are excluded. A site with more than one cause needs more than one
-        fix, and they may have different owners. Select a row to open that facility
-        and see the arithmetic behind each recommendation.
+        All ${r.siteCount} data centres are listed. ${r.sitesOverThreshold} of them
+        ${r.sitesOverThreshold === 1 ? "is" : "are"} past its own safety threshold,
+        and ${r.sitesWithActivity} ${r.sitesWithActivity === 1 ? "has" : "have"}
+        had a request raised against
+        ${r.sitesWithActivity === 1 ? "it" : "them"}. Those are different things:
+        a data centre can be over its line with nothing having failed there yet,
+        which is the case worth seeing before it becomes a denial. Earlier this
+        table showed only the sites carrying a denial, which hid the rest.
+        Select a row to open that facility and see the arithmetic behind each
+        recommendation.
       </p>
 
       <h4 style="margin:1.25rem 0 .4rem;font-size:.9rem">Denial reasons at this location</h4>
@@ -1197,20 +1230,16 @@ function wireRegisterToggle(view, id, render) {
 }
 
 function calcCell(x) {
-  // Two bases for the same failure, shown together. The ARR apportionment asks
-  // how much of the relationship was exposed; the consumption basis asks what
-  // the capacity would have billed. They disagree by design, and quoting only
-  // the first is why nine genuine failures read as $0.00 -- a free-tier customer
-  // has no ARR to apportion, but the capacity they could not get still had a
-  // price. It was computed all along and never rendered.
-  const c = x.consumptionBasis;
-  return `${esc(x.workingOut || "")}${c ? `
-    <div style="margin-top:.45rem;padding-top:.4rem;border-top:1px solid var(--rule)">
-      <span style="color:var(--ink-3);font-size:.72rem;text-transform:uppercase;
-        letter-spacing:.03em">If billed at the rate card${c.isPlaceholder ? " (placeholder rates)" : ""}</span>
-      <div style="margin-top:.15rem"><b>${money(c.amount)}</b>
-        <span style="color:var(--ink-3)"> — ${esc(c.workingOut)}</span></div>
-    </div>` : ""}`;
+  // One basis on screen: the ARR apportionment that produces the headline.
+  //
+  // A second, rate-card basis is computed in src/ratecard and was shown here
+  // alongside it. Removed on review: on rows where ARR already gives a figure
+  // the two sit within a few percent of each other and add nothing except the
+  // question of which one counts, and the rates behind it are placeholders
+  // rather than the published Fabric price. It earns its place again when
+  // Finance supplies real rates -- and the free-tier blind spot it covered is
+  // still stated in words on every $0 row.
+  return esc(x.workingOut || "");
 }
 
 function riskCell(risk) {

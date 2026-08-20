@@ -20,6 +20,16 @@ param appUsers string
 @secure()
 param appSecretKey string
 
+@description('Azure Foundry / OpenAI endpoint for the in-product assistant.')
+param foundryEndpoint string = ''
+
+@description('Model deployment name for the assistant.')
+param foundryDeployment string = ''
+
+@description('API key for the assistant. Empty leaves the assistant on its deterministic fallback.')
+@secure()
+param foundryApiKey string = ''
+
 // Managed-identity pull is the better answer, and the template still supports
 // it. It is off by default because granting the app AcrPull is a role
 // assignment, and Contributor excludes Microsoft.Authorization/*/Write --
@@ -64,14 +74,18 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           passwordSecretRef: 'acr-password'
         }
       ]
-      secrets: useManagedIdentityPull ? [
-        { name: 'app-users', value: appUsers }
-        { name: 'app-secret-key', value: appSecretKey }
-      ] : [
-        { name: 'app-users', value: appUsers }
-        { name: 'app-secret-key', value: appSecretKey }
-        { name: 'acr-password', value: acr.listCredentials().passwords[0].value }
-      ]
+      secrets: concat(
+        [
+          { name: 'app-users', value: appUsers }
+          { name: 'app-secret-key', value: appSecretKey }
+        ],
+        useManagedIdentityPull ? [] : [
+          { name: 'acr-password', value: acr.listCredentials().passwords[0].value }
+        ],
+        empty(foundryApiKey) ? [] : [
+          { name: 'foundry-api-key', value: foundryApiKey }
+        ]
+      )
     }
     template: {
       containers: [
@@ -85,14 +99,26 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('1.0')
             memory: '2Gi'
           }
-          env: [
-            { name: 'APP_USERS', secretRef: 'app-users' }
-            { name: 'APP_SECRET_KEY', secretRef: 'app-secret-key' }
-            // TLS terminates at the ingress, so the session cookie must be
-            // marked secure or a browser will refuse to send it back.
-            { name: 'COOKIE_SECURE', value: '1' }
-            { name: 'PORT', value: '8000' }
-          ]
+          // Without the Foundry three the assistant falls back to a keyword
+          // router, which answers a different question with the same sentence --
+          // it answered "which data centres are in risk" with the region summary
+          // because both mentioned the region. Configured, it reasons over the
+          // whole snapshot and its answers are checked against it.
+          env: concat(
+            [
+              { name: 'APP_USERS', secretRef: 'app-users' }
+              { name: 'APP_SECRET_KEY', secretRef: 'app-secret-key' }
+              // TLS terminates at the ingress, so the session cookie must be
+              // marked secure or a browser will refuse to send it back.
+              { name: 'COOKIE_SECURE', value: '1' }
+              { name: 'PORT', value: '8000' }
+            ],
+            empty(foundryApiKey) ? [] : [
+              { name: 'AZURE_FOUNDRY_ENDPOINT', value: foundryEndpoint }
+              { name: 'AZURE_FOUNDRY_DEPLOYMENT', value: foundryDeployment }
+              { name: 'AZURE_FOUNDRY_API_KEY', secretRef: 'foundry-api-key' }
+            ]
+          )
           probes: [
             {
               type: 'Liveness'

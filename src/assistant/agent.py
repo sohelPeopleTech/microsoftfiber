@@ -29,6 +29,10 @@ HOW TO ANSWER
 - Quote figures exactly as they appear in the data. Do not round differently, \
 do not convert, do not sum unless the sum is asked for.
 - Region names exactly as written: westeurope, not West Europe.
+- A region or data centre is either "in risk" or "not in risk", and the amount \
+past its line is "the threshold is utilised by X%". Never say breached, \
+approaching, overdue or due -- those words were removed from the product and \
+the reader will not see them on screen.
 - Do not volunteer that figures are generated, placeholder or illustrative. \
 The reader already knows this is a pilot running on a sample. Answer the \
 question that was asked. If someone asks directly where the data comes from \
@@ -73,20 +77,49 @@ If asked what to do, ground the recommendation in a figure from the data."""
 
 
 def build_snapshot(onto, m5, flags, growth, coverage, spikes, provenance,
-                   customers=None, incidents=None, conversions=None) -> dict:
+                   customers=None, incidents=None, conversions=None,
+                   datacentres=None, cores_pending=None) -> dict:
     """Everything the assistant is allowed to know, in one object."""
     summary = m5.finding["summary"]
     exposure = {r["Region"]: r for r in m5.finding["regions"]}
     growth_by = {r["Region"]: r for r in growth}
     cover_by = {r["Region"]: r for r in coverage}
 
+    datacentres = datacentres or []
     regions = []
     for f in flags:
         name = f["region"]
         e = exposure.get(name, {})
+        # Review replaced "breached"/"approaching" on screen with a plain
+        # in-risk / not-in-risk state and "threshold utilised by X%". The
+        # assistant kept the old vocabulary, so it described a region as
+        # "approaching" while the page beside it said "Not in risk".
+        line = float(f.get("threshold_pct") or 0)
+        util = float(f.get("current_utilisation_pct") or 0)
+        at_risk = util > line
+        # Counts, pre-computed. Asked how many data centres in southcentralus
+        # were in risk, the model counted the facility rows itself and answered
+        # "seven" against an actual ten. Models read reliably and count badly,
+        # so the count is done here and handed over as a number.
+        here_sites = [d for d in (datacentres or []) if d.get("region") == name]
         regions.append({
             "region": name,
-            "status": f["status"],
+            "thresholdStatus": "In risk" if at_risk else "Not in risk",
+            "dataCentreCount": len(here_sites),
+            "dataCentresInRisk": sum(1 for d in here_sites
+                                     if d.get("thresholdStatus") == "In risk"),
+            "dataCentresWithRequests": sum(1 for d in here_sites if d.get("requests")),
+            # Capacity this region still owes. It is on the Regions table and
+            # the region page but was never in the snapshot, so asked how many
+            # cores were pending the assistant correctly said it could not tell.
+            "coresPending": round(float((cores_pending or {}).get(name, 0.0)), 1),
+            "thresholdPct": line,
+            "thresholdUtilisedByPct": round(util - line, 1) if at_risk else 0.0,
+            # The raw module-1 status ("approaching", "breached", "due_now") is
+            # deliberately not passed. Telling the model not to use a word while
+            # handing it that word in the data loses every time -- it kept
+            # answering "the status is approaching" beside a page reading "Not in
+            # risk". thresholdStatus above is the vocabulary the product uses.
             "utilisationPct": f["current_utilisation_pct"],
             "hardware": f["sku_class"],
             "leadTimeDays": f["lead_time_days"],
@@ -104,8 +137,18 @@ def build_snapshot(onto, m5, flags, growth, coverage, spikes, provenance,
             "rank": int(e.get("Rank", 0)),
         })
 
+    # Counted here, not by the model. Asked how many regions were in risk it
+    # answered "6" and then listed three, of which one was not in risk at all --
+    # the snapshot said "Not in risk" for canadacentral perfectly clearly. A
+    # small model tallying eleven rows gets it wrong; reading a number does not.
+    in_risk = [r["region"] for r in regions if r["thresholdStatus"] == "In risk"]
     return {
         "asOf": summary["as_of"],
+        "datacentres": datacentres or [],
+        "regionsInRiskCount": len(in_risk),
+        "regionsInRisk": in_risk,
+        "regionsNotInRiskCount": len(regions) - len(in_risk),
+        "coresPendingTotal": round(sum(float(v) for v in (cores_pending or {}).values()), 1),
         "totals": {
             "exposureDisplay": money(summary["revenue_exposure_usd"]),
             "exposureUsd": summary["revenue_exposure_usd"],
@@ -414,8 +457,14 @@ def _deterministic(question: str, snapshot: dict) -> str:
     named = [r for r in regions if r["region"] in q]
     if named:
         r = named[0]
-        return (f"{r['region']}: {r['status']}, {r['utilisationPct']}% utilised on "
-                f"{r['hardware']} with a {r['leadTimeDays']}-day lead time. "
+        # thresholdStatus, not the raw module-1 status: that field was removed
+        # from the snapshot so the model would stop saying "approaching" beside a
+        # page reading "Not in risk", and this fallback still read it -- so every
+        # question that fell back raised a KeyError instead of answering.
+        return (f"{r['region']}: {r['thresholdStatus'].lower()}, "
+                f"{r['utilisationPct']}% utilised against a "
+                f"{r['thresholdPct']}% threshold, on {r['hardware']} with a "
+                f"{r['leadTimeDays']}-day lead time. "
                 f"{r['exposureDisplay']} exposure across {r['failedRequests']} failed "
                 f"requests. {r['whyThisStatus']}")
 

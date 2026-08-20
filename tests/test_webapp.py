@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "webapp"))
 
 import api  # noqa: E402
+import admission  # noqa: E402
+import ratecard  # noqa: E402
 import riskindex  # noqa: E402
 
 
@@ -645,11 +647,36 @@ def test_one_failure_count_everywhere():
             assert sum(r["count"] for r in site["recommendations"]) == site["failed"]
 
 
-def test_only_sites_with_a_failure_are_listed():
-    """A site where nothing failed has nothing to action."""
+def test_every_site_in_the_region_is_listed():
+    """The table used to show only sites carrying a denial, which hid seven of
+    southcentralus's ten buildings -- all ten of which are past their own safety
+    threshold. The page leads with threshold status, so a table filtered by
+    failures was answering a different question from the one in the heading.
+
+    A data centre over its line with nothing yet failed is precisely the case
+    worth seeing, because it is the one still cheap to fix.
+    """
+    onto = api.get_ontology()
     for region in api.overview()["regions"]:
-        for x in api.region_detail(region["region"])["datacentres"]:
-            assert x["failed"] > 0, x["datacentre"]
+        name = region["region"]
+        listed = {x["datacentre"] for x in api.region_detail(name)["datacentres"]}
+        expected = set(onto["dim_datacentre"]
+                       .loc[onto["dim_datacentre"]["Region"] == name, "DatacentreId"]
+                       .astype(str))
+        assert listed == expected, f"{name}: {expected - listed} missing from the table"
+
+
+def test_the_region_reports_over_threshold_and_activity_separately():
+    """Two different counts that were being conflated: how many sites are past
+    their line, and how many have had a request raised against them."""
+    for region in api.overview()["regions"]:
+        d = api.region_detail(region["region"])
+        assert d["sitesOverThreshold"] == sum(
+            1 for x in d["datacentres"] if x["overThreshold"])
+        assert d["sitesWithActivity"] == sum(
+            1 for x in d["datacentres"] if x["requests"] > 0)
+        for x in d["datacentres"]:
+            assert x["overThreshold"] == (x["utilisationPct"] > x["thresholdPct"])
 
 
 def test_every_listed_site_reports_its_capacity_position():
@@ -797,24 +824,34 @@ def test_capacity_is_also_expressed_as_a_fabric_sku():
         assert p["CapacityUnits"] == pytest.approx(p["DeployedUnits"] * d["unitsPerCu"], rel=1e-6)
 
 
-def test_every_priced_failure_reports_both_revenue_bases():
-    """ARR apportionment and consumption rate answer different questions, so
-    both are shown rather than one taken on faith."""
-    rows = [t for r in api.overview()["regions"]
-            for t in api.region_detail(r["region"])["tickets"] if t["isFlagged"]]
+def test_the_rate_card_still_computes_even_though_it_is_not_shown():
+    """The second valuation basis was removed from the screen on review: where
+    ARR already gives a figure the two land within a few percent of each other
+    and add only the question of which one counts, and the rates are
+    placeholders rather than the published Fabric price.
+
+    The module stays, because the blind spot it covers is real -- ARR cannot
+    price a failure against a customer with no revenue -- and it returns the
+    moment Finance supplies real rates. Testing it here keeps it working rather
+    than letting it rot until someone needs it.
+    """
+    est = ratecard.estimate(units_unavailable=10, days=18.9)
+    assert est.amount > 0
+    assert est.is_placeholder is True, "placeholder rates must announce themselves"
+    assert est.capacity_units == pytest.approx(10 * admission.UNITS_PER_CU)
+    assert est.hours == pytest.approx(18.9 * ratecard.HOURS_PER_DAY)
+    assert est.amount == pytest.approx(
+        est.capacity_units * est.rate_per_cu_hour * est.hours)
+    assert "capacity units" in est.working_out
+
+
+def test_no_screen_shows_a_placeholder_price_beside_a_real_one():
+    """Removed from the ticket rows, and it must not creep back: a made-up
+    figure sitting next to a measured one is worse than not showing it."""
+    rows = api.incidents()["incidents"]
     assert rows
-    for t in rows:
-        basis = t["consumptionBasis"]
-        assert basis and basis["workingOut"]
-        # Placeholder rates must announce themselves.
-        assert basis["isPlaceholder"] is True
-        # Recomputed from the figures the row prints. Those are rounded for
-        # display -- capacity units to 2dp, hours to 1dp -- so a reader
-        # checking it lands within a fraction of a percent rather than exactly,
-        # the same tolerance the ARR basis carries.
-        recomputed = basis["capacityUnits"] * basis["ratePerCuHour"] * basis["hours"]
-        assert abs(recomputed - basis["amount"]) <= max(0.5, basis["amount"] * 0.001), (
-            f"{t['incidentId']}: states {basis['amount']}, its own figures give {recomputed:.2f}")
+    assert all("consumptionBasis" not in r for r in rows), \
+        "the placeholder rate card is back on the incident rows"
 
 
 def test_the_region_view_carries_a_recommendation_per_site():
@@ -824,6 +861,12 @@ def test_the_region_view_carries_a_recommendation_per_site():
     for region in api.overview()["regions"]:
         for site in api.region_detail(region["region"])["datacentres"]:
             recs = site["recommendations"]
+            # A site with no failure has no cause and so no recommendation --
+            # it is listed because it is over its threshold, not because
+            # something went wrong there.
+            if not site["failed"]:
+                assert recs == [], site["datacentre"]
+                continue
             assert recs, site["datacentre"]
             # One entry per distinct cause -- a site with two problems needs
             # two fixes, and they may have different owners.
@@ -1176,31 +1219,20 @@ def test_a_reserve_cannot_prevent_more_failures_than_occurred():
         assert r["wouldHavePrevented"] <= r["actualFailures"], r["region"]
 
 
-def test_a_zero_arr_failure_still_carries_a_consumption_price():
-    """The rate-card basis exists precisely so a Free-tier failure is not
-    invisible. It was computed for every failure and rendered nowhere, so nine
-    genuine failures -- one of them 138 days long -- read as $0.00 on screen."""
-    rows = api.incidents()["incidents"]
-    failures = [r for r in rows if r["isFlagged"]]
-    assert failures, "expected flagged failures in this extract"
-    assert all(r.get("consumptionBasis") for r in failures), \
-        "every failure must carry the second valuation basis"
-
-    zero_arr = [r for r in failures if r["exposure"] == 0]
-    assert zero_arr, "this extract contains Free-tier failures priced at zero"
-    for r in zero_arr:
-        assert r["consumptionBasis"]["amount"] > 0, (
-            f"{r['incidentId']}: priced $0 by ARR and $0 by rate card -- "
-            "the failure would be invisible on every screen")
-
-
-def test_the_rate_card_declares_itself_a_placeholder():
-    """Published rates have not landed. Nothing may present these as real
-    pricing, on screen or in an export."""
-    for r in api.incidents()["incidents"]:
-        basis = r.get("consumptionBasis")
-        if basis:
-            assert basis["isPlaceholder"] is True
+def test_a_zero_arr_failure_still_says_why_it_is_zero():
+    """Nine failures price at zero because the customer is Free-tier, one of
+    them 138 days long. With the rate card off the screen, the words are the
+    only thing standing between that and a row that reads like a broken
+    calculator."""
+    zero = [r for r in api.incidents()["incidents"]
+            if r["isFlagged"] and r["exposure"] == 0]
+    assert zero, "this extract contains Free-tier failures priced at zero"
+    for r in zero:
+        working = (r.get("workingOut") or "").lower()
+        assert "free-tier" in working or "no recorded revenue" in working, \
+            f"{r['incidentId']}: priced $0 with no explanation of why"
+        assert "not excused" in working or "delay" in working, \
+            f"{r['incidentId']}: $0 stated without noting the delay still happened"
 
 
 def test_region_row_and_region_page_agree_on_what_is_owed():
@@ -1431,3 +1463,161 @@ def test_generated_demand_months_are_marked_as_such():
     assert 0 < d["realMonths"] < len(d["demand"])
     assert all("isReal" in m for m in d["demand"])
     assert [m["month"] for m in d["demand"]] == sorted(m["month"] for m in d["demand"])
+
+
+def test_generated_demand_months_carry_the_requests_behind_their_cores():
+    """A chart showing capacity requested with nothing having requested it is
+    the first thing anyone asks about, and it had no answer."""
+    for region in sorted(api.get_ontology()["dim_region"]["Region"]):
+        for m in api.demand_region(region)["demand"]:
+            if m["cores"] > 0:
+                assert m["tickets"] > 0, f"{region} {m['month']}: cores with no requests"
+
+
+def test_generated_months_never_sit_inside_the_recorded_window():
+    """A month between two recorded months with no tickets is not missing data --
+    nothing was asked for. Filling it invents demand that provably did not exist."""
+    for region in sorted(api.get_ontology()["dim_region"]["Region"]):
+        flags = [m["isReal"] for m in api.demand_region(region)["demand"]]
+        first_real = flags.index(True) if True in flags else len(flags)
+        assert all(flags[i] for i in range(first_real, len(flags))), \
+            f"{region}: a generated month sits inside the recorded window"
+
+
+def test_request_volume_does_not_jump_where_the_real_data_starts():
+    """Summing the per-customer counts gave the generated half seven to thirteen
+    requests a month against one to four recorded, so request volume appeared to
+    collapse at exactly the point the real data began -- an artefact of the fill,
+    read as a finding.
+
+    The invariant is volume, not cores-per-request. Where a region's whole
+    monthly demand is smaller than one typical recorded request, every generated
+    month correctly gets a single request and the ratio cannot match.
+    """
+    import statistics
+
+    for region in sorted(api.get_ontology()["dim_region"]["Region"]):
+        ms = api.demand_region(region)["demand"]
+        gen = [m["tickets"] for m in ms if not m["isReal"]]
+        rec = [m["tickets"] for m in ms if m["isReal"]]
+        if len(gen) >= 3 and len(rec) >= 3:
+            g, r = statistics.median(gen), statistics.median(rec)
+            assert g <= max(r, 1) * 2.5, (
+                f"{region}: generated months average {g} requests against {r} recorded")
+
+
+def test_the_assistant_can_see_the_threshold_the_screen_shows():
+    """Asked what the "80%" and "over" beside southcentralus-dc01 meant, the
+    assistant answered that no such figure existed -- while the figure sat on
+    screen beside it. The snapshot carried risk scores and failures for each
+    facility but never its safety line."""
+    sites = api.get_snapshot()["datacentres"]
+    assert sites, "the assistant is given no facilities at all"
+    for s in sites:
+        assert "thresholdPct" in s and s["thresholdPct"] > 0, s["datacentre"]
+        assert s["thresholdStatus"] in ("In risk", "Not in risk")
+        assert s["thresholdStatus"] == (
+            "In risk" if s["utilisationPct"] > s["thresholdPct"] else "Not in risk")
+
+
+def test_a_facility_is_not_described_with_its_regions_utilisation():
+    """The snapshot passed the region's utilisation under a per-facility key, so
+    the assistant reported a regional figure as though it belonged to one
+    building. The regional figure is now simply not there, which is stronger
+    than naming it carefully -- it cannot be misread if it is absent."""
+    onto = api.get_ontology()
+    dim = {str(r["DatacentreId"]): r for _, r in onto["dim_datacentre"].iterrows()}
+    sites = api.get_snapshot()["datacentres"]
+    assert sites
+    for s in sites:
+        row = dim[s["datacentre"]]
+        expected = float(row["UsedUnits"]) / float(row["DeployedUnits"]) * 100
+        assert s["utilisationPct"] == pytest.approx(round(expected, 1), abs=0.05)
+        assert "regionUtilisationPct" not in s
+
+
+def test_the_assistant_sees_every_facility_not_only_the_busy_ones():
+    """Asked how many of southcentralus's data centres were over their
+    threshold, the assistant answered from the 45 sites with activity while the
+    region page listed all ten. A building over its line with nothing yet failed
+    is exactly the one worth asking about, and it was invisible by construction."""
+    onto = api.get_ontology()
+    sites = api.get_snapshot()["datacentres"]
+    assert len(sites) == len(onto["dim_datacentre"])
+    by_region = {}
+    for s in sites:
+        by_region.setdefault(s["region"], []).append(s)
+    for region, group in by_region.items():
+        page = api.region_detail(region)
+        assert len(group) == page["siteCount"], region
+        assert sum(1 for s in group if s["thresholdStatus"] == "In risk") \
+            == page["sitesOverThreshold"], region
+
+
+def test_the_fallback_answers_rather_than_raising():
+    """Removing the stale status field from the snapshot broke the deterministic
+    fallback, which still read it -- so every question that fell back returned a
+    500 instead of the safe answer the fallback exists to provide. The fallback
+    is the thing that runs when the model is unavailable, so it must never be
+    the part that fails."""
+    import assistant
+
+    snap = api.get_snapshot()
+    from module5.llm import LLMConfig
+
+    # An empty config is unconfigured, so chat() raises and the fallback runs.
+    # Passing no config was not enough: it falls back to the environment, so the
+    # test only exercised the fallback while the model happened to be down.
+    unconfigured = LLMConfig()
+    assert not unconfigured.is_configured
+
+    for q in ("tell me about southcentralus",
+              "which regions are in risk",
+              "how is exposure calculated",
+              "something entirely unrelated to capacity"):
+        result = assistant.ask(q, snap, llm_config=unconfigured)
+        assert result["answer"], q
+        assert result["source"] == "fallback"
+        assert "approaching" not in result["answer"].lower()
+
+
+def test_the_assistant_is_given_counts_rather_than_asked_to_count():
+    """Asked how many data centres in southcentralus were in risk, the model
+    counted the facility rows itself and answered "seven" against an actual ten.
+    Models read reliably and count badly, so the counts are computed here."""
+    snap = api.get_snapshot()
+    sites = snap["datacentres"]
+    for r in snap["regions"]:
+        here = [d for d in sites if d["region"] == r["region"]]
+        assert r["dataCentreCount"] == len(here), r["region"]
+        assert r["dataCentresInRisk"] == sum(
+            1 for d in here if d["thresholdStatus"] == "In risk"), r["region"]
+        assert r["dataCentresWithRequests"] == sum(
+            1 for d in here if d.get("requests")), r["region"]
+        # And they must match the page, or the assistant and the screen disagree.
+        page = api.region_detail(r["region"])
+        assert r["dataCentreCount"] == page["siteCount"], r["region"]
+        assert r["dataCentresInRisk"] == page["sitesOverThreshold"], r["region"]
+
+
+def test_the_assistant_is_told_which_regions_are_in_risk_not_asked_to_work_it_out():
+    """Asked how many regions were in risk the model answered "6" and then
+    listed three, one of which the snapshot plainly marked "Not in risk". The
+    data was right; the tallying was not."""
+    snap = api.get_snapshot()
+    truth = [r["region"] for r in api.threshold()["regions"] if r["at_risk"]]
+    assert snap["regionsInRiskCount"] == len(truth)
+    assert sorted(snap["regionsInRisk"]) == sorted(truth)
+    assert snap["regionsNotInRiskCount"] == len(snap["regions"]) - len(truth)
+
+
+def test_the_assistant_knows_what_each_region_owes():
+    """Cores pending is on the Regions table and the region page, but was never
+    in the snapshot -- so asked how many cores were pending the assistant
+    correctly said it could not tell, about a figure on screen."""
+    snap = api.get_snapshot()
+    owed = api._cores_pending_by_region()
+    assert snap["coresPendingTotal"] == pytest.approx(round(sum(owed.values()), 1))
+    for r in snap["regions"]:
+        assert r["coresPending"] == pytest.approx(
+            round(owed.get(r["region"], 0.0), 1)), r["region"]

@@ -506,6 +506,8 @@ def datacentres():
     ctx = _region_context(onto)
     priced = {str(r["incidentId"]): r for r in _ticket_rows(get_module5().priced, slice(None))}
 
+    sites_by_id = {str(r["DatacentreId"]): r
+                   for _, r in onto["dim_datacentre"].iterrows()}
     groups = list(fact.groupby("DatacentreId"))
     busiest = max((int((g["NewLimitCapacity"] < g["RequestedCapacity"]).sum())
                    for _, g in groups), default=1) or 1
@@ -516,10 +518,23 @@ def datacentres():
         denied = _failed_rows(grp)
         denied = denied[denied["DenialReason"] != ""]
         loss = sum(float(priced.get(str(i), {}).get("exposure", 0)) for i in grp["IncidentId"])
+        site = sites_by_id.get(str(dc))
+        site_dep = float(site["DeployedUnits"]) if site is not None else 0.0
+        site_used = float(site["UsedUnits"]) if site is not None else 0.0
+        site_thr = float(site["ThresholdPct"]) if site is not None else 0.0
+        site_util = (site_used / site_dep * 100.0) if site_dep else 0.0
         rows.append({
             "datacentre": str(dc),
             "region": region,
             "hardware": str(ctx.get(region, {}).get("sku", "") or ""),
+            # This facility's own safety line and how full it actually is. The
+            # region page prints both in its table, but neither reached the
+            # assistant, so asked what the "80%" and "over" against
+            # southcentralus-dc01 meant it correctly answered that it had no
+            # such figure -- while the figure sat on screen beside it.
+            "thresholdPct": round(site_thr, 1),
+            "siteUtilisationPct": round(site_util, 1),
+            "overThreshold": bool(site_util > site_thr),
             "requests": int(len(grp)),
             "failed": int(len(denied)),
             "customers": int(grp["SubscriptionId"].nunique()),
@@ -1121,7 +1136,6 @@ def _ticket_rows(priced, mask):
             "workingOut": _working_out(t, arr, share, days),
             # The consumption basis alongside the ARR one. They answer
             # different questions and are deliberately both reported.
-            "consumptionBasis": _consumption_basis(t),
         })
     return rows
 
@@ -1272,8 +1286,18 @@ def region_detail(name: str):
     sites = sites[sites["Region"] == name].set_index("DatacentreId")
     priced_here = {r["incidentId"]: r for r in rows}
 
+    # Every facility in the region, not only the ones a ticket landed on.
+    # Filtering to sites with a failure hid seven of southcentralus's ten
+    # buildings -- all ten are past their own safety threshold, and the page
+    # leads with threshold status, so a table answering "where did something
+    # fail" beneath a heading about being in risk was answering a different
+    # question from the one asked.
+    by_site = {str(k): v for k, v in here.groupby("DatacentreId")}
+    empty = here.iloc[0:0]
+
     datacentres = []
-    for dc, grp in here.groupby("DatacentreId"):
+    for dc in sorted(sites.index.astype(str)):
+        grp = by_site.get(dc, empty)
         # Failures only, everywhere. The reason breakdown, the recommendation
         # and the column all count the same rows.
         denied = _failed_rows(grp)
@@ -1286,8 +1310,17 @@ def region_detail(name: str):
         open_days = [x.get("days", 0) for x in failed
                      if "unfulfilled" in str(x.get("outcomeLabel", "")).lower()]
         meta = sites.loc[dc] if dc in sites.index else None
+        dep = float(meta["DeployedUnits"]) if meta is not None else 0.0
+        used = float(meta["UsedUnits"]) if meta is not None else 0.0
+        thr = float(meta["ThresholdPct"]) if meta is not None else 0.0
+        util = (used / dep * 100.0) if dep else 0.0
         datacentres.append({
             "datacentre": str(dc),
+            "utilisationPct": round(util, 1),
+            # The status the page is actually about. A site can be over its line
+            # with nothing having failed there yet, which is the case worth
+            # seeing before it becomes a denial.
+            "overThreshold": bool(util > thr),
             "requests": int(len(grp)),
             "failed": len(failed),
             "customers": int(grp["SubscriptionId"].nunique()),
@@ -1308,9 +1341,9 @@ def region_detail(name: str):
             "thresholdPct": _clean(meta["ThresholdPct"]) if meta is not None else None,
             "headroom": _clean(meta["HeadroomToThreshold"]) if meta is not None else None,
         })
-    # A site where nothing failed has nothing to act on, so it is not listed.
-    datacentres = [d for d in datacentres if d["failed"] > 0]
-    datacentres.sort(key=lambda d: (-d["failed"], -d["revenueLoss"]))
+    # Worst first: over its line, then by failures, then by what it cost.
+    datacentres.sort(key=lambda d: (not d["overThreshold"], -d["failed"],
+                                    -d["revenueLoss"], d["datacentre"]))
 
     all_sites = onto["dim_datacentre"]
     all_sites = all_sites[all_sites["Region"] == name]
@@ -1319,7 +1352,8 @@ def region_detail(name: str):
         "region": name,
         "datacentres": datacentres,
         "siteCount": int(len(all_sites)),
-        "sitesWithActivity": len(datacentres),
+        "sitesWithActivity": sum(1 for d in datacentres if d["requests"] > 0),
+        "sitesOverThreshold": sum(1 for d in datacentres if d["overThreshold"]),
         "cores": _clean(all_sites["DeployedUnits"].sum()),
         "coresFree": _clean(all_sites["FreeUnits"].sum()),
         "hardware": str(all_sites["SKUClass"].iloc[0]) if len(all_sites) else "",
@@ -1624,11 +1658,16 @@ def _demand_series(fact, events, key_col: str, key: str) -> dict:
     # they are supposed to stand out from.
     ordinary = [m["cores"] for m in out if not m["eventDriven"]]
     baseline = float(np.median(ordinary)) if ordinary else 0.0
+    recorded = [m["month"] for m in out if m.get("isReal", True)]
     return {
         "demand": out,
         "baselineCores": round(baseline, 1),
         "eventMonths": sum(1 for m in out if m["eventDriven"]),
-        "realMonths": sum(1 for m in out if m.get("isReal", True)),
+        "realMonths": len(recorded),
+        # The month the ticket data actually starts. Naming it beats naming the
+        # source system: "no ICM data this far back" tells a reader which system
+        # to blame, not which months they can trust.
+        "firstRecordedMonth": min(recorded) if recorded else None,
     }
 
 
@@ -1668,10 +1707,18 @@ def _extend_demand_history(observed: list, rows, key_col: str, key: str) -> list
         return observed
 
     have = {m["month"] for m in observed}
+    # Only extend backwards, never fill gaps inside the recorded window. A month
+    # between two recorded months with no tickets is not missing data -- it is a
+    # month in which nothing was asked for, and replacing that with an estimate
+    # invents demand that provably did not exist. southcentralus had exactly this:
+    # a generated December sitting between a recorded November and January.
+    first_recorded = min(have) if have else None
     rel = demand[demand["SubscriptionId"].astype(str).isin(share)]
     filled = []
     for month, grp in rel.groupby("Month"):
         if str(month) in have:
+            continue
+        if first_recorded is not None and str(month) >= first_recorded:
             continue
         cores = sum(float(r.CoresRequested) * share.get(str(r.SubscriptionId), 0.0)
                     for r in grp.itertuples())
@@ -1704,6 +1751,22 @@ def _extend_demand_history(observed: list, rows, key_col: str, key: str) -> list
         scale = real_level / fill_level
         for m in filled:
             m["cores"] = round(m["cores"] * scale, 1)
+
+    # Requests behind those cores. Leaving this at zero produced a chart showing
+    # capacity requested with nothing having requested it -- the first question
+    # anyone asks of it, and one with no answer.
+    #
+    # Derived from the recorded months rather than from the generated per-customer
+    # counts. Summing those gave the generated half seven to thirteen requests a
+    # month against one to four in the recorded half, so request volume appeared
+    # to collapse exactly where the real data started -- the same artefact the
+    # cores calibration exists to prevent. Carrying the recorded cores-per-request
+    # across means the two halves of the chart describe the same kind of place.
+    per_request = [m["cores"] / m["tickets"] for m in observed if m["tickets"]]
+    typical = float(np.median(per_request)) if per_request else 0.0
+    if typical > 0:
+        for m in filled:
+            m["tickets"] = max(1, round(m["cores"] / typical)) if m["cores"] > 0 else 0
 
     # A filled month counts as deal-driven on the same test a reader applies by
     # eye: it is several times an ordinary month. Flagging it from whether any
@@ -2088,6 +2151,55 @@ def _conversion_readiness(onto):
 
 
 @lru_cache(maxsize=1)
+def _snapshot_datacentres() -> list:
+    """Every facility, not only the ones a ticket landed on.
+
+    The assistant was given the 45 sites with activity, so asked how many of
+    southcentralus's data centres were over their threshold it answered from six
+    while the region page listed ten. A building over its safety line with
+    nothing yet failed is exactly the one worth asking about, and it was
+    invisible to the assistant by construction.
+    """
+    onto = get_ontology()
+    scored = {r["datacentre"]: r for r in datacentres()["datacentres"]}
+    out = []
+    for row in onto["dim_datacentre"].itertuples():
+        dc = str(row.DatacentreId)
+        dep, used = float(row.DeployedUnits), float(row.UsedUnits)
+        thr = float(row.ThresholdPct)
+        util = (used / dep * 100.0) if dep else 0.0
+        s = scored.get(dc, {})
+        entry = {
+            "datacentre": dc,
+            "region": str(row.Region),
+            "thresholdPct": round(thr, 1),
+            "utilisationPct": round(util, 1),
+            "thresholdStatus": "In risk" if util > thr else "Not in risk",
+            "coresDeployed": round(dep, 1),
+            "coresFree": round(dep - used, 1),
+        }
+        # 65 of the 110 sites have never had a request. Carrying nulls for
+        # their failure counts and risk scores added 19KB to a snapshot that
+        # travels with every question, and the model then had to reason about
+        # fields that say nothing. They are listed -- being over a threshold
+        # with nothing yet failed is the case worth seeing -- but only with the
+        # facts that exist for them.
+        if s.get("requests"):
+            entry.update({
+                "requests": int(s["requests"]),
+                "failed": int(s.get("failed", 0)),
+                "revenueLoss": float(s.get("revenueLoss", 0.0)),
+                "topReason": s.get("topReason", ""),
+                "riskScore": (s.get("risk") or {}).get("score"),
+                "riskBand": (s.get("risk") or {}).get("band"),
+                "leadTimeDays": s.get("leadTime"),
+            })
+        else:
+            entry["note"] = "no requests recorded here"
+        out.append(entry)
+    return out
+
+
 def get_snapshot():
     """Everything the assistant may know, rebuilt only when the app restarts."""
     onto, m5 = get_ontology(), get_module5()
@@ -2101,6 +2213,12 @@ def get_snapshot():
         provenance=_records(ontology.sources(onto.tables)),
         customers=customers()["customers"],
         conversions=_conversion_readiness(onto),
+        # Asked "which data centres in eastus2 are in risk", the assistant
+        # correctly said it could not tell -- the snapshot held regions and
+        # incidents but never the facilities, so a question the Data centres tab
+        # answers in one glance was unanswerable here.
+        datacentres=_snapshot_datacentres(),
+        cores_pending=_cores_pending_by_region(),
         incidents=[
             {k: r[k] for k in ("incidentId", "customerShort", "tier", "region",
                                "outcome", "askedFor", "days", "exposure",
