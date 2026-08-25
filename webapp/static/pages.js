@@ -662,7 +662,15 @@ function capacityRows(d, region) {
     <thead><tr>
       <th>Capacity</th><th>SKU</th><th class="n">CU</th><th class="n">Units</th>
       <th class="n">Used</th><th>Hardware</th><th class="n">Nodes</th>
-      <th class="n">Incidents<br><span class="t3">per node</span></th>
+      ${/* Two numbers, so two columns. These were stacked under one heading
+            reading "Incidents per node", which labelled a count as a rate: the
+            large figure was the raw count and the small one the per-node rate,
+            and a reader had no way to know which was which. The fleet
+            comparison also only appeared on capacities that crossed the
+            unhealthy line, so a healthy one showed a bare rate with nothing to
+            judge it against. Both are now always stated. */ ""}
+      <th class="n">Incidents<br><span class="t3">total</span></th>
+      <th class="n">Per node<br><span class="t3">vs fleet ${fleet.toFixed(1)}</span></th>
       <th>Free viewers</th>
     </tr></thead>
     <tbody>${d.capacities.map((c) => {
@@ -677,9 +685,12 @@ function capacityRows(d, region) {
       <td class="hw">${esc(c.vendor)} ${esc(c.model)}
         <span class="t3">${esc(c.skuClass)} · ${esc(c.cpu)} · ${num(c.memoryGB)}GB</span></td>
       <td class="n">${c.nodes}</td>
-      <td class="n ${sick ? "t-bad" : ""}" title="${c.incidents} incident(s), ${c.seriousIncidents} Sev1/Sev2, ${c.downtimeHours}h lost">
+      <td class="n" title="${c.incidents} incident(s) recorded, ${c.seriousIncidents} of them Sev1 or Sev2, ${c.downtimeHours}h lost">
         ${c.incidents}
-        <span class="t3">${c.incidentsPerNode.toFixed(1)}${sick ? ` · ${c.rateVsFleet}× fleet` : ""}</span></td>
+        <span class="t3">${c.seriousIncidents} sev1/2</span></td>
+      <td class="n ${sick ? "t-bad" : ""}" title="${c.incidents} incident(s) over ${c.nodes} node(s), shrunk toward the fleet rate of ${c.fleetIncidentsPerNode.toFixed(1)}">
+        ${c.incidentsPerNode.toFixed(1)}
+        <span class="t3">${c.rateVsFleet}×${sick ? " — worse" : ""}</span></td>
       <td>${c.supportsFreeViewers
         ? `<span class="pill good">F64+</span>`
         : `<span class="pill wash" title="Below F64: each Power BI viewer needs Pro or PPU">Pro needed</span>`}</td>
@@ -713,9 +724,15 @@ async function capacityPanel(scope, id) {
         : `None is F64 or larger, so every user viewing Power BI content on any of
            these needs a Pro or PPU licence — a commercial cost that no utilisation
            figure shows.`}
-      Incidents-per-node is shrunk toward the fleet average in proportion to how
-      many nodes stand behind it, so a one-node capacity having a bad month does
-      not outrank a whole estate.
+      <b>Incidents</b> is the raw count; <b>per node</b> divides it by the
+      machines underneath, which is the only way to compare a one-node F4 with a
+      two-node F64 — the larger one will always see more trouble simply for
+      being larger. That rate is then shrunk toward the fleet average in
+      proportion to how many nodes stand behind it, so a one-node capacity
+      having a bad month does not outrank a whole estate, and
+      <b>${d.capacities.length ? d.capacities[0].fleetIncidentsPerNode.toFixed(1) : "—"}</b>
+      is what the fleet averages. Anything at 1.4× or worse is where moving the
+      workload starts to beat buying more of the same hardware.
     </p>
     <p style="color:var(--ink-3);font-size:.78rem;margin:.5rem 0 0">${esc(d.note)}</p>`);
 }
