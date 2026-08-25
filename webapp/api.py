@@ -1205,9 +1205,31 @@ def capacities(region: Annotated[str | None, Query()] = None,
     rows.sort(key=lambda r: (-r["capacityUnits"], r["capacityId"]))
     total_units = sum(r["deployedUnits"] for r in rows)
     used = sum(r["deployedUnits"] * r["utilisationPct"] / 100.0 for r in rows)
+
+    # What "the fleet" is, stated rather than assumed. The baseline every rate
+    # on this page is measured against is the whole estate, and it stays the
+    # whole estate when the page is filtered to one region -- otherwise a region
+    # of uniformly bad hardware would compare itself against itself and report
+    # that everything was normal.
+    everything = _capacity_health()
     return {
         "capacities": rows,
         "count": len(rows),
+        "fleet": {
+            "capacities": int(len(everything)),
+            "sites": int(everything["DatacentreId"].nunique()),
+            "regions": int(everything["Region"].nunique()),
+            "nodes": int(everything["Nodes"].sum()),
+            "incidents": int(everything["Incidents"].sum()),
+            # Not re-rounded. `capacity_health` already rounds this, and
+            # rounding it again here produced 1.88 in the summary against 1.875
+            # on every row -- the same quantity printed two ways, which is the
+            # split this project keeps removing.
+            "incidentsPerNode": float(everything["FleetRate"].iloc[0])
+            if len(everything) else 0.0,
+            "means": ("every capacity in the estate, across all regions — not "
+                      "just the ones listed here"),
+        },
         "skuMix": {sku: sum(1 for r in rows if r["fabricSku"] == sku)
                    for sku in sorted({r["fabricSku"] for r in rows})},
         "totalUnits": total_units,

@@ -99,6 +99,30 @@ def test_capacity_rows_carry_the_hardware_the_table_prints():
         assert c["fabricSku"].startswith("F")
 
 
+def test_the_fleet_baseline_is_the_whole_estate_not_the_filter():
+    """"Fleet" must mean everything, whatever the page is scoped to.
+
+    If the baseline narrowed with the filter, a region running uniformly poor
+    hardware would be compared against itself and report that every capacity in
+    it was perfectly normal -- which is exactly the comparison that makes the
+    hardware case visible in the first place.
+    """
+    whole = api.capacities()
+    one_site = api.capacities(datacentre="southcentralus-dc01")
+    one_region = api.capacities(region="centralindia")
+
+    assert one_site["count"] < whole["count"]
+    for scope in (whole, one_site, one_region):
+        assert scope["fleet"]["capacities"] == whole["count"], (
+            "the fleet baseline changed with the filter")
+        assert scope["fleet"]["incidentsPerNode"] == whole["fleet"]["incidentsPerNode"]
+        assert scope["fleet"]["regions"] > 1, "a fleet of one region is not a fleet"
+
+    # And the per-row comparison uses that same baseline.
+    for c in one_site["capacities"]:
+        assert c["fleetIncidentsPerNode"] == whole["fleet"]["incidentsPerNode"]
+
+
 def test_free_viewer_count_matches_the_rows():
     d = api.capacities(region="canadacentral")
     assert d["freeViewerCapable"] == sum(

@@ -670,7 +670,7 @@ function capacityRows(d, region) {
             unhealthy line, so a healthy one showed a bare rate with nothing to
             judge it against. Both are now always stated. */ ""}
       <th class="n">Incidents<br><span class="t3">total</span></th>
-      <th class="n">Per node<br><span class="t3">vs fleet ${fleet.toFixed(1)}</span></th>
+      <th class="n" title="The fleet is every capacity in the estate, across all regions — not only the ones on this page. It stays the whole estate when this page is filtered, so a region of uniformly poor hardware cannot compare itself against itself and call it normal.">Per node<br><span class="t3">vs fleet ${fleet.toFixed(1)}</span></th>
       <th>Free viewers</th>
     </tr></thead>
     <tbody>${d.capacities.map((c) => {
@@ -729,10 +729,16 @@ async function capacityPanel(scope, id) {
       two-node F64 — the larger one will always see more trouble simply for
       being larger. That rate is then shrunk toward the fleet average in
       proportion to how many nodes stand behind it, so a one-node capacity
-      having a bad month does not outrank a whole estate, and
-      <b>${d.capacities.length ? d.capacities[0].fleetIncidentsPerNode.toFixed(1) : "—"}</b>
-      is what the fleet averages. Anything at 1.4× or worse is where moving the
-      workload starts to beat buying more of the same hardware.
+      having a bad month does not outrank a whole estate.
+      ${d.fleet ? `<b>The fleet</b> means every capacity everywhere —
+      ${num(d.fleet.capacities)} of them across ${num(d.fleet.sites)} sites in
+      ${num(d.fleet.regions)} regions, ${num(d.fleet.incidents)} incidents over
+      ${num(d.fleet.nodes)} nodes, so <b>${d.fleet.incidentsPerNode}</b> per node
+      is ordinary. It stays the whole estate even when this page shows one site,
+      because a region of uniformly poor hardware compared against itself would
+      report that everything was fine.` : ""}
+      Anything at 1.4× or worse is where moving the workload starts to beat
+      buying more of the same hardware.
     </p>
     <p style="color:var(--ink-3);font-size:.78rem;margin:.5rem 0 0">${esc(d.note)}</p>`);
 }
