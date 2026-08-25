@@ -322,6 +322,17 @@ svg.chart { width: 100%; height: auto; display: block; }
   height: 9px; border-radius: 2px;
   background: var(--brand); opacity: .18;
 }
+/* The region chart carries two units on two axes, so its key has to name the
+   axis as well as the line -- "which line is which" is not enough when the
+   numbers either side of the frame mean different things. */
+.legend .ln.demand      { border-top: 2px solid var(--brand); }
+.legend .ln.demand-proj { border-top: 2px dashed var(--brand); }
+.legend .ln.util        { border-top: 2px solid var(--ink-2); }
+.legend .ln.baseline    { border-top: 2px dotted var(--brand); opacity: .55; }
+.legend .dot {
+  display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  flex: none; background: var(--warn);
+}
 svg.chart text { font-family: var(--sans); }
 
 /* --------------------------------------------------------------- assistant */
