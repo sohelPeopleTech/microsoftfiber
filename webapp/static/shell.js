@@ -30,6 +30,7 @@ const NAV = [
   { path: "/forecast",     icon: "◠", label: "Forecast" },
   { path: "/policy",       icon: "⚖", label: "Capacity policy" },
   null,
+  { path: "/recommendations", icon: "➤", label: "Recommendations" },
   { path: "/actions",      icon: "✓", label: "Actions" },
   null,
   { path: "/methodology",  icon: "ⓘ", label: "Methodology" },
@@ -265,13 +266,18 @@ function wireLinks() {
     if (url.origin !== location.origin) return;
     if (resolve(url.pathname).path === "/" && url.pathname !== "/") return;
     e.preventDefault();
-    navigate(url.pathname);
+    // Carry the query string. Filters on the recommendations page live in it,
+    // and dropping it here silently ignored every filter link.
+    navigate(url.pathname + url.search);
   });
   addEventListener("popstate", () => route());
 }
 
 function navigate(path) {
-  if (path === location.pathname) return;
+  // Compare the query too. Two links to /recommendations differing only by
+  // ?kind= are different destinations, and comparing pathname alone made
+  // switching filters a no-op that looked like a dead link.
+  if (path === location.pathname + location.search) return;
   history.pushState({}, "", path);
   route();
 }
@@ -296,7 +302,7 @@ async function route() {
   $("view").innerHTML = `<p class="loading">Loading…</p>`;
   scrollTo(0, 0);
   try {
-    await PAGES[path]($("view"), arg);
+    await PAGES[path]($("view"), arg, location.search);
   } catch (err) {
     $("view").innerHTML =
       `<p class="error">Could not load this page: ${esc(err.message)}</p>`;

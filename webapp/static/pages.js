@@ -81,7 +81,27 @@ PAGES["/"] = async (view) => {
       ${num(c.denied_then_approved_late || 0)} that breached SLA before being
       granted and the ${num(c.denied_unfulfilled || 0)} never granted at all are
       what carry the ${money(k.exposure)} of revenue loss.
+      <b>Denied is not the same as refused</b>: of the
+      ${num((c.same_day_approved || 0) + (c.denied_then_approved_late || 0)
+            + (c.denied_unfulfilled || 0))}
+      requests denied at some point,
+      ${num((c.same_day_approved || 0) + (c.denied_then_approved_late || 0))}
+      were approved in the end and only ${num(c.denied_unfulfilled || 0)} never
+      were. The ${num(c.denied_then_approved_late || 0)} above is a <i>delay</i>
+      that breached SLA, not a refusal.
     </p>
+    ${d.partial && d.partial.count ? `
+    <p style="background:var(--warn-wash);border-left:3px solid var(--warn);
+       padding:.6rem .9rem;margin:0 1.15rem 1.15rem;font-size:.82rem">
+      <b>A third outcome the extract cannot express.</b>
+      ${num(d.partial.count)} request(s) were met <b>in part</b> rather than
+      granted or refused — ${num(d.partial.units)} units given against
+      ${num(d.partial.units + d.partial.shortfallUnits)} asked for, a median of
+      ${pct(d.partial.medianGrantedPct, 0)} of the ask, across
+      ${esc(d.partial.regions.join(", "))}.
+      These are not in the five counts above and move no published figure.
+      <span style="color:var(--ink-3)">${esc(d.partial.note)}</span>
+    </p>` : ""}
   `, { flush: true })}
 
   ${panel("Demand distribution by region", `<div class="scroll-x"><table>
@@ -610,6 +630,94 @@ async function customerDemandPanel(subscriptionId) {
       table and is never counted into exposure, failure counts or cores pending —
       those come only from the recorded incidents.
     </p>`);
+}
+
+/* The capacities inside a facility: what is actually there, and how each one is.
+
+   The question review kept returning to and the product could not answer -- "hey,
+   these are the SKUs there in this data centre, this is the capacity available,
+   this is what we don't have". Until the capacity tables existed a site was its
+   region's units divided by ten, so there was nothing to list.
+
+   Two columns here are not about fullness, which is the point. Incidents per node
+   says whether the hardware under a capacity is behaving; free viewers says
+   whether the SKU is above the licence cliff. A capacity can be comfortable on
+   utilisation and wrong on both. */
+
+function skuBar(mix, total) {
+  const order = ["F2", "F4", "F8", "F16", "F32", "F64", "F128", "F256",
+                 "F512", "F1024", "F2048"];
+  const present = order.filter((s) => mix[s]);
+  if (!present.length) return "";
+  return `<div class="sku-mix">${present.map((s) => `
+    <span class="sku-chip${s === "F64" || order.indexOf(s) > order.indexOf("F64")
+      ? " free-ok" : ""}" title="${mix[s]} × ${s}">${s}<b>×${mix[s]}</b></span>`).join("")}
+    <span class="t3">${num(total)} units in ${present.length} SKU size(s)</span></div>`;
+}
+
+function capacityRows(d, region) {
+  const fleet = d.capacities.length ? d.capacities[0].fleetIncidentsPerNode : 0;
+  return `
+  <div class="tablewrap"><table class="grid caps">
+    <thead><tr>
+      <th>Capacity</th><th>SKU</th><th class="n">CU</th><th class="n">Units</th>
+      <th class="n">Used</th><th>Hardware</th><th class="n">Nodes</th>
+      <th class="n">Incidents<br><span class="t3">per node</span></th>
+      <th>Free viewers</th>
+    </tr></thead>
+    <tbody>${d.capacities.map((c) => {
+      const hot = c.utilisationPct >= 90;
+      const sick = fleet > 0 && c.rateVsFleet >= 1.4;
+      return `<tr>
+      <td><a href="/capacity/${encodeURIComponent(c.capacityId)}">${esc(c.capacityId)}</a></td>
+      <td><b>${esc(c.fabricSku)}</b></td>
+      <td class="n">${num(c.capacityUnits)}</td>
+      <td class="n">${num(c.deployedUnits)}</td>
+      <td class="n ${hot ? "t-bad" : ""}">${pct(c.utilisationPct, 1)}</td>
+      <td class="hw">${esc(c.vendor)} ${esc(c.model)}
+        <span class="t3">${esc(c.skuClass)} · ${esc(c.cpu)} · ${num(c.memoryGB)}GB</span></td>
+      <td class="n">${c.nodes}</td>
+      <td class="n ${sick ? "t-bad" : ""}" title="${c.incidents} incident(s), ${c.seriousIncidents} Sev1/Sev2, ${c.downtimeHours}h lost">
+        ${c.incidents}
+        <span class="t3">${c.incidentsPerNode.toFixed(1)}${sick ? ` · ${c.rateVsFleet}× fleet` : ""}</span></td>
+      <td>${c.supportsFreeViewers
+        ? `<span class="pill good">F64+</span>`
+        : `<span class="pill wash" title="Below F64: each Power BI viewer needs Pro or PPU">Pro needed</span>`}</td>
+    </tr>`;
+    }).join("")}</tbody></table></div>`;
+}
+
+async function capacityPanel(scope, id) {
+  let d;
+  try {
+    d = await get(`/api/capacities?${scope}=${encodeURIComponent(id)}`);
+  } catch (err) {
+    return "";
+  }
+  if (!d.count) return "";
+  const usedPct = d.totalUnits ? (d.usedUnits / d.totalUnits) * 100 : 0;
+
+  return panel(`Capacities here — ${d.count} on ${Object.keys(d.skuMix).length} SKU size(s)`, `
+    ${skuBar(d.skuMix, d.totalUnits)}
+    ${capacityRows(d, id)}
+    <p style="background:var(--page);border-left:3px solid var(--brand);
+       padding:.7rem .9rem;margin:.9rem 0 0;font-size:.88rem">
+      <b>In plain terms:</b> this holds <b>${num(d.totalUnits)} units</b> across
+      <b>${d.count} Fabric capacit${d.count === 1 ? "y" : "ies"}</b>, of which
+      <b>${num(Math.round(d.usedUnits))}</b> are in use
+      (${pct(usedPct, 1)}) and <b>${num(Math.round(d.freeUnits))}</b> are free.
+      ${d.freeViewerCapable
+        ? `${d.freeViewerCapable} of them ${d.freeViewerCapable === 1 ? "is" : "are"}
+           F64 or larger, so Power BI content on ${d.freeViewerCapable === 1 ? "it" : "them"}
+           can be read on a free licence.`
+        : `None is F64 or larger, so every user viewing Power BI content on any of
+           these needs a Pro or PPU licence — a commercial cost that no utilisation
+           figure shows.`}
+      Incidents-per-node is shrunk toward the fleet average in proportion to how
+      many nodes stand behind it, so a one-node capacity having a bad month does
+      not outrank a whole estate.
+    </p>
+    <p style="color:var(--ink-3);font-size:.78rem;margin:.5rem 0 0">${esc(d.note)}</p>`);
 }
 
 async function demandPanels(scope, id) {
@@ -1255,6 +1363,7 @@ PAGES["/region"] = async (view, name, showAll = false) => {
   // Review asked for the forecasts to live where the thing being forecast lives,
   // not only on a tab of their own: "either it will show in the region page or
   // the data centre page -- it is supposed to show in both".
+  view.insertAdjacentHTML("beforeend", await capacityPanel("region", name));
   view.insertAdjacentHTML("beforeend", await demandPanels("region", name));
   wireCharts(view);
 
@@ -1565,6 +1674,174 @@ PAGES["/actions"] = async (view) => {
 
 /* ==================================================================== 6/6 */
 /* Methodology                                                               */
+
+/* ==================================================================== 11/12 */
+/* Recommendations                                                            */
+
+/* Three engines, one list. Review asked for a product that says what to do
+   rather than what happened, and the three cases here are the ones a utilisation
+   figure cannot make on its own:
+
+     procurement      buy now, though it is below the trigger, because the wait grew
+     workload change  move it, though it has room, because the hardware keeps failing
+     licensing        step up, though it is not full, because of who can read it
+
+   The routine overdue purchases are the bulk of the list and the least
+   interesting part of it: a region past its threshold needs buying and every
+   other screen already says so. The two counts that lead the page are the ones
+   nothing else would have surfaced. */
+
+const REC_KIND = {
+  procurement: { label: "Buy", tone: "" },
+  workload_change: { label: "Move", tone: "warn" },
+  licensing: { label: "Licence", tone: "" },
+};
+
+function recCard(r) {
+  const e = r.evidence || {};
+  const k = REC_KIND[r.kind] || { label: r.kind, tone: "" };
+  return `
+  <article class="rec">
+    <header>
+      <span class="pill ${k.tone}">${k.label}</span>
+      <b>${esc(r.headline)}</b>
+    </header>
+    <p class="rec-why">${esc(r.detail)}</p>
+    <p class="ev">
+      ${e.region ? `<a href="/region/${encodeURIComponent(e.region)}">${esc(e.region)}</a>` : ""}
+      ${e.datacentre ? `· <a href="/datacentre/${encodeURIComponent(e.datacentre)}">${esc(e.datacentre)}</a>` : ""}
+      ${e.fabricSku ? `· <b>${esc(e.fabricSku)}</b>` : ""}
+      ${e.skuClass ? `· ${esc(e.skuClass)}` : ""}
+      ${e.utilisationPct != null ? `· ${pct(e.utilisationPct, 1)} used` : ""}
+      ${r.kind === "procurement" && e.orderByDate
+        ? `· order by <b>${esc(e.orderByDate)}</b> (${e.daysUntilOrder < 0
+            ? `${Math.abs(e.daysUntilOrder)}d overdue` : `in ${e.daysUntilOrder}d`})` : ""}
+      ${r.kind === "procurement" && e.unitsToAdd ? `· add ${num(e.unitsToAdd)} units` : ""}
+      ${r.kind === "workload_change" && e.moveTo
+        ? `· move to <b>${esc(e.moveTo.sku_class)}</b> (${esc(e.moveTo.vendor)} ${esc(e.moveTo.model)})` : ""}
+      ${r.kind === "workload_change" && e.downtimeHours != null
+        ? `· ${e.downtimeHours}h lost` : ""}
+      ${r.kind === "licensing" && e.stepTo ? `· step to <b>${esc(e.stepTo)}</b>` : ""}
+    </p>
+  </article>`;
+}
+
+PAGES["/recommendations"] = async (view, _unused, query) => {
+  const params = new URLSearchParams(query || location.search);
+  const kind = params.get("kind") || "";
+  const region = params.get("region") || "";
+  const qs = [kind && `kind=${encodeURIComponent(kind)}`,
+              region && `region=${encodeURIComponent(region)}`,
+              "limit=200"].filter(Boolean).join("&");
+  const d = await get(`/api/recommendations?${qs}`);
+  const counts = d.countsByKind || {};
+
+  const scope = region ? ` in ${region}` : "";
+  view.innerHTML = howto({
+    answers: `<b>What to do next${scope}</b>, most urgent first — with the reasoning under each one rather than a score.`,
+    steps: [
+      { what: "Buy", is: "capacity is running out. An order is raised when the time left before the trigger falls below the time the hardware takes to arrive, so a capacity can need buying while still under its threshold." },
+      { what: "Move", is: "capacity is <i>not</i> the problem. These have room to spare but fail more than the fleet does, measured per node. Adding more of the same hardware would not fix them." },
+      { what: "Licence", is: "a commercial step, not a capacity one. Below F64 every Power BI viewer needs a paid licence; at F64 a free licence and a viewer role are enough." },
+      { what: "Ordering", is: "kinds are interleaved rather than grouped, because the most pressing thing is the most pressing thing regardless of which engine produced it." },
+    ],
+    words: [
+      { term: "Raised early", means: "The order is going in before the capacity reaches its usual trigger. That happens when the lead time is long enough that waiting would land the order after the capacity was needed — and it is the case a threshold alone can never make." },
+      { term: "Incidents per node", means: "Operational incidents divided by physical nodes, then shrunk toward the fleet average in proportion to how many nodes stand behind the record. Raw counts would just rank capacities by size; unshrunk rates would let a one-node capacity with a bad month outrank an estate." },
+      { term: "Why these are separate", means: "A single blended risk score would let a buying case and a hardware case average each other into something calm. A site at 40% with a dozen outages is not calm; it is two different problems, one of which is invisible to utilisation." },
+    ],
+    next: "Work the moves and the early raises first — everything else is already visible on the Regions and Forecast tabs.",
+    sources: "Capacities, hardware, per-capacity utilisation, operational incidents and lead-time history are generated. The Fabric SKU ladder and the F64 licensing rule are real and cited on each licensing recommendation.",
+  }) + title(`Recommendations${scope}`,
+             `${num(d.total)} outstanding${kind ? ` · ${kind.replace("_", " ")}` : ""}`) + `
+
+  <section class="panel"><div class="body rec-filters">
+    <a class="chip${!kind ? " on" : ""}" href="/recommendations${region ? `?region=${encodeURIComponent(region)}` : ""}">All ${num(Object.values(counts).reduce((a, b) => a + b, 0))}</a>
+    ${Object.entries(REC_KIND).map(([k, meta]) => `
+      <a class="chip${kind === k ? " on" : ""}"
+         href="/recommendations?kind=${k}${region ? `&region=${encodeURIComponent(region)}` : ""}">
+        ${meta.label} ${num(counts[k] || 0)}</a>`).join("")}
+    ${region ? `<a class="chip" href="/recommendations?kind=${encodeURIComponent(kind)}">All regions</a>` : ""}
+    <span class="t3" style="margin-left:auto">
+      <b class="t-warn">${d.earlyRaises}</b> purchase(s) raised earlier than the usual trigger ·
+      <b class="t-warn">${num(counts.workload_change || 0)}</b> hardware move(s)</span>
+  </div></section>
+
+  ${d.recommendations.length
+    ? `<div class="recs">${d.recommendations.map(recCard).join("")}</div>`
+    : `<section class="panel"><div class="body"><p class="empty">Nothing outstanding here.</p></div></section>`}
+
+  ${d.shown < d.total ? `<p class="hint" style="margin:1rem 0 0">
+    Showing the ${num(d.shown)} most urgent of ${num(d.total)}. The remainder are
+    routine overdue purchases in regions already past their threshold.</p>` : ""}`;
+};
+
+
+/* One capacity: what it is, how it has run, and what has gone wrong on it.
+
+   The deepest level the product now reaches. Review's analogy for why it exists:
+   a phone with plenty of storage that switches off every five minutes is not a
+   phone you keep, and a capacity with plenty of headroom that drops nodes every
+   week is not capacity you keep either. Utilisation cannot tell those apart. */
+PAGES["/capacity"] = async (view, id) => {
+  const d = await get(`/api/capacity/${encodeURIComponent(id)}`);
+  const h = d.health, hw = d.hardware;
+  const sick = h.rateVsFleet >= 1.4;
+  const last = d.utilisation.length ? d.utilisation[d.utilisation.length - 1] : null;
+
+  view.innerHTML = title(d.capacityId,
+    `${d.fabricSku} · ${d.capacityUnits} CU · ${hw.vendor} ${hw.model} · in ` +
+    `${d.datacentre}, ${d.region}`) + `
+
+  <div class="kpis">
+    <div class="kpi"><div class="label">How full</div>
+      <div class="value${last && last.UtilisationPct >= 90 ? " bad" : ""}">${last ? pct(last.UtilisationPct, 1) : "—"}</div>
+      <div class="sub">${num(d.deployedUnits)} units across ${d.nodes} node(s)</div></div>
+    <div class="kpi"><div class="label">Incidents</div>
+      <div class="value${sick ? " bad" : ""}">${h.incidents}</div>
+      <div class="sub">${h.seriousIncidents} Sev1/Sev2 · ${h.downtimeHours}h lost</div></div>
+    <div class="kpi"><div class="label">Per node</div>
+      <div class="value${sick ? " bad" : ""}">${h.incidentsPerNode.toFixed(1)}</div>
+      <div class="sub">fleet runs ${h.fleetIncidentsPerNode.toFixed(1)} · this is ${h.rateVsFleet}\u00d7</div></div>
+    <div class="kpi"><div class="label">Free viewers</div>
+      <div class="value${d.supportsFreeViewers ? " good" : ""}">${d.supportsFreeViewers ? "Yes" : "No"}</div>
+      <div class="sub">${d.supportsFreeViewers
+        ? "F64 or larger — a free licence can read Power BI here"
+        : "below F64 — every viewer needs Pro or PPU"}</div></div>
+  </div>
+
+  ${d.recommendations.length ? panel("What to do about it",
+    d.recommendations.map(recCard).join(""), { flush: true }) : ""}
+
+  ${panel("Hardware", `
+    <div class="tablewrap"><table class="grid"><tbody>
+      <tr><th>Class</th><td>${esc(hw.skuClass)}</td></tr>
+      <tr><th>Vendor / model</th><td>${esc(hw.vendor)} ${esc(hw.model)}</td></tr>
+      <tr><th>CPU</th><td>${esc(hw.cpu)}</td></tr>
+      <tr><th>Per node</th><td>${num(hw.coresPerNode)} cores · ${num(hw.memoryGB)}GB · ${hw.storageTB}TB</td></tr>
+      <tr><th>Nodes</th><td>${d.nodes}</td></tr>
+    </tbody></table></div>
+    <p style="color:var(--ink-3);font-size:.78rem;margin:.6rem 0 0">
+      Server models are real products; which model sits in which facility is generated.</p>`)}
+
+  ${panel(`Incidents — ${h.incidents} in the window`, d.incidents.length ? `
+    <div class="tablewrap"><table class="grid">
+      <thead><tr><th>Opened</th><th>Severity</th><th>Type</th>
+        <th class="n">Downtime</th><th class="n">Customers</th></tr></thead>
+      <tbody>${d.incidents.map((i) => `<tr>
+        <td>${esc(i.OpenedDate)}</td>
+        <td><span class="pill ${i.Severity === "Sev1" ? "bad" : i.Severity === "Sev2" ? "wash" : ""}">${esc(i.Severity)}</span></td>
+        <td>${esc(i.IncidentType)}</td>
+        <td class="n">${i.DowntimeMinutes} min</td>
+        <td class="n">${i.ImpactedCustomers}</td></tr>`).join("")}</tbody></table></div>
+    <p style="color:var(--ink-3);font-size:.78rem;margin:.6rem 0 0">${esc(h.shrunkTowardFleet)}</p>`
+    : `<p class="empty">No incidents recorded on this capacity.</p>`)}
+
+  <p style="margin:1.5rem 0 0">
+    <a href="/datacentre/${encodeURIComponent(d.datacentre)}">\u2190 ${esc(d.datacentre)}</a>
+    &nbsp;\u00b7&nbsp; <a href="/region/${encodeURIComponent(d.region)}">${esc(d.region)}</a>
+  </p>`;
+};
 
 PAGES["/methodology"] = async (view) => {
   const m = await get("/api/methodology");
@@ -1879,6 +2156,7 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
     ${registerToggle("dc", showAll ? 0 : x.tickets.filter((k) => !k.isFlagged).length)}`,
     { flush: true })}
 
+  <div id="dc-caps"></div>
   <div id="dc-demand"></div>
 
   <p style="margin:1.5rem 0 0">
@@ -1888,6 +2166,7 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
 
   // This facility's own demand. Utilisation over time is only recorded per
   // region, so that chart stays on the region page and this says where to find it.
+  $("dc-caps").innerHTML = await capacityPanel("datacentre", id);
   $("dc-demand").innerHTML = await demandPanels("datacentre", id);
   wireCharts($("dc-demand"));
 

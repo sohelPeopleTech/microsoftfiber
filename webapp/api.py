@@ -124,14 +124,14 @@ STATE_DIR = ROOT / "out" / "state"
 #: Every tab is a real URL. FastAPI serves the same shell for all of them and
 #: the client router picks the renderer, so deep links and browser-back work
 #: without a build step.
-TABS = ("/", "/map", "/regions", "/datacentres", "/customers", "/incidents",
+TABS = ("/", "/map", "/recommendations", "/regions", "/datacentres", "/customers", "/incidents",
         "/reasons", "/forecast", "/policy", "/actions", "/methodology")
 
 #: Deep pages. Review was explicit that selecting a facility must open that
 #: facility's own page rather than expanding a panel in place -- "do not drill
 #: through, open that page completely" -- so a site has a real URL that can be
 #: linked, bookmarked and reached from either the region or the site list.
-DEEP = ("/region", "/datacentre", "/customer")
+DEEP = ("/region", "/datacentre", "/customer", "/capacity")
 
 #: Reachable without a session. Everything else redirects (pages) or 401s (API).
 PUBLIC = {"/login", "/logout", "/health"}
@@ -280,6 +280,29 @@ def me(request: Request):
 # --------------------------------------------------------------------------
 
 
+def _partial_grants() -> dict:
+    """Requests met in part, from the generated overlay.
+
+    Kept out of `categoryCounts` deliberately. Those five categories are
+    computed from the extract and every published failure figure derives from
+    them; adding an invented sixth would move numbers that have been reviewed.
+    """
+    pg = get_ontology()["fact_partial_grant"]
+    if pg.empty:
+        return {"count": 0, "units": 0, "shortfallUnits": 0, "regions": [],
+                "note": "No partial fulfilment recorded."}
+    return {
+        "count": int(len(pg)),
+        "units": int(pg["PartiallyGrantedUnits"].sum()),
+        "shortfallUnits": int(pg["ShortfallUnits"].sum()),
+        "medianGrantedPct": round(float(pg["GrantedPct"].median()), 1),
+        "regions": sorted(pg["Region"].unique().tolist()),
+        "note": ("Partial fulfilment is generated. The ICM extract records none "
+                 "— every row in it grants the whole request or none of it — so "
+                 "these are illustrative of a state the export cannot express."),
+    }
+
+
 @app.get("/api/overview")
 def overview():
     onto, m5 = get_ontology(), get_module5()
@@ -326,6 +349,12 @@ def overview():
         # It previously mixed request counts with spike counts and printed
         # "7 of 60 = 12%" for two quantities that are not a subset of each other.
         "categoryCounts": m5.finding["category_counts"],
+        # A third outcome the extract cannot express. Every ICM row grants the
+        # whole ask or none of it, and reviewers describe part-fills happening,
+        # so the state exists in the business and not in the export. Carried
+        # separately rather than folded into the counts above: those are drawn
+        # from the extract and must keep matching it.
+        "partial": _partial_grants(),
         "outcomeLabels": OUTCOME_LABELS,
         # Review feedback: the page jumped from "11 regions" straight to "60
         # requests" with nothing joining them. This is the missing layer --

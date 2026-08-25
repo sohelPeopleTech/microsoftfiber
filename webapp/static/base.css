@@ -388,6 +388,47 @@ svg.chart text { font-family: var(--sans); }
 .map-card .acts a.warn { color: var(--warn); }
 .map-card .links { margin: .8rem 0 0; font-size: .82rem; }
 
+/* --------------------------------------------------- capacities and advice */
+
+.sku-mix { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .5rem; margin: 0 0 .9rem; }
+.sku-chip {
+  display: inline-flex; gap: .3rem; align-items: baseline;
+  padding: .15rem .45rem; border-radius: 3px; font-size: .78rem;
+  background: var(--rule); color: var(--ink-2);
+}
+/* F64 and up are marked, because that is where Power BI stops needing a paid
+   licence per viewer -- a property of the SKU that is invisible in its size. */
+.sku-chip.free-ok { background: var(--good-wash); color: var(--good); }
+.sku-chip b { font-weight: 600; }
+
+table.caps td.hw { font-size: .82rem; line-height: 1.3; }
+table.caps td.hw .t3 { display: block; color: var(--ink-3); font-size: .74rem; }
+table.caps td.n .t3 { display: block; color: var(--ink-3); font-size: .74rem; font-weight: 400; }
+
+.rec-filters { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.chip {
+  padding: .3rem .7rem; border-radius: 999px; font-size: .82rem;
+  background: var(--rule); color: var(--ink-2); text-decoration: none;
+}
+.chip.on { background: var(--brand); color: #fff; font-weight: 600; }
+
+.recs { display: grid; gap: .75rem; }
+.rec {
+  background: var(--card); border: 1px solid var(--rule); border-radius: 4px;
+  padding: .85rem 1.1rem;
+}
+.rec header { display: flex; gap: .55rem; align-items: baseline; }
+.rec header b { font-size: .95rem; }
+/* Its own class rather than the table's `.why`, which caps at 46ch for a
+   narrow cell and made these read as a broken column in a full-width card.
+   75ch is a reading measure for prose that has a whole card to itself. */
+.rec .rec-why {
+  margin: .45rem 0 0; font-size: .86rem; color: var(--ink-2);
+  line-height: 1.45; max-width: 75ch;
+}
+.rec .ev { margin: .5rem 0 0; font-size: .78rem; color: var(--ink-3); }
+.rec .ev a { color: var(--ink-2); }
+
 /* --------------------------------------------------------------- assistant */
 
 .chat-fab {
