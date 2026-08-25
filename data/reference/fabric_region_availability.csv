@@ -1,0 +1,12 @@
+Region,FabricRegionName,PowerBI,AllFabricWorkloads,PowerBIOnly,UnavailableFeatureCount,UnavailableFeatures,IsSynthetic,Provenance
+canadacentral,Canada Central,True,True,False,1,Fabric App (preview),False,"REAL - https://learn.microsoft.com/en-us/fabric/admin/region-availability, captured 2026-08-25"
+canadaeast,Canada East,True,True,False,1,Fabric App (preview),False,"REAL - https://learn.microsoft.com/en-us/fabric/admin/region-availability, captured 2026-08-25"
+eastus,US - East US,True,True,False,3,Fabric App (preview);Operations agent (preview);Plan (preview),False,"REAL - https://learn.microsoft.com/en-us/fabric/admin/region-availability, captured 2026-08-25"
+eastus2,US - East US 2,True,True,False,1,Fabric App (preview),False,"REAL - https://learn.microsoft.com/en-us/fabric/admin/region-availability, captured 2026-08-25"
+northcentralus,US - North Central US,True,True,False,0,,False,"REAL - https://learn.microsoft.com/en-us/fabric/admin/region-availability, captured 2026-08-25"
+southcentralus,US - South Central US,True,True,False,6,Digital twin builder (preview);Fabric App (preview);Healthcare Solutions;Ontology (preview);Operations agent;Schema Registry (preview),False,"REAL - https://learn.microsoft.com/en-us/fabric/admin/region-availability, captured 2026-08-25"
+westus2,US - West US 2,True,True,False,0,,False,"REAL - https://learn.microsoft.com/en-us/fabric/admin/region-availability, captured 2026-08-25"
+northeurope,Europe - North Europe,True,True,False,2,Digital twin builder (preview);Fabric App (preview),False,"REAL - https://learn.microsoft.com/en-us/fabric/admin/region-availability, captured 2026-08-25"
+westeurope,Europe - West Europe,True,True,False,0,,False,"REAL - https://learn.microsoft.com/en-us/fabric/admin/region-availability, captured 2026-08-25"
+uksouth,UK South,True,True,False,1,Fabric App (preview),False,"REAL - https://learn.microsoft.com/en-us/fabric/admin/region-availability, captured 2026-08-25"
+centralindia,India - Central India,True,True,False,0,,False,"REAL - https://learn.microsoft.com/en-us/fabric/admin/region-availability, captured 2026-08-25"

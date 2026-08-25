@@ -19,6 +19,7 @@ const $ = (id) => document.getElementById(id);
    "what do I do about it"; the last is how any of it was worked out. */
 const NAV = [
   { path: "/",             icon: "▦", label: "Overview" },
+  { path: "/map",          icon: "◍", label: "Fleet map" },
   null,
   { path: "/regions",      icon: "◈", label: "Regions" },
   { path: "/datacentres",  icon: "▤", label: "Data centres" },

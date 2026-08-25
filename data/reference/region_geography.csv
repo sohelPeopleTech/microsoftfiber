@@ -1,0 +1,12 @@
+Region,DisplayName,City,GeographyGroup,Latitude,Longitude,PairedRegion,OnNorthAmericaMap,IsSynthetic,Provenance
+canadacentral,Canada Central,Toronto,Canada,43.653,-79.383,canadaeast,True,False,"REAL - az account list-locations (Azure Resource Manager), captured 2026-08-25"
+canadaeast,Canada East,Quebec,Canada,46.817,-71.217,canadacentral,True,False,"REAL - az account list-locations (Azure Resource Manager), captured 2026-08-25"
+centralindia,Central India,Pune,Asia Pacific,18.5822,73.9197,southindia,False,False,"REAL - az account list-locations (Azure Resource Manager), captured 2026-08-25"
+eastus,East US,Virginia,US,37.3719,-79.8164,westus,True,False,"REAL - az account list-locations (Azure Resource Manager), captured 2026-08-25"
+eastus2,East US 2,Virginia,US,36.6681,-78.3889,centralus,True,False,"REAL - az account list-locations (Azure Resource Manager), captured 2026-08-25"
+northcentralus,North Central US,Illinois,US,41.8819,-87.6278,southcentralus,True,False,"REAL - az account list-locations (Azure Resource Manager), captured 2026-08-25"
+northeurope,North Europe,Ireland,Europe,53.3478,-6.2597,westeurope,False,False,"REAL - az account list-locations (Azure Resource Manager), captured 2026-08-25"
+southcentralus,South Central US,Texas,US,29.4167,-98.5,northcentralus,True,False,"REAL - az account list-locations (Azure Resource Manager), captured 2026-08-25"
+uksouth,UK South,London,UK,50.941,-0.799,ukwest,False,False,"REAL - az account list-locations (Azure Resource Manager), captured 2026-08-25"
+westeurope,West Europe,Netherlands,Europe,52.3667,4.9,northeurope,False,False,"REAL - az account list-locations (Azure Resource Manager), captured 2026-08-25"
+westus2,West US 2,Washington,US,47.233,-119.852,westcentralus,True,False,"REAL - az account list-locations (Azure Resource Manager), captured 2026-08-25"

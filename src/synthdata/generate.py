@@ -279,18 +279,46 @@ def ticket_status(tickets: pd.DataFrame) -> pd.DataFrame:
 
 
 def generate_all(tickets: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    """Every synthetic table, built from the real ticket extract."""
+    """Every synthetic table, built from the real ticket extract.
+
+    Two tiers. The region tables come first and are what the original six
+    modules consume. The fleet tables underneath them -- capacities, the
+    hardware in them, how each one ran -- are generated from the region tables
+    rather than alongside, so the finer grain always adds up to the coarser one
+    instead of merely resembling it.
+    """
+    # Imported here rather than at module scope: fleet.py takes `_tag` and
+    # `PROVENANCE` from this module, so a top-level import would be circular.
+    from . import fleet
+
     skus = sku_by_region(tickets)
     inventory = hardware_inventory(tickets, skus)
-    return {
+    usage = capacity_usage(tickets, inventory)
+
+    tables = {
         "sku_by_region": skus,
         "sku_reference": sku_reference(),
         "hardware_inventory": inventory,
-        "capacity_usage": capacity_usage(tickets, inventory),
+        "capacity_usage": usage,
         "deal_events": deal_events(tickets),
         "feature_matrix": feature_matrix(tickets),
         "ticket_status": ticket_status(tickets),
     }
+    tables.update(fleet.generate_fleet(tickets, inventory, usage))
+    return tables
+
+
+#: Row count above which a table is written gzipped. The per-capacity usage
+#: table is fifty thousand rows and every one of them carries the same
+#: hundred-character provenance string, which is six megabytes of identical
+#: text. Compressing is preferable to dropping the provenance column: the
+#: convention that every generated row says it is generated is worth more than
+#: the disk, and pandas reads .csv.gz without anything else having to know.
+GZIP_ABOVE_ROWS = 20_000
+
+
+def table_path(out_dir: Path, name: str, rows: int) -> Path:
+    return Path(out_dir) / (f"{name}.csv.gz" if rows > GZIP_ABOVE_ROWS else f"{name}.csv")
 
 
 def write_all(tables: dict[str, pd.DataFrame], out_dir: str | Path) -> list[Path]:
@@ -298,7 +326,12 @@ def write_all(tables: dict[str, pd.DataFrame], out_dir: str | Path) -> list[Path
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     for name, df in tables.items():
-        path = out_dir / f"{name}.csv"
-        df.to_csv(path, index=False)
+        path = table_path(out_dir, name, len(df))
+        # mtime=0 so a rebuild of unchanged data is byte-identical; gzip
+        # otherwise stamps the clock into the header and every regeneration
+        # would look like a change.
+        df.to_csv(path, index=False,
+                  **({"compression": {"method": "gzip", "mtime": 0}}
+                     if path.suffix == ".gz" else {}))
         written.append(path)
     return written

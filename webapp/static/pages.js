@@ -736,6 +736,217 @@ async function demandPanels(scope, id) {
       : "");
 }
 
+/* ==================================================================== 2/11 */
+/* Fleet map                                                                 */
+
+/* The landing surface review asked for: "you yourself think you're a capacity
+   manager, you are sitting in front of all your data centres, you have your map
+   in front". The complaint it answers is not that the numbers were wrong but
+   that reaching them took four tabs -- "I have to do so many clicks to get me an
+   answer. By looking at it, you should be able to get those insights."
+
+   So a marker carries what would otherwise be four screens: how full the region
+   is, whether it crosses its safety line and when, what is waiting to be bought,
+   and what Fabric will not run there. Selecting one opens the detail beside the
+   map rather than navigating away, because comparing two regions means seeing
+   the second without losing the first.
+
+   Coastlines are in world.js. The viewBox is degrees, so a region sits at
+   (lon + 180, 90 - lat) with no projection code in between. */
+
+/* Markers are placed by real coordinates, and real coordinates collide: eastus
+   and eastus2 are both in Virginia, and three European regions sit inside four
+   degrees of each other. Nudging them apart is a lie about geography, but a
+   small and legible one -- the alternative is a single blob that cannot be
+   clicked, which is a worse lie about the fleet. Spreading is deterministic so
+   a region does not move between renders. */
+function spreadMarkers(points, minGap) {
+  const placed = [];
+  for (const p of points) {
+    let { mx, my } = p;
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const hit = placed.find((q) => Math.hypot(q.mx - mx, q.my - my) < minGap);
+      if (!hit) break;
+      // Walk outward along the line away from whatever it collided with,
+      // falling back to a fixed bearing when two points are exactly on top.
+      const dx = mx - hit.mx, dy = my - hit.my;
+      const len = Math.hypot(dx, dy) || 1;
+      const push = (minGap - len) + 0.35;
+      mx += (dx / len || 0.7) * push;
+      my += (dy / len || -0.7) * push;
+    }
+    placed.push({ ...p, mx, my, moved: mx !== p.mx || my !== p.my });
+  }
+  return placed;
+}
+
+/* Marker colour is the region's state against its own safety line, matching the
+   pills everywhere else so the map does not invent a third vocabulary. */
+function mapTone(p) {
+  if (p.status === "breached") return "bad";
+  if (p.status === "overdue" || p.status === "due") return "warn";
+  return "good";
+}
+
+const MAP_TONE_FILL = { bad: "var(--bad)", warn: "var(--warn)", good: "var(--good)" };
+
+function fleetMap(d) {
+  const W = WORLD_VIEWBOX, pad = 2;
+  const pts = spreadMarkers(
+    d.points
+      .filter((p) => p.lat != null && p.lon != null)
+      .map((p) => ({ ...p, mx: p.lon + 180, my: 90 - p.lat }))
+      .sort((a, b) => a.mx - b.mx),
+    3.6);
+
+  // Marker area, not radius, tracks deployed units: doubling the radius of a
+  // circle quadruples what the eye reads, so sizing by radius would overstate
+  // the big regions by the square.
+  const maxUnits = Math.max(...pts.map((p) => p.units), 1);
+  const radius = (u) => 1.6 + 2.9 * Math.sqrt(u / maxUnits);
+
+  return `<svg class="chart fleet-map" viewBox="${W.x} ${W.y - pad} ${W.w} ${W.h + pad * 2}"
+      role="img" aria-label="Capacity by region, on a world map">
+    <rect x="${W.x}" y="${W.y - pad}" width="${W.w}" height="${W.h + pad * 2}" fill="var(--map-sea)"/>
+    <path d="${WORLD_PATH}" fill="var(--map-land)" stroke="var(--map-edge)" stroke-width=".25"/>
+    ${pts.map((p) => {
+      const tone = mapTone(p);
+      const r = radius(p.units);
+      return `
+      ${p.moved ? `<line x1="${(p.lon + 180).toFixed(2)}" y1="${(90 - p.lat).toFixed(2)}"
+        x2="${p.mx.toFixed(2)}" y2="${p.my.toFixed(2)}"
+        stroke="var(--ink-3)" stroke-width=".2" opacity=".55"/>` : ""}
+      <circle class="mk" data-region="${esc(p.region)}"
+        cx="${p.mx.toFixed(2)}" cy="${p.my.toFixed(2)}" r="${r.toFixed(2)}"
+        fill="${MAP_TONE_FILL[tone]}" fill-opacity=".85"
+        stroke="#fff" stroke-width=".45" tabindex="0"
+        role="button" aria-label="${esc(p.region)}, ${p.utilisation}% used">
+        <title>${esc(p.region)} — ${p.utilisation}% used</title>
+      </circle>`;
+    }).join("")}
+  </svg>`;
+}
+
+/* What a marker says when you land on it. Deliberately the four questions that
+   were four tabs, in the order a planner asks them. */
+function mapCard(p) {
+  const gaps = p.unavailableFeatures || [];
+  const recs = p.recommendations || {};
+  const tone = mapTone(p);
+  return `
+  <div class="map-card">
+    <header>
+      <b>${esc(p.region)}</b>
+      <span class="pill ${tone}">${esc(p.status || "—")}</span>
+    </header>
+    <p class="where">${esc(p.displayName)}${p.city ? ` · ${esc(p.city)}` : ""}</p>
+
+    <div class="rows">
+      <div><span>How full</span><b>${p.utilisation != null ? pct(p.utilisation, 1) : "—"}
+        <span class="t3">of a ${p.thresholdPct != null ? pct(p.thresholdPct, 1) : "—"} line</span></b></div>
+      <div><span>Crosses</span><b>${p.crossingDate ? esc(p.crossingDate)
+        : (p.status === "breached" ? "already past it" : "not within the year")}</b></div>
+      <div><span>Fleet</span><b>${num(p.capacities)} capacities in ${num(p.sites)} sites
+        <span class="t3">· ${num(p.units)} units</span></b></div>
+      <div><span>Hardware</span><b>${esc(p.skuClass || "—")}
+        <span class="t3">· ${p.leadTimeDays ?? "—"}-day lead time</span></b></div>
+      ${p.coresPending ? `<div><span>Owed</span><b>${num(p.coresPending)} cores pending
+        <span class="t3">· ${num(p.failed)} failed requests</span></b></div>` : ""}
+    </div>
+
+    ${gaps.length ? `<p class="gaps"><b>${gaps.length} Fabric feature(s) unavailable here</b>
+      — ${gaps.map(esc).join(", ")}.
+      <span class="t3">Microsoft's published availability, not a projection.</span></p>`
+      : `<p class="gaps ok">All Fabric workloads available here.
+         <span class="t3">Microsoft's published availability.</span></p>`}
+
+    ${(recs.procurement || recs.workload_change || recs.licensing) ? `
+      <p class="acts">
+        ${recs.procurement ? `<a href="/recommendations?region=${encodeURIComponent(p.region)}&kind=procurement">${recs.procurement} to buy</a>` : ""}
+        ${recs.workload_change ? `<a href="/recommendations?region=${encodeURIComponent(p.region)}&kind=workload_change" class="warn">${recs.workload_change} to move</a>` : ""}
+        ${recs.licensing ? `<a href="/recommendations?region=${encodeURIComponent(p.region)}&kind=licensing">${recs.licensing} licensing</a>` : ""}
+      </p>` : `<p class="acts t3">Nothing outstanding here.</p>`}
+
+    <p class="links">
+      <a href="/region/${encodeURIComponent(p.region)}">Open ${esc(p.region)}</a> ·
+      <a href="/datacentres?region=${encodeURIComponent(p.region)}">Its ${num(p.sites)} sites</a>
+    </p>
+  </div>`;
+}
+
+PAGES["/map"] = async (view) => {
+  const d = await get("/api/map");
+  const r = await get("/api/recommendations?limit=1");
+
+  const breached = d.points.filter((p) => p.status === "breached").length;
+  const gapped = d.points.filter((p) => (p.unavailableFeatures || []).length).length;
+
+  view.innerHTML = howto({
+    answers: "<b>Where the fleet stands, on one screen.</b> Every region as a point: how full it is against its own safety line, when it crosses, what is waiting to be bought, and which Fabric workloads will not run there.",
+    steps: [
+      { what: "Marker colour", is: "the region's state against <i>its own</i> threshold — red is past it, amber has an order due or overdue, green is inside it. The same three states the pills use elsewhere." },
+      { what: "Marker size", is: "deployed units, by area rather than radius so a region twice the size looks twice the size." },
+      { what: "Selecting one", is: "opens its card beside the map. It stays open while you pick another, because the question is usually which of two regions is worse." },
+      { what: "Overlapping points", is: "eastus and eastus2 are both in Virginia, and three European regions sit within four degrees. Markers that would cover each other are nudged apart and joined to their true position by a hairline." },
+    ],
+    words: [
+      { term: "How full", means: "Utilisation against the region's own safety threshold, which is derived from the thresholds its data centres actually hold — not one figure applied to every region." },
+      { term: "Unavailable features", means: "Fabric workloads Microsoft does not currently run in that region. This is <b>real published data</b>, refreshed from Microsoft Learn, and it is a capacity decision that has nothing to do with how full a region is: a region with plenty of headroom is still the wrong home for a workload it cannot run." },
+      { term: "To buy / to move", means: "Two different answers. <b>To buy</b> means capacity is running out. <b>To move</b> means the capacity is fine but the hardware under it is failing more than the fleet average — adding more of the same would not fix it." },
+    ],
+    next: "Start with the red markers, then the amber ones carrying a move recommendation — those are the ones no utilisation figure would have surfaced.",
+    sources: "Azure region coordinates and Microsoft Fabric regional availability are real. Capacities, hardware, per-capacity utilisation and operational incidents are generated — every generated row carries its provenance.",
+  }) + title("Fleet map", `${d.points.length} regions · ${num(d.points.reduce((a, p) => a + p.capacities, 0))} capacities · data to ${esc(d.asOf)}`) + `
+
+  <section class="panel"><div class="body map-summary">
+    <span><b class="${breached ? "t-bad" : ""}">${breached}</b> region(s) past their safety line</span>
+    <span><b>${r.countsByKind.procurement || 0}</b> purchases outstanding,
+      <b class="t-warn">${r.earlyRaises}</b> of them earlier than the usual trigger</span>
+    <span><b class="t-warn">${r.countsByKind.workload_change || 0}</b> capacit(y/ies) worth moving despite having room</span>
+    <span><b>${gapped}</b> region(s) missing at least one Fabric workload</span>
+  </div></section>
+
+  <section class="panel">
+    <div class="body map-wrap">
+      <div class="map-holder">${fleetMap(d)}
+        <div class="legend map-legend">
+          <span><i class="dot bad"></i>Past its safety line</span>
+          <span><i class="dot warn"></i>Order due or overdue</span>
+          <span><i class="dot good"></i>Inside its line</span>
+          <span class="t3">Marker area = deployed units</span>
+        </div>
+      </div>
+      <aside id="map-side" class="map-side">
+        <p class="empty">Select a region on the map.</p>
+      </aside>
+    </div>
+  </section>`;
+
+  const byRegion = Object.fromEntries(d.points.map((p) => [p.region, p]));
+  const side = $("map-side");
+
+  function select(region) {
+    const p = byRegion[region];
+    if (!p) return;
+    side.innerHTML = mapCard(p);
+    view.querySelectorAll("circle.mk").forEach((c) =>
+      c.classList.toggle("on", c.dataset.region === region));
+  }
+
+  view.querySelectorAll("circle.mk").forEach((c) => {
+    c.addEventListener("click", () => select(c.dataset.region));
+    // Keyboard: the markers are focusable, so they have to answer to a key.
+    c.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(c.dataset.region); }
+    });
+  });
+
+  // Open on whatever is worst, so the page is useful before anyone clicks.
+  const worst = [...d.points].sort((a, b) =>
+    (b.utilisation ?? 0) - (a.utilisation ?? 0))[0];
+  if (worst) select(worst.region);
+};
+
 PAGES["/regions"] = async (view) => {
   const d = await get("/api/overview");
 

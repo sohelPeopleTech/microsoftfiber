@@ -112,6 +112,9 @@ app = FastAPI(title="Capacity Intelligence", lifespan=_lifespan)
 STATIC = Path(__file__).parent / "static"
 TICKETS = ROOT / "data" / "Synthetic_ICM_Capacity_Data.xlsx"
 SYNTH = ROOT / "data" / "synthetic"
+#: Real reference tables, kept apart from the generated ones so the
+#: distinction survives a glance at the directory listing.
+REFERENCE = ROOT / "data" / "reference"
 
 #: Same path the CLI writes to, deliberately -- a decision recorded in the app
 #: and one recorded with `--decide` land in the same append-only log, and the
@@ -121,7 +124,7 @@ STATE_DIR = ROOT / "out" / "state"
 #: Every tab is a real URL. FastAPI serves the same shell for all of them and
 #: the client router picks the renderer, so deep links and browser-back work
 #: without a build step.
-TABS = ("/", "/regions", "/datacentres", "/customers", "/incidents",
+TABS = ("/", "/map", "/regions", "/datacentres", "/customers", "/incidents",
         "/reasons", "/forecast", "/policy", "/actions", "/methodology")
 
 #: Deep pages. Review was explicit that selecting a facility must open that
@@ -136,7 +139,7 @@ PUBLIC = {"/login", "/logout", "/health"}
 
 @lru_cache(maxsize=1)
 def get_ontology():
-    return ontology.build(TICKETS, SYNTH)
+    return ontology.build(TICKETS, SYNTH, REFERENCE)
 
 
 @lru_cache(maxsize=1)
@@ -992,6 +995,273 @@ def spikes(region: str | None = None):
     if region:
         found = [a for a in found if a.region == region]
     return {"spikes": [{k: _clean(v) for k, v in a.to_dict().items()} for a in found]}
+
+
+#: The planning engines are pure functions over the ontology and the ontology
+#: is cached, so their output is too. Recomputing incident rates across three
+#: hundred capacities on every map hover is work nobody asked for.
+@lru_cache(maxsize=1)
+def _recommendations() -> list:
+    from planning import recommend as planning_recommend
+
+    return planning_recommend.all_recommendations(get_ontology())
+
+
+@lru_cache(maxsize=1)
+def _capacity_health():
+    from planning import capacity_health
+
+    onto = get_ontology()
+    return capacity_health(onto["dim_capacity"],
+                           onto["fact_operational_incident"],
+                           onto["fact_capacity_usage_daily"])
+
+
+@app.get("/api/map")
+def capacity_map():
+    """Every region as a point, with enough to decide without opening it.
+
+    The landing screen review asked for: "you yourself think you're a capacity
+    manager, you are sitting in front of all your data centres, you have your
+    map in front". A marker therefore carries the four things that would
+    otherwise be four tabs -- how full, whether it crosses its line and when,
+    what is waiting to be bought, and what Fabric will not run there.
+
+    Coordinates are Azure's own published figures, and so is the workload
+    availability. Everything else on the marker is generated, which is why the
+    payload says which is which rather than presenting one flat set of numbers.
+    """
+    onto = get_ontology()
+    geo = onto["dim_region_geography"].set_index("Region")
+    avail = onto["bridge_region_fabric_availability"].set_index("Region")
+    caps = onto["dim_capacity"]
+    recs = _recommendations()
+
+    flags = {f["region"]: f for f in _records(
+        module1.project_all(onto, crossing_for=_forecast_crossing))}
+    exposure = {r["Region"]: r for r in get_module5().finding["regions"]}
+
+    by_region_kind: dict[tuple, int] = {}
+    for r in recs:
+        key = (r["evidence"].get("region"), r["kind"])
+        by_region_kind[key] = by_region_kind.get(key, 0) + 1
+
+    cap_counts = caps.groupby("Region").agg(
+        capacities=("CapacityId", "count"),
+        units=("DeployedUnits", "sum"),
+        sites=("DatacentreId", "nunique"),
+    )
+
+    points = []
+    for region in sorted(onto["dim_region"]["Region"]):
+        f = flags.get(region, {})
+        e = exposure.get(region, {})
+        g = geo.loc[region] if region in geo.index else None
+        a = avail.loc[region] if region in avail.index else None
+        gaps = ([s for s in str(a["UnavailableFeatures"]).split(";") if s]
+                if a is not None and isinstance(a["UnavailableFeatures"], str) else [])
+        c = cap_counts.loc[region] if region in cap_counts.index else None
+        points.append({
+            "region": region,
+            "displayName": str(g["DisplayName"]) if g is not None else region,
+            "city": str(g["City"]) if g is not None else "",
+            "lat": float(g["Latitude"]) if g is not None else None,
+            "lon": float(g["Longitude"]) if g is not None else None,
+            "utilisation": f.get("current_utilisation_pct"),
+            "thresholdPct": f.get("threshold_pct"),
+            "status": f.get("status"),
+            "crossingDate": f.get("cross_date"),
+            "daysUntilOrder": f.get("days_until_order"),
+            "leadTimeDays": f.get("lead_time_days"),
+            "skuClass": f.get("sku_class"),
+            "capacities": int(c["capacities"]) if c is not None else 0,
+            "sites": int(c["sites"]) if c is not None else 0,
+            "units": int(c["units"]) if c is not None else 0,
+            "coresPending": e.get("CoresPending", 0),
+            "failed": e.get("TicketsFlagged", 0),
+            "exposure": e.get("RevenueExposureUSD", 0),
+            "allFabricWorkloads": bool(a["AllFabricWorkloads"]) if a is not None else None,
+            "powerBIOnly": bool(a["PowerBIOnly"]) if a is not None else None,
+            "unavailableFeatures": gaps,
+            "recommendations": {
+                kind: by_region_kind.get((region, kind), 0)
+                for kind in ("procurement", "workload_change", "licensing")
+            },
+        })
+    return {
+        "points": points,
+        "asOf": str(onto["fact_usage_daily"]["Date"].max()),
+        "provenance": {
+            "coordinates": "REAL - Azure Resource Manager region metadata",
+            "featureAvailability": "REAL - Microsoft Learn Fabric region availability",
+            "capacityAndUsage": "GENERATED - see data/synthetic",
+        },
+    }
+
+
+@app.get("/api/recommendations")
+def recommendations(kind: Annotated[str | None, Query()] = None,
+                    region: Annotated[str | None, Query()] = None,
+                    limit: Annotated[int, Query(ge=1, le=500)] = 100):
+    """What to do, most urgent first.
+
+    Filterable because the three kinds answer to different people: procurement
+    goes to whoever raises purchase orders, a workload change goes to whoever
+    owns the hardware, and the licensing case is commercial.
+    """
+    recs = _recommendations()
+    if kind:
+        recs = [r for r in recs if r["kind"] == kind]
+    if region:
+        recs = [r for r in recs if r["evidence"].get("region") == region]
+    counts: dict[str, int] = {}
+    for r in _recommendations():
+        counts[r["kind"]] = counts.get(r["kind"], 0) + 1
+    return {
+        "recommendations": recs[:limit],
+        "total": len(recs),
+        "shown": min(len(recs), limit),
+        "countsByKind": counts,
+        # Early raises and workload changes are the two the utilisation number
+        # cannot produce, so they are counted separately rather than left for a
+        # reader to find among a hundred routine overdue purchases.
+        "earlyRaises": sum(1 for r in _recommendations()
+                           if r["kind"] == "procurement"
+                           and r["evidence"].get("raisedEarly")),
+    }
+
+
+@app.get("/api/capacities")
+def capacities(region: Annotated[str | None, Query()] = None,
+               datacentre: Annotated[str | None, Query()] = None):
+    """The Fabric capacities themselves: SKU, hardware, how full, how healthy.
+
+    The grain review kept asking for and the product did not have -- "these are
+    the SKUs there in this data centre, this is the capacity available, this is
+    what we don't have".
+    """
+    health = _capacity_health()
+    if region:
+        health = health[health["Region"] == region]
+    if datacentre:
+        health = health[health["DatacentreId"] == datacentre]
+
+    hw = get_ontology()["dim_hardware"].set_index("SKUClass")
+    rows = []
+    for c in health.itertuples():
+        spec = hw.loc[c.SKUClass] if c.SKUClass in hw.index else None
+        rows.append({
+            "capacityId": c.CapacityId,
+            "datacentre": c.DatacentreId,
+            "region": c.Region,
+            "fabricSku": c.FabricSku,
+            "capacityUnits": int(c.CapacityUnits),
+            "deployedUnits": int(c.DeployedUnits),
+            "utilisationPct": round(float(c.UtilisationPct), 1),
+            "skuClass": c.SKUClass,
+            "vendor": c.Vendor,
+            "model": c.Model,
+            "nodes": int(c.Nodes),
+            "cpu": str(spec["Cpu"]) if spec is not None else "",
+            "memoryGB": int(spec["MemoryGB"]) if spec is not None else None,
+            "storageTB": float(spec["StorageTB"]) if spec is not None else None,
+            "incidents": int(c.Incidents),
+            "seriousIncidents": int(c.SeriousIncidents),
+            "downtimeHours": round(c.DowntimeMinutes / 60.0, 1),
+            "incidentsPerNode": float(c.IncidentRate),
+            "fleetIncidentsPerNode": float(c.FleetRate),
+            "rateVsFleet": float(c.RateVsFleet),
+            "supportsFreeViewers": bool(c.SupportsFreeViewers),
+        })
+    rows.sort(key=lambda r: (-r["capacityUnits"], r["capacityId"]))
+    total_units = sum(r["deployedUnits"] for r in rows)
+    used = sum(r["deployedUnits"] * r["utilisationPct"] / 100.0 for r in rows)
+    return {
+        "capacities": rows,
+        "count": len(rows),
+        "skuMix": {sku: sum(1 for r in rows if r["fabricSku"] == sku)
+                   for sku in sorted({r["fabricSku"] for r in rows})},
+        "totalUnits": total_units,
+        "usedUnits": round(used, 1),
+        "freeUnits": round(total_units - used, 1),
+        "freeViewerCapable": sum(1 for r in rows if r["supportsFreeViewers"]),
+        "note": ("Capacities, their hardware and their per-capacity utilisation "
+                 "are generated. The Fabric SKU ladder and the F64 licensing "
+                 "rule are real."),
+    }
+
+
+@app.get("/api/capacity/{capacity_id}")
+def capacity_detail(capacity_id: str):
+    """One capacity, with its own history, incidents and any advice about it."""
+    onto = get_ontology()
+    health = _capacity_health()
+    row = health[health["CapacityId"] == capacity_id]
+    if row.empty:
+        raise HTTPException(404, f"unknown capacity {capacity_id!r}")
+    c = row.iloc[0]
+
+    usage = onto["fact_capacity_usage_daily"]
+    series = usage[usage["CapacityId"] == capacity_id].sort_values("Date")
+    ops = onto["fact_operational_incident"]
+    mine = ops[ops["CapacityId"] == capacity_id].sort_values("OpenedDate", ascending=False)
+    hw = onto["dim_hardware"].set_index("SKUClass")
+    spec = hw.loc[c["SKUClass"]] if c["SKUClass"] in hw.index else None
+
+    return {
+        "capacityId": capacity_id,
+        "datacentre": c["DatacentreId"],
+        "region": c["Region"],
+        "fabricSku": c["FabricSku"],
+        "capacityUnits": int(c["CapacityUnits"]),
+        "deployedUnits": int(c["DeployedUnits"]),
+        "nodes": int(c["Nodes"]),
+        "supportsFreeViewers": bool(c["SupportsFreeViewers"]),
+        "hardware": {
+            "skuClass": c["SKUClass"], "vendor": c["Vendor"], "model": c["Model"],
+            "cpu": str(spec["Cpu"]) if spec is not None else "",
+            "coresPerNode": int(spec["CoresPerNode"]) if spec is not None else None,
+            "memoryGB": int(spec["MemoryGB"]) if spec is not None else None,
+            "storageTB": float(spec["StorageTB"]) if spec is not None else None,
+        },
+        "utilisation": _records(series[["Date", "UtilisationPct", "UsedUnits", "TotalUnits"]]),
+        "health": {
+            "incidents": int(c["Incidents"]),
+            "seriousIncidents": int(c["SeriousIncidents"]),
+            "downtimeHours": round(float(c["DowntimeMinutes"]) / 60.0, 1),
+            "incidentsPerNode": float(c["IncidentRate"]),
+            "rawIncidentsPerNode": float(c["RawRate"]),
+            "fleetIncidentsPerNode": float(c["FleetRate"]),
+            "rateVsFleet": float(c["RateVsFleet"]),
+            "shrunkTowardFleet": (
+                "Rate is shrunk toward the fleet average in proportion to how "
+                "many nodes stand behind it, so a one-node capacity with a bad "
+                "month does not outrank a fleet."),
+        },
+        "incidents": _records(mine[["OperationalIncidentId", "OpenedDate", "Severity",
+                                    "IncidentType", "DowntimeMinutes",
+                                    "ImpactedCustomers"]].head(50)),
+        "recommendations": [r for r in _recommendations() if r["target"] == capacity_id],
+    }
+
+
+@app.get("/api/lead-times")
+def lead_times():
+    """Lead time per hardware class, and how it has moved.
+
+    The table that makes "do not wait for the usual trigger" arguable rather
+    than assertable.
+    """
+    from planning import lead_time_drift
+
+    onto = get_ontology()
+    drift = lead_time_drift(onto["dim_lead_time_history"])
+    return {
+        "classes": drift,
+        "history": _records(onto["dim_lead_time_history"]),
+        "note": ("Lead-time history is generated. Present-day values match the "
+                 "lead times already used across the product."),
+    }
 
 
 @app.get("/api/features")

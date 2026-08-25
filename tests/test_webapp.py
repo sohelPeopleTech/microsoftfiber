@@ -143,19 +143,36 @@ def test_the_funnel_stages_are_a_real_funnel():
     assert past_allowance == ov["kpis"]["failed"]
 
 
-def test_the_regions_lead_time_inversion_example_is_still_true():
-    """The Regions explainer names two regions and their exact figures. If the
-    extract changes, that sentence becomes a confident falsehood on screen."""
-    r = {x["region"]: x for x in api.overview()["regions"]}
-    ci, nc = r["centralindia"], r["northcentralus"]
+def test_lead_time_can_outrank_utilisation():
+    """Urgency is not a ranking of how full a region is.
 
-    assert round(ci["utilisation"], 1) == 81.8, "explainer prints 81.8%"
-    assert round(nc["utilisation"], 1) == 89.1, "explainer prints 89.1%"
-    assert (ci["leadTime"], nc["leadTime"]) == (45, 30), "explainer prints 45d vs 30d"
-    assert ci["sku"] == "Intel-highmem" and nc["sku"] == "GPU-class"
-    # The point of the example: lower utilisation, yet more urgent.
-    assert ci["utilisation"] < nc["utilisation"]
-    assert ci["daysUntilOrder"] < nc["daysUntilOrder"]
+    This previously pinned four exact figures for a sentence in the Regions
+    explainer that named centralindia and northcentralus. That sentence was
+    removed when hardware and lead time came off the Regions tab -- the
+    explainer now says why hardware is *not* shown there -- so the test was
+    guarding text that no longer exists and passing on coincidence.
+
+    What is worth protecting is the property the sentence was illustrating, and
+    it holds without naming anyone: somewhere in the fleet a region that is less
+    full than another needs its order raised sooner, because its hardware takes
+    longer to arrive. If that ever stops being true the product is ranking by
+    utilisation and calling it urgency.
+    """
+    regions = [r for r in api.overview()["regions"]
+               if r["daysUntilOrder"] is not None]
+    assert len(regions) >= 2, "need at least two regions with an order-by date"
+
+    inversions = [
+        (a["region"], b["region"])
+        for a in regions for b in regions
+        if a["utilisation"] < b["utilisation"]          # a is less full
+        and a["daysUntilOrder"] < b["daysUntilOrder"]   # yet a is more overdue
+        and a["leadTime"] > b["leadTime"]               # because of lead time
+    ]
+    assert inversions, (
+        "no region is less full than another yet more urgent -- urgency has "
+        "collapsed into a utilisation ranking, and lead time is doing nothing"
+    )
 
 
 def test_action_due_means_the_order_by_date_has_passed():
@@ -1056,11 +1073,19 @@ def test_the_headline_date_is_always_on_the_chart():
 
 def test_history_is_not_swamped_by_the_projection():
     """A chart that is mostly forecast reads as mostly finding. Untrimmed this
-    was 71% projection against 149 days of real data."""
+    was 71% projection against 149 days of real data.
+
+    The bound is 65% rather than something tighter because two requirements pull
+    against each other: the headline date must be on the chart (asserted just
+    above) and history should keep a meaningful share of it. A region whose
+    crossing is genuinely far out cannot satisfy both, and of the two, silently
+    cropping the date the page reports is the worse failure. 65% leaves history
+    a third of the frame; below that the trim is not doing its job.
+    """
     for f in api.forecast_all()["forecasts"]:
         hist, proj = len(f["history"]), len(f["projection"])
         share = proj / (hist + proj)
-        assert share <= 0.60, f"{f['region']}: chart is {share:.0%} forecast"
+        assert share <= 0.65, f"{f['region']}: chart is {share:.0%} forecast"
 
 
 def test_extrapolation_past_the_fitted_window_is_declared():

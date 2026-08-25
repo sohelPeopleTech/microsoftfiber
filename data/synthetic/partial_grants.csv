@@ -1,0 +1,6 @@
+IncidentId,Region,RequestedUnits,PartiallyGrantedUnits,ShortfallUnits,GrantedPct,IsSynthetic,Provenance
+603961530,westeurope,128,56,72,43.8,True,"SYNTHETIC - generated, not a business source: partial fulfilment invented for a subset of the refused requests; the ICM extract records none"
+618393554,eastus2,83,48,35,57.8,True,"SYNTHETIC - generated, not a business source: partial fulfilment invented for a subset of the refused requests; the ICM extract records none"
+723020082,canadaeast,4,2,2,50.0,True,"SYNTHETIC - generated, not a business source: partial fulfilment invented for a subset of the refused requests; the ICM extract records none"
+750292587,canadaeast,32,19,13,59.4,True,"SYNTHETIC - generated, not a business source: partial fulfilment invented for a subset of the refused requests; the ICM extract records none"
+768749210,southcentralus,4,2,2,50.0,True,"SYNTHETIC - generated, not a business source: partial fulfilment invented for a subset of the refused requests; the ICM extract records none"

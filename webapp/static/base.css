@@ -342,6 +342,52 @@ svg.chart { width: 100%; height: auto; display: block; }
 }
 svg.chart text { font-family: var(--sans); }
 
+/* ------------------------------------------------------------- fleet map */
+
+:root {
+  --map-sea: #eef3f8;
+  --map-land: #dfe3e6;
+  --map-edge: #c8c6c4;
+}
+
+.fleet-map { border-radius: 4px; }
+.fleet-map circle.mk { cursor: pointer; transition: r .08s ease, stroke-width .08s ease; }
+.fleet-map circle.mk:hover { stroke-width: .9; }
+/* The selected marker keeps a ring rather than changing colour: colour is
+   already carrying the region's state and must not mean two things. */
+.fleet-map circle.mk.on { stroke: var(--ink); stroke-width: 1; }
+.fleet-map circle.mk:focus-visible { outline: none; stroke: var(--ink); stroke-width: 1.1; }
+
+.map-summary { display: flex; flex-wrap: wrap; gap: .5rem 2rem; font-size: .88rem; }
+.map-summary b { font-size: 1.05rem; }
+
+/* Map beside its detail card, stacking under a card's worth of width. */
+.map-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 20rem; gap: 1.25rem; }
+@media (max-width: 62rem) { .map-wrap { grid-template-columns: minmax(0, 1fr); } }
+.map-holder { min-width: 0; }
+.map-legend { margin: .6rem 0 0; }
+.legend .dot.bad { background: var(--bad); }
+.legend .dot.warn { background: var(--warn); }
+.legend .dot.good { background: var(--good); }
+
+.map-side { min-width: 0; }
+.map-side .empty { color: var(--ink-3); font-size: .85rem; }
+.map-card header { display: flex; align-items: center; gap: .5rem; margin-bottom: .1rem; }
+.map-card header b { font-size: 1.05rem; }
+.map-card .where { margin: 0 0 .8rem; color: var(--ink-2); font-size: .8rem; }
+.map-card .rows { display: grid; gap: .45rem; font-size: .84rem; }
+.map-card .rows > div { display: grid; grid-template-columns: 5.5rem 1fr; gap: .5rem; }
+.map-card .rows span { color: var(--ink-2); }
+.map-card .t3, .map-summary .t3 { color: var(--ink-3); font-weight: 400; }
+.map-card .gaps {
+  margin: .9rem 0 0; padding: .55rem .7rem; font-size: .8rem;
+  background: var(--warn-wash); border-left: 3px solid var(--warn); border-radius: 2px;
+}
+.map-card .gaps.ok { background: var(--good-wash); border-left-color: var(--good); }
+.map-card .acts { margin: .8rem 0 0; display: flex; flex-wrap: wrap; gap: .4rem .9rem; font-size: .84rem; }
+.map-card .acts a.warn { color: var(--warn); }
+.map-card .links { margin: .8rem 0 0; font-size: .82rem; }
+
 /* --------------------------------------------------------------- assistant */
 
 .chat-fab {
