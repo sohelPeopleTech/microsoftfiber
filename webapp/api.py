@@ -870,7 +870,7 @@ MIN_PLOT_DAYS = 90
 PLOT_MARGIN_DAYS = 30
 
 
-def _trim_for_plotting(d: dict) -> dict:
+def _trim_for_plotting(d: dict, trim: bool = True) -> dict:
     """Compute a year ahead, but only plot as far as the chart needs.
 
     The projection has to run the full 365 days or the Regions tab and this one
@@ -879,9 +879,21 @@ def _trim_for_plotting(d: dict) -> dict:
     on it is squeezed into the left third and the eye reads the speculation as
     the finding. Trimming to the crossing plus a margin keeps every date this
     page reports on the chart while leaving history the larger share of it.
+
+    `trim=False` keeps the whole year. The region page asks for it, and the
+    ratio that makes trimming necessary here does not hold there: that chart
+    also carries eighteen months of demand history, so a year of projection is
+    a minority of its width rather than 71% of it. The flags below are still
+    computed either way -- a caller drawing the full year needs the warning
+    about extrapolation more than a caller drawing part of it, not less.
     """
     proj = d.get("projection") or []
     if not proj:
+        return d
+    if not trim:
+        d["plottedDays"] = len(proj)
+        d["saturationBeyondChart"] = False
+        d["extrapolatedBeyondHistory"] = len(proj) > len(d.get("history") or [])
         return d
     # The headline date only. A region past its line is headlined by when it
     # fills; one still under it, by when it crosses. Stretching the chart to
@@ -910,12 +922,14 @@ def _trim_for_plotting(d: dict) -> dict:
 
 @app.get("/api/forecast/{region}")
 def forecast_one(region: str,
-                 threshold: Annotated[float | None, Query(ge=50.0, le=99.0)] = None):
+                 threshold: Annotated[float | None, Query(ge=50.0, le=99.0)] = None,
+                 full: Annotated[bool, Query()] = False):
     onto = get_ontology()
     if region not in set(onto["dim_region"]["Region"]):
         raise HTTPException(404, f"unknown region {region!r}")
     d = _trim_for_plotting(_clean(
-        _forecast(region, _region_threshold(region, threshold)).to_dict()))
+        _forecast(region, _region_threshold(region, threshold)).to_dict()),
+        trim=not full)
     found = get_anomalies().get(region)
     d["anomalies"] = found.to_dict() if found else None
     return d

@@ -328,7 +328,14 @@ svg.chart { width: 100%; height: auto; display: block; }
 .legend .ln.demand      { border-top: 2px solid var(--brand); }
 .legend .ln.demand-proj { border-top: 2px dashed var(--brand); }
 .legend .ln.util        { border-top: 2px solid var(--ink-2); }
+.legend .ln.util-proj   { border-top: 2px dashed var(--ink-2); }
 .legend .ln.baseline    { border-top: 2px dotted var(--brand); opacity: .55; }
+/* Colour carries the series, dash carries the tense: blue is cores, grey is
+   utilisation, dashed is projected on either. The band belongs to the grey. */
+.legend .ln.util-band {
+  height: 9px; border-radius: 2px;
+  background: var(--ink-2); opacity: .2;
+}
 .legend .dot {
   display: inline-block; width: 9px; height: 9px; border-radius: 50%;
   flex: none; background: var(--warn);

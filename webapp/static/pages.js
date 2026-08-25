@@ -353,200 +353,231 @@ function demandChart(d) {
   </svg>`;
 }
 
-/* Both region graphs in one frame, drawn like the Forecast tab.
+/* Both region graphs in one frame, drawn the way the Forecast tab draws its own.
 
-   Review asked for a single chart. The two series do not share a unit -- one is
-   cores asked for, the other is how full the place ran -- so they get an axis
-   each, cores on the left and utilisation on the right, and the safety line is
-   drawn on the right scale where it belongs. Sharing one axis would have meant
-   rescaling cores into a percentage of its own peak, which reads as a
-   measurement and is not one.
+   Review asked for the two region charts merged, then asked for the result to
+   look like Forecast. Those are compatible: what Forecast does better is not
+   styling but resolution. Utilisation is recorded once a day, and drawing it as
+   five monthly averages turned a jagged series into a straight diagonal that
+   implied a steadiness the readings do not have. It is now drawn per day, with
+   the fitted projection, the error band the model actually earned on held-out
+   data, and the crossing marker -- the same furniture as Forecast.
 
-   The two series also do not share a span. Requests go back to the start of the
-   extract; utilisation is recorded per day only from `fact_usage_daily`, which
-   starts later. The axis covers the union and the utilisation line begins where
-   its data begins, which is stated on the chart rather than left to be noticed. */
-function combinedRegionChart(d) {
+   Two units, so two axes: cores on the left, how-full on the right. Nothing is
+   rescaled into a number nobody measured. Colour carries the series and dash
+   carries the tense -- blue is cores, grey is utilisation, dashed is projected
+   in both cases -- because a reader who learns the rule once should not have to
+   relearn it halfway across the chart.
+
+   The x axis is real dates rather than an index, which is what lets a daily
+   series and a monthly one share it honestly: a monthly point sits at the
+   middle of its month, where the aggregate belongs, not at its edge. */
+function combinedRegionChart(d, f) {
   const hist = d.demand || [];
   if (!hist.length) return `<p class="hint">No capacity requests recorded here.</p>`;
   const proj = d.projection || [];
-  const util = d.thresholdSeries || [];
+  const fHist = (f && f.history) || [];
+  const fProj = (f && f.projection) || [];
+  const hasUtil = fHist.length > 1;
 
-  // One month axis for both series: the union, in order. Lexical sort is date
-  // order for YYYY-MM, and utilisation can run past the last requested month.
-  const months = [...new Set([
-    ...hist.map((m) => m.month),
-    ...proj.map((m) => m.month),
-    ...util.map((s) => s.month),
-  ])].sort();
-  const at = (month) => months.indexOf(month);
+  const day = (s) => { const [y, m, dd] = s.split("-").map(Number); return Date.UTC(y, m - 1, dd); };
+  const midMonth = (s) => { const [y, m] = s.split("-").map(Number); return Date.UTC(y, m - 1, 15); };
 
-  const W = 900, H = 300, L = 62, R = 62, T = 34, B = 46;
-  const step = (W - L - R) / Math.max(months.length - 1, 1);
-  const x = (i) => L + i * step;
+  const W = 920, H = 330, L = 66, R = 66, T = 42, B = 50;
+  const stamps = [
+    ...hist.map((m) => midMonth(m.month)), ...proj.map((m) => midMonth(m.month)),
+    ...fHist.map((p) => day(p.date)), ...fProj.map((p) => day(p.date)),
+  ];
+  const t0 = Math.min(...stamps), t1 = Math.max(...stamps);
+  const x = (t) => L + ((t - t0) / Math.max(t1 - t0, 1)) * (W - L - R);
 
-  // Left scale: cores, from zero -- a demand chart that does not start at zero
-  // overstates the swing between an ordinary month and a deal.
-  const coreMax = Math.max(...hist.map((m) => m.cores),
-                           ...proj.map((m) => m.cores),
+  // Left: cores, from zero. A demand series that does not start at zero
+  // overstates the gap between an ordinary month and a deal.
+  const coreMax = Math.max(...hist.map((m) => m.cores), ...proj.map((m) => m.cores),
                            d.baselineCores, 1) * 1.18;
-  const yCores = (v) => (H - B) - (v / coreMax) * (H - T - B);
+  const yC = (v) => (H - B) - (v / coreMax) * (H - T - B);
 
-  // Right scale: utilisation, padded, and always wide enough to show the line.
-  const utilVals = util.map((s) => s.utilisationPct).concat([d.thresholdPct]);
-  const uLo = Math.floor(Math.min(...utilVals) - 2);
-  const uHi = Math.ceil(Math.max(...utilVals) + 2);
-  const yUtil = (v) => (H - B) - ((v - uLo) / Math.max(uHi - uLo, 1)) * (H - T - B);
-
-  const id = `chart${++CHART_SEQ}`;
-  const utilBy = Object.fromEntries(util.map((s) => [s.month, s]));
-  const coresBy = Object.fromEntries(
-    hist.map((m) => [m.month, m]).concat(proj.map((m) => [m.month, { ...m, isProjection: true }])));
-
-  /* One tooltip per month carrying whichever series exist there, so a month
-     with only one of the two says so rather than showing a blank half. */
-  CHART_DATA[id] = {
-    W, H,
-    points: months.map((month, i) => {
-      const m = coresBy[month], s = utilBy[month];
-      const rows = [`<b>${esc(month)}</b>`];
-      if (m) {
-        rows.push(`${num(Math.round(m.cores))} cores requested`
-          + (m.isProjection
-              ? `<br><span class="t-mute">forecast — ${esc(d.model || "")}</span>`
-              : `<br><span class="${m.isReal === false ? "t-warn" : "t-mute"}">${
-                  m.isReal === false
-                    ? `${m.tickets} request(s) · modelled — our records start ${esc(d.firstRecordedMonth || "later")}`
-                    : `${m.tickets} recorded request(s)`}</span>`)
-          + (m.events && m.events.length
-              ? `<br><span class="t-warn">${m.isReal === false
-                    ? "unusually large month"
-                    : esc(m.events.map((e) => e.type).join(", "))}</span>` : ""));
-      } else {
-        rows.push(`<span class="t-mute">no request record this month</span>`);
-      }
-      if (s) {
-        rows.push(`<span class="${s.deltaPct >= 0 ? "t-bad" : "t-good"}">${s.utilisationPct}% full`
-          + ` — ${s.deltaPct > 0 ? "+" : ""}${s.deltaPct.toFixed(1)} points `
-          + `${s.deltaPct >= 0 ? "into the threshold" : "still in hand"}</span>`
-          + `<br><span class="t-mute">peak ${s.peakPct}% · threshold ${s.thresholdPct}%</span>`);
-      } else {
-        rows.push(`<span class="t-mute">utilisation not recorded this month</span>`);
-      }
-      // Anchor the hover dot on the cores line where there is one, so the
-      // guide has something to land on across the whole axis.
-      return { x: x(i), y: m ? yCores(m.cores) : (s ? yUtil(s.utilisationPct) : T),
-               html: rows.join("<br>") };
-    }),
-  };
+  // Right: utilisation, wide enough to hold the band and the safety line.
+  const uVals = hasUtil
+    ? [...fHist.map((p) => p.value), ...fProj.map((p) => p.upper), ...fProj.map((p) => p.lower),
+       f.thresholdPct]
+    : [d.thresholdPct || 85];
+  const uLo = Math.floor(Math.min(...uVals) - 2), uHi = Math.ceil(Math.max(...uVals) + 2);
+  const yU = (v) => (H - B) - ((v - uLo) / Math.max(uHi - uLo, 1)) * (H - T - B);
 
   const line = (pts) => pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("");
-  const histPts = hist.map((m) => [x(at(m.month)), yCores(m.cores)]);
-  const projPts = proj.length && hist.length
-    ? [[x(at(hist[hist.length - 1].month)), yCores(hist[hist.length - 1].cores)]]
-        .concat(proj.map((m) => [x(at(m.month)), yCores(m.cores)]))
+  const cHist = hist.map((m) => [x(midMonth(m.month)), yC(m.cores)]);
+  const cProj = proj.length
+    ? [[x(midMonth(hist[hist.length - 1].month)), yC(hist[hist.length - 1].cores)]]
+        .concat(proj.map((m) => [x(midMonth(m.month)), yC(m.cores)]))
     : [];
-  const utilPts = util.map((s) => [x(at(s.month)), yUtil(s.utilisationPct)]);
-  const everyNth = Math.ceil(months.length / 10);
+  const uHist = fHist.map((p) => [x(day(p.date)), yU(p.value)]);
+  const uProj = fProj.length && fHist.length
+    ? [[x(day(fHist[fHist.length - 1].date)), yU(fHist[fHist.length - 1].value)]]
+        .concat(fProj.map((p) => [x(day(p.date)), yU(p.value)]))
+    : [];
+  const band = fProj.length
+    ? "M" + fProj.map((p) => `${x(day(p.date)).toFixed(1)},${yU(p.upper).toFixed(1)}`).join("L")
+      + "L" + fProj.slice().reverse().map((p) =>
+          `${x(day(p.date)).toFixed(1)},${yU(p.lower).toFixed(1)}`).join("L") + "Z"
+    : "";
 
-  // Gridlines are evenly spaced in the frame and labelled on both scales, which
-  // is the only honest way to rule a chart carrying two units.
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => ({
-    y: (H - B) - f * (H - T - B),
-    cores: Math.round(f * coreMax),
-    util: uLo + f * (uHi - uLo),
+  /* Hover. One entry per recorded day, plus the months that predate the
+     utilisation record so the left of the chart is not dead to the cursor.
+     Each carries whatever is true at that date: a reading, a projection with
+     its range, and the cores asked for in the month it falls in. */
+  const coresBy = Object.fromEntries(
+    hist.map((m) => [m.month, m]).concat(proj.map((m) => [m.month, { ...m, isProjection: true }])));
+  const monthOf = (iso) => iso.slice(0, 7);
+  const coresLine = (month) => {
+    const m = coresBy[month];
+    if (!m) return `<span class="t-mute">no request record in ${esc(month)}</span>`;
+    return `${num(Math.round(m.cores))} cores requested in ${esc(month)}`
+      + (m.isProjection
+          ? `<br><span class="t-mute">forecast — ${esc(d.model || "")}</span>`
+          : `<br><span class="${m.isReal === false ? "t-warn" : "t-mute"}">${
+              m.isReal === false
+                ? `${m.tickets} request(s) · modelled`
+                : `${m.tickets} recorded request(s)`}</span>`)
+      + (m.events && m.events.length && m.isReal !== false
+          ? `<br><span class="t-warn">${esc(m.events.map((e) => e.type).join(", "))}</span>` : "");
+  };
+
+  const id = `chart${++CHART_SEQ}`;
+  const pts = [];
+  fHist.forEach((p) => pts.push({
+    x: x(day(p.date)), y: yU(p.value),
+    html: `<b>${esc(p.date)}</b><br>${p.value.toFixed(1)}% full`
+      + `<br><span class="t-mute">measured</span><br>${coresLine(monthOf(p.date))}`,
+  }));
+  fProj.forEach((p) => pts.push({
+    x: x(day(p.date)), y: yU(p.value),
+    html: `<b>${esc(p.date)}</b><br>${p.value.toFixed(1)}% full`
+      + `<br><span class="t-mute">projected — could be ${p.lower.toFixed(1)}% to ${p.upper.toFixed(1)}%</span>`
+      + `<br>${coresLine(monthOf(p.date))}`,
+  }));
+  // Months with no utilisation record yet: keep the cursor useful over there.
+  const covered = new Set([...fHist, ...fProj].map((p) => monthOf(p.date)));
+  hist.concat(proj).forEach((m) => {
+    if (covered.has(m.month)) return;
+    pts.push({ x: x(midMonth(m.month)), y: yC(m.cores),
+               html: `<b>${esc(m.month)}</b><br>${coresLine(m.month)}`
+                 + `<br><span class="t-mute">utilisation not recorded this month</span>` });
+  });
+  pts.sort((a, b) => a.x - b.x);
+  CHART_DATA[id] = { W, H, points: pts };
+
+  // Gridlines are evenly spaced and labelled on both scales, the only honest
+  // way to rule a frame carrying two units.
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((r) => ({
+    y: (H - B) - r * (H - T - B),
+    cores: Math.round(r * coreMax),
+    util: uLo + r * (uHi - uLo),
   }));
 
-  const firstUtil = util.length ? util[0].month : null;
-  const projStart = proj.length && hist.length ? hist[hist.length - 1].month : null;
+  // Roughly eight date labels, snapped to month starts.
+  const marks = [];
+  for (let t = t0; t <= t1; ) {
+    const dt = new Date(t);
+    marks.push(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), 1));
+    t = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 1);
+  }
+  const everyNth = Math.max(1, Math.ceil(marks.length / 8));
+  const label = (t) => {
+    const dt = new Date(t);
+    return `${String(dt.getUTCFullYear()).slice(2)}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
+  };
 
-  // Where each series stops being generated and starts being recorded. Null
-  // means "the whole line is recorded", which needs no marker at all.
-  const realFrom = d.realMonths != null && d.realMonths < hist.length
-    ? hist.length - d.realMonths : null;
-  const utilFrom = firstUtil && at(firstUtil) > 0 ? at(firstUtil) : null;
-  const markers = realFrom != null && realFrom === utilFrom
-    ? [{ at: realFrom, label: "requests and utilisation recorded from here" }]
-    : [realFrom != null ? { at: realFrom, label: "requests recorded from here" } : null,
-       utilFrom != null ? { at: utilFrom, label: "utilisation recorded from here" } : null,
-      ].filter(Boolean);
+  const cut = hasUtil && fProj.length ? x(day(fProj[0].date)) : null;
+  const crossX = hasUtil && f.crossingDate ? x(day(f.crossingDate)) : null;
+  const utilStart = hasUtil ? x(day(fHist[0].date)) : null;
 
   return `<div class="legend">
     <span><i class="ln demand"></i>Cores requested — what customers asked for (left axis)</span>
-    <span><i class="ln demand-proj"></i>Projected demand — next ${proj.length} month(s)</span>
-    ${util.length ? `<span><i class="ln util"></i>How full the region ran (right axis)</span>` : ""}
-    ${util.length ? `<span><i class="ln limit"></i>Safety threshold ${pct(d.thresholdPct, 1)}</span>` : ""}
+    ${proj.length ? `<span><i class="ln demand-proj"></i>Projected demand</span>` : ""}
+    ${hasUtil ? `<span><i class="ln util"></i>How full the region ran — one reading per day (right axis)</span>` : ""}
+    ${hasUtil && fProj.length ? `<span><i class="ln util-proj"></i>Projected utilisation${f.model ? ` — ${esc(f.model)}` : ""}</span>` : ""}
+    ${band ? `<span><i class="ln util-band"></i>Range the forecast could be out by</span>` : ""}
+    ${hasUtil ? `<span><i class="ln limit"></i>Safety threshold ${pct(f.thresholdPct, 1)}</span>` : ""}
     ${d.baselineCores > 0 ? `<span><i class="ln baseline"></i>Ordinary month ≈ ${num(Math.round(d.baselineCores))} cores</span>` : ""}
     <span><i class="dot event"></i>Month containing a deal-sized request</span>
   </div>
   <svg data-chart="${id}" class="chart" viewBox="0 0 ${W} ${H}" role="img"
-    aria-label="Capacity requested per month and how full the region ran, ${esc(d.id || "")}">
+    aria-label="Capacity requested per month and daily utilisation for ${esc(d.id || "")}">
     ${ticks.map((t) => `
       <line x1="${L}" x2="${W - R}" y1="${t.y.toFixed(1)}" y2="${t.y.toFixed(1)}" stroke="var(--rule)"/>
       <text x="${L - 8}" y="${(t.y + 4).toFixed(1)}" font-size="9.5" text-anchor="end"
         fill="var(--brand)">${num(t.cores)}</text>
-      ${util.length ? `<text x="${W - R + 8}" y="${(t.y + 4).toFixed(1)}" font-size="9.5"
+      ${hasUtil ? `<text x="${W - R + 8}" y="${(t.y + 4).toFixed(1)}" font-size="9.5"
         text-anchor="start" fill="var(--ink-2)">${t.util.toFixed(0)}%</text>` : ""}`).join("")}
 
-    <text x="13" y="${T + (H - T - B) / 2}" font-size="10" fill="var(--brand)"
-      transform="rotate(-90 13 ${T + (H - T - B) / 2})" text-anchor="middle">cores requested</text>
-    ${util.length ? `<text x="${W - 10}" y="${T + (H - T - B) / 2}" font-size="10" fill="var(--ink-2)"
-      transform="rotate(90 ${W - 10} ${T + (H - T - B) / 2})" text-anchor="middle">how full (%)</text>` : ""}
+    <text x="14" y="${T + (H - T - B) / 2}" font-size="10" fill="var(--brand)"
+      transform="rotate(-90 14 ${T + (H - T - B) / 2})" text-anchor="middle">cores requested</text>
+    ${hasUtil ? `<text x="${W - 12}" y="${T + (H - T - B) / 2}" font-size="10" fill="var(--ink-2)"
+      transform="rotate(90 ${W - 12} ${T + (H - T - B) / 2})" text-anchor="middle">how full (%)</text>` : ""}
 
     ${d.baselineCores > 0 ? `
-      <line x1="${L}" x2="${W - R}" y1="${yCores(d.baselineCores).toFixed(1)}"
-        y2="${yCores(d.baselineCores).toFixed(1)}" stroke="var(--brand)"
-        stroke-dasharray="3 4" opacity=".45"/>
-      ${/* No inline caption on this one. An ordinary month sits at the height
-            the demand line spends most of its time at, so a label there lands
-            on the line whatever the alignment; it is named in the key instead. */ ""}` : ""}
+      <line x1="${L}" x2="${W - R}" y1="${yC(d.baselineCores).toFixed(1)}"
+        y2="${yC(d.baselineCores).toFixed(1)}" stroke="var(--brand)"
+        stroke-dasharray="2 4" opacity=".45"/>` : ""}
 
-    ${util.length ? `
-      <line x1="${L}" x2="${W - R}" y1="${yUtil(d.thresholdPct).toFixed(1)}"
-        y2="${yUtil(d.thresholdPct).toFixed(1)}" stroke="var(--bad)" stroke-dasharray="5 4"/>
-      <text x="${W - R}" y="${(yUtil(d.thresholdPct) - 5).toFixed(1)}" font-size="9.5"
-        text-anchor="end" fill="var(--bad)">safety threshold ${pct(d.thresholdPct, 1)}</text>` : ""}
+    ${hasUtil ? `
+      <line x1="${L}" x2="${W - R}" y1="${yU(f.thresholdPct).toFixed(1)}"
+        y2="${yU(f.thresholdPct).toFixed(1)}" stroke="var(--bad)" stroke-dasharray="5 4"/>
+      <text x="${W - R - 2}" y="${(yU(f.thresholdPct) - 5).toFixed(1)}" font-size="9.5"
+        text-anchor="end" fill="var(--bad)">safety threshold ${pct(f.thresholdPct, 1)}</text>` : ""}
 
-    ${realFrom != null ? `
-      <line x1="${x(realFrom)}" x2="${x(realFrom)}"
-        y1="${T}" y2="${H - B}" stroke="var(--rule-strong)" stroke-dasharray="2 3"/>` : ""}
-    ${utilFrom != null && utilFrom !== realFrom ? `
-      <line x1="${x(utilFrom)}" x2="${x(utilFrom)}" y1="${T}" y2="${H - B}"
-        stroke="var(--ink-3)" stroke-dasharray="1 4" opacity=".8"/>` : ""}
-    ${/* Both series often begin in the same month, and two dividers a pixel
-          apart with two labels stacked on them reads as a rendering fault. One
-          marker, and the label names whichever series actually start there. */ ""}
-    ${/* Labels fall to the left of their divider once it sits in the right-hand
-          third, where the safety-line caption already is. */ ""}
-    ${markers.map((m, i) => {
-      const right = x(m.at) > L + (W - L - R) * 0.55;
-      return `<text x="${x(m.at) + (right ? -4 : 4)}" y="${T + 10 + i * 11}" font-size="9"
-        text-anchor="${right ? "end" : "start"}" fill="var(--ink-2)">${esc(m.label)}</text>`;
-    }).join("")}
+    ${band ? `<path d="${band}" fill="var(--ink-2)" opacity=".15"/>` : ""}
+    ${uHist.length > 1 ? `<path d="${line(uHist)}" fill="none" stroke="var(--ink-2)" stroke-width="1.3"/>` : ""}
+    ${uProj.length > 1 ? `<path d="${line(uProj)}" fill="none" stroke="var(--ink-2)"
+      stroke-width="1.5" stroke-dasharray="6 3"/>` : ""}
 
-    ${projStart ? `
-      <line x1="${x(at(projStart))}" x2="${x(at(projStart))}" y1="${T}" y2="${H - B}"
-        stroke="var(--rule-strong)"/>
-      <text x="${x(at(projStart)) + 4}" y="${H - B + 14}" font-size="9.5"
-        fill="var(--ink-3)">forecast from here</text>` : ""}
-
-    <path d="${line(histPts)}" fill="none" stroke="var(--brand)" stroke-width="1.9"/>
-    ${projPts.length ? `<path d="${line(projPts)}" fill="none" stroke="var(--brand)"
+    <path d="${line(cHist)}" fill="none" stroke="var(--brand)" stroke-width="1.9"/>
+    ${cProj.length ? `<path d="${line(cProj)}" fill="none" stroke="var(--brand)"
       stroke-width="1.9" stroke-dasharray="6 3"/>` : ""}
-    ${utilPts.length > 1 ? `<path d="${line(utilPts)}" fill="none" stroke="var(--ink-2)"
-      stroke-width="1.7"/>` : ""}
-    ${util.map((s) => `<circle cx="${x(at(s.month))}" cy="${yUtil(s.utilisationPct).toFixed(1)}" r="3"
-      fill="${s.deltaPct >= 0 ? "var(--bad)" : "var(--good)"}"/>`).join("")}
-    ${hist.map((m) => m.eventDriven ? `
-      <circle cx="${x(at(m.month))}" cy="${yCores(m.cores).toFixed(1)}" r="4.5" fill="var(--warn)"/>` : "").join("")}
+    ${hist.map((m) => m.eventDriven && m.isReal !== false ? `
+      <circle cx="${x(midMonth(m.month))}" cy="${yC(m.cores).toFixed(1)}" r="4.5"
+        fill="var(--warn)"/>` : "").join("")}
 
-    ${months.map((month, i) => (i % everyNth === 0 || i === months.length - 1) ? `
-      <text x="${x(i)}" y="${H - B + 28}" font-size="9" text-anchor="middle"
-        fill="var(--ink-3)">${esc(month.slice(2))}</text>` : "").join("")}
+    ${utilStart != null && utilStart > L + 2 ? `
+      <line x1="${utilStart.toFixed(1)}" x2="${utilStart.toFixed(1)}" y1="${T}" y2="${H - B}"
+        stroke="var(--ink-3)" stroke-dasharray="1 4" opacity=".8"/>
+      <text x="${(utilStart - 4).toFixed(1)}" y="${T + 10}" font-size="9" text-anchor="end"
+        fill="var(--ink-2)" stroke="var(--card)" stroke-width="3" paint-order="stroke"
+      >utilisation recorded from here</text>` : ""}
+    ${cut != null ? `
+      <line x1="${cut.toFixed(1)}" x2="${cut.toFixed(1)}" y1="${T}" y2="${H - B}"
+        stroke="var(--rule-strong)"/>
+      ${/* A region well up its range puts the daily line right under this
+            caption, so it carries a halo like the crossing marker. */ ""}
+      <text x="${(cut + 4).toFixed(1)}" y="${T + 10}" font-size="9.5"
+        fill="var(--ink-3)" stroke="var(--card)" stroke-width="3" paint-order="stroke"
+      >forecast from here</text>` : ""}
+    ${crossX != null ? `
+      <circle cx="${crossX.toFixed(1)}" cy="${yU(f.thresholdPct).toFixed(1)}" r="4" fill="var(--bad)"/>
+      ${/* Above the dot, not below: below is where the rising line is. The halo
+            keeps it legible where the band passes behind it. */ ""}
+      <text x="${crossX.toFixed(1)}" y="${(yU(f.thresholdPct) - 10).toFixed(1)}" font-size="9"
+        text-anchor="middle" fill="var(--bad)"
+        stroke="var(--card)" stroke-width="3" paint-order="stroke"
+      >crosses ${esc(f.crossingDate)}</text>` : ""}
+
+    ${/* Every Nth month, plus the last -- but drop the last if the tick before it
+          is close enough that the two labels would print over each other. */ ""}
+    ${marks.map((t, i) => {
+      const last = i === marks.length - 1;
+      if (i % everyNth !== 0 && !last) return "";
+      if (last && i % everyNth !== 0) {
+        const prev = marks[Math.floor((marks.length - 1) / everyNth) * everyNth];
+        if (x(t) - x(prev) < 34) return "";
+      }
+      return `<text x="${x(t).toFixed(1)}" y="${H - B + 30}" font-size="9" text-anchor="middle"
+        fill="var(--ink-3)">${label(t)}</text>`;
+    }).join("")}
 
     <line class="guide" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--ink-3)"
       stroke-dasharray="3 3" style="opacity:0;pointer-events:none"/>
-    <circle class="hover-dot" r="4" fill="var(--brand)" style="opacity:0;pointer-events:none"/>
+    <circle class="hover-dot" r="4" fill="var(--ink-2)" style="opacity:0;pointer-events:none"/>
   </svg>`;
 }
 
@@ -588,6 +619,21 @@ async function demandPanels(scope, id) {
   } catch (err) {
     return panel("Demand", `<p class="error">Could not load demand for ${esc(id)}.</p>`);
   }
+  /* The daily utilisation series and its projection, for regions only -- the
+     monthly averages this endpoint returns are enough to say where the region
+     sits but not to draw it, since averaging a day-by-day series into five
+     points turns a jagged record into a straight line. `full` asks for the
+     whole year rather than the Forecast tab's trim: this chart also carries
+     eighteen months of demand, so a year ahead is a minority of its width.
+     A failure here costs the utilisation half, not the panel. */
+  let f = null;
+  if (scope === "region") {
+    try {
+      f = await get(`/api/forecast/${encodeURIComponent(id)}?full=true`);
+    } catch (err) {
+      f = null;
+    }
+  }
   const spikes = (d.demand || []).filter((m) => m.eventDriven);
   // Two different things wear the same amber. A recorded month is amber because
   // an event names the ticket in it; a generated month is amber because it is
@@ -596,28 +642,37 @@ async function demandPanels(scope, id) {
   const flagged = spikes.filter((m) => m.isReal === false);
   const peak = (d.demand || []).reduce((a, b) => (b.cores > (a?.cores ?? -1) ? b : a), null);
 
+  /* Quote the daily record the chart actually draws, not the monthly averages
+     from the demand endpoint. Both are true, but a caption reading 72.8% beside
+     a line ending at 75% is the kind of two-numbers-one-question split this
+     project keeps finding, and there is no reason to introduce another. */
+  const fh = (f && f.history) || [];
+  const rich = fh.length > 1;
   const util = d.thresholdSeries || [];
-  const lastU = util.length ? util[util.length - 1] : null;
-  const firstU = util.length ? util[0] : null;
+  const lastU = rich ? fh[fh.length - 1] : null;
+  const firstU = rich ? fh[0] : null;
+  const line = rich ? f.thresholdPct : d.thresholdPct;
+  const delta = lastU ? lastU.value - line : null;
   // Direction of travel over the recorded window, so the prose can say whether
   // the region is walking towards its line or away from it.
-  const drift = lastU && firstU && util.length > 1
-    ? lastU.utilisationPct - firstU.utilisationPct : null;
+  const drift = rich ? lastU.value - firstU.value : null;
+  const showChart = rich || util.length;
 
-  return panel(util.length
+  return panel(showChart
       ? "Demand and utilisation — what was asked for, and how full it ran"
       : "Demand — capacity requested per month", `
     <div style="position:relative">${
-      util.length ? combinedRegionChart(d) : demandChart(d)}</div>
+      showChart ? combinedRegionChart(d, f) : demandChart(d)}</div>
     <p style="background:var(--page);border-left:3px solid var(--brand);
        padding:.7rem .9rem;margin:.75rem 0 0;font-size:.88rem">
-      <b>In plain terms:</b> ${util.length ? `this chart carries two different
+      <b>In plain terms:</b> ${showChart ? `this chart carries two different
       measurements, which is why it has two scales.
       The <b style="color:var(--brand)">blue line</b> is what customers
-      <b>asked for</b> — cores, read on the left. The
+      <b>asked for</b> — cores per month, read on the left. The
       <b style="color:var(--ink-2)">grey line</b> is how <b>full the region
-      actually ran</b> — a percentage, read on the right. One is demand arriving,
-      the other is the room left to absorb it. ` : ""}An ordinary month here is about
+      actually ran</b> — a percentage, one reading per day, read on the right.
+      One is demand arriving, the other is the room left to absorb it.
+      Dashed means projected, on either line. ` : ""}An ordinary month here is about
       <b>${num(Math.round(d.baselineCores))} cores</b>.
       ${spikes.length
         ? `${spikes.length} month(s) ran well above that.
@@ -637,32 +692,44 @@ async function demandPanels(scope, id) {
            place asks for, and removing them would project somewhere that never
            signs anything.`
         : `No month here was driven by a recorded business event.`}
-      ${lastU ? `<br><br>On the utilisation side, the region was
-        <b>${lastU.utilisationPct}% full</b> in ${esc(lastU.month)} against its own
-        <b>${pct(d.thresholdPct, 1)}</b> safety threshold —
-        ${lastU.deltaPct >= 0
-          ? `<b style="color:var(--bad)">${lastU.deltaPct.toFixed(1)} points past it</b>`
-          : `<b style="color:var(--good)">${Math.abs(lastU.deltaPct).toFixed(1)} points still in hand</b>`}.
-        ${drift != null && Math.abs(drift) >= 0.5
-          ? `Across the ${util.length} recorded months it has moved
+      ${rich ? `<br><br>On the utilisation side, the region was
+        <b>${lastU.value.toFixed(1)}% full</b> on ${esc(lastU.date)} against its own
+        <b>${pct(line, 1)}</b> safety threshold —
+        ${delta >= 0
+          ? `<b style="color:var(--bad)">${delta.toFixed(1)} points past it</b>`
+          : `<b style="color:var(--good)">${Math.abs(delta).toFixed(1)} points still in hand</b>`}.
+        ${Math.abs(drift) >= 0.5
+          ? `Across the ${fh.length} days on record it has moved
              ${drift > 0
                ? `<b>up ${drift.toFixed(1)} points</b>, so it is walking towards the line, not sitting still`
-               : `<b>down ${Math.abs(drift).toFixed(1)} points</b>, so it is moving away from the line`}.`
-          : `Across the ${util.length} recorded months it has held roughly level.`}
+               : `<b>down ${Math.abs(drift).toFixed(1)} points</b>, so it is moving away from the line`}`
+          : `Across the ${fh.length} days on record it has held roughly level`},
+        and on that trend it
+        ${f.alreadyBreached
+          ? (f.saturationDate
+              ? `has <b>no capacity left at all by ${esc(f.saturationDate)}</b>`
+              : `is already past the line`)
+          : (f.crossingDate
+              ? `<b>crosses the line on ${esc(f.crossingDate)}</b>${
+                  f.saturationDate ? ` and is full by ${esc(f.saturationDate)}` : ""}`
+              : `does not cross the line within the year drawn`)}.
         That threshold is this region's own — derived from the thresholds its data
         centres actually hold, not one figure applied everywhere.` : ""}
     </p>
     <p style="color:var(--ink-3);font-size:.78rem;margin:.5rem 0 0">
-      The blue line is capacity asked for, not capacity granted. Amber points to the
-      right of the divider contain a request linked to a business event, and the
-      link is recorded on the event rather than inferred from timing. Amber points
-      to the left sit in the generated history and are marked on size alone.
-      ${util.length ? `The two lines do not cover the same span: requests go back to
-      the start of the extract, utilisation is only recorded from
-      ${esc(firstU.month)}, so the grey line starts there. Nothing to the right of
-      the solid divider has happened yet — that part of the blue line is a
-      forecast${d.model ? ` (${esc(d.model)})` : ""}, and the grey line does not
-      project at all.` : ""}
+      The blue line is capacity asked for, not capacity granted. Amber points mark a
+      month holding a request linked to a business event, and the link is recorded
+      on the event rather than inferred from timing.
+      ${rich ? `The two lines do not cover the same span: requests go back to the
+      start of the extract, utilisation is only recorded from ${esc(firstU.date)},
+      so the grey line starts there. Nothing to the right of the solid divider has
+      happened yet — the dashed grey line is ${esc(f.model || "a model")} fitted to
+      the readings on its left, the shaded band is the error that model actually
+      made on data it was not shown, and the dashed blue line is a separate monthly
+      fit${d.model ? ` (${esc(d.model)})` : ""}.
+      ${f.extrapolatedBeyondHistory ? `<b>The projection runs ${f.plottedDays} days
+      forward on ${fh.length} days of history</b>, so treat dates late in it as a
+      prompt to plan rather than a measurement.` : ""}` : ""}
     </p>`)
   + (!d.thresholdSeries?.length && d.thresholdSeriesNote
       ? `<p class="hint" style="margin:.5rem 0 1rem">${esc(d.thresholdSeriesNote)}</p>`
