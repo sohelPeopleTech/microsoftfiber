@@ -1387,10 +1387,13 @@ function mapDetail(d) {
 
 PAGES["/map"] = async (view) => {
   const d = await get("/api/map");
-  const r = await get("/api/recommendations?limit=1");
 
-  const breached = d.points.filter((p) => p.status === "breached").length;
-  const gapped = d.points.filter((p) => (p.unavailableFeatures || []).length).length;
+  /* Two states count as at risk: past the safety line, and still inside it but
+     with an order already overdue. They are the red and amber markers. Naming
+     the regions rather than counting them saves a reader hunting the map for
+     which two of eleven a number meant. */
+  const past = d.points.filter((p) => p.status === "breached");
+  const late = d.points.filter((p) => p.status === "overdue" || p.status === "due");
 
   view.innerHTML = howto({
     answers: "<b>Where the fleet stands, on one screen.</b> Every region as a point: how full it is against its own safety line, when it crosses, what is waiting to be bought, and which Fabric workloads will not run there.",
@@ -1410,12 +1413,12 @@ PAGES["/map"] = async (view) => {
   }) + `
 
   <section class="panel"><div class="body map-summary">
-    <span class="t3">${d.points.length} regions · ${num(d.points.reduce((a, p) => a + p.capacities, 0))} capacities · data to ${esc(d.asOf)}</span>
-    <span><b class="${breached ? "t-bad" : ""}">${breached}</b> region(s) past their safety line</span>
-    <span><b>${r.countsByKind.procurement || 0}</b> purchases outstanding,
-      <b class="t-warn">${r.earlyRaises}</b> of them earlier than the usual trigger</span>
-    <span><b class="t-warn">${r.countsByKind.workload_change || 0}</b> capacit(y/ies) worth moving despite having room</span>
-    <span><b>${gapped}</b> region(s) missing at least one Fabric workload</span>
+    <span><b>${d.points.length}</b> regions</span>
+    ${past.length ? `<span><b class="t-bad">${past.length}</b> past their safety line
+      ${past.map((p) => `<a href="#" class="pick t-bad" data-region="${esc(p.region)}">${esc(p.region)}</a>`).join(" ")}</span>` : ""}
+    ${late.length ? `<span><b class="t-warn">${late.length}</b> with an order overdue
+      ${late.map((p) => `<a href="#" class="pick t-warn" data-region="${esc(p.region)}">${esc(p.region)}</a>`).join(" ")}</span>` : ""}
+    ${!past.length && !late.length ? `<span class="t3">Nothing at risk.</span>` : ""}
   </div></section>
 
   <section class="panel">
@@ -1466,6 +1469,11 @@ PAGES["/map"] = async (view) => {
         <p class="error">Could not load the detail for ${esc(region)}.</p></div></section>`;
     }
   }
+
+  // The named regions in the strip select the same way a marker does.
+  view.querySelectorAll("a.pick").forEach((a) => {
+    a.addEventListener("click", (ev) => { ev.preventDefault(); select(a.dataset.region); });
+  });
 
   view.querySelectorAll("circle.mk").forEach((c) => {
     c.addEventListener("click", () => select(c.dataset.region));

@@ -243,6 +243,11 @@ thead th .info { margin-left: .25rem; }
 
 /* ------------------------------------------------------------------ tables */
 
+/* Wide tables scroll inside their panel rather than pushing the page sideways.
+   The class was on every table in the app and had no rule at all, so the
+   ten-column capacity tables overflowed instead of scrolling. */
+.tablewrap { overflow-x: auto; }
+
 table { width: 100%; border-collapse: collapse; font-size: .875rem; }
 thead th {
   text-align: left; font-weight: 600; font-size: .8rem; color: var(--ink-2);
@@ -302,6 +307,20 @@ input[type=range] { accent-color: var(--brand); }
   background: var(--bad-wash); border: 1px solid #f1bfc2; color: var(--bad);
   padding: .7rem 1rem; border-radius: 3px; font-size: .875rem; margin: 0 0 1rem;
 }
+
+/* ------------------------------------------------------- text colour utilities
+
+   These were used across tables, cards and captions from the day the first one
+   was written, and defined nowhere except inside .chart-tip -- so every one of
+   them outside a tooltip rendered in the inherited colour and the "red means
+   act on this" convention was inert wherever it mattered most. Defined here
+   once, globally. The .chart-tip rules stay: that tooltip is dark, and needs
+   lighter variants to be legible on it. */
+
+.t-bad  { color: var(--bad); }
+.t-warn { color: var(--warn); }
+.t-good { color: var(--good); }
+.t3     { color: var(--ink-3); font-weight: 400; }
 
 /* ------------------------------------------------------------------ charts */
 
@@ -449,6 +468,11 @@ h3.sec:first-of-type { margin-top: .4rem; }
 /* What runs here, beside what does not. Available first: a planner choosing
    where to place a workload is asking what the region can do, and the gaps
    answer only half of that. */
+/* Region names in the summary strip: they select on the map, so they need to
+   look pressable rather than like body text that happens to be coloured. */
+.map-summary .pick { text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.map-summary .pick:hover { text-decoration-thickness: 2px; }
+
 .wl-lede { margin: 0 0 .6rem; font-size: .86rem; color: var(--ink-2); max-width: 100ch; }
 .wl-lede.ok {
   padding: .5rem .8rem; border-radius: 3px;
