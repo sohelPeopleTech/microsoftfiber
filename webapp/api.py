@@ -1065,11 +1065,18 @@ def _availability(region: str) -> dict:
         raw = a.get(col)
         return [x for x in str(raw).split(";") if x] if isinstance(raw, str) else []
 
+    affected = _split("WorkloadsPartlyAffected")
+    # "Fabric platform" is where a platform-level feature lands; it is not one
+    # of the nine workloads. Kept apart so the counts on screen reconcile: six
+    # clean workloads plus three with gaps is nine, and lumping the platform in
+    # made that four and the arithmetic unfollowable.
     return {
         "allFabricWorkloads": bool(a["AllFabricWorkloads"]),
         "powerBIOnly": bool(a["PowerBIOnly"]),
+        "workloadCount": 9,
         "workloadsAvailable": _split("WorkloadsAvailable"),
-        "workloadsPartlyAffected": _split("WorkloadsPartlyAffected"),
+        "workloadsPartlyAffected": [w for w in affected if w != "Fabric platform"],
+        "platformAffected": "Fabric platform" in affected,
         "unavailableFeatures": _split("UnavailableFeatures"),
     }
 
@@ -1139,8 +1146,10 @@ def capacity_map():
             "allFabricWorkloads": av["allFabricWorkloads"],
             "powerBIOnly": av["powerBIOnly"],
             "unavailableFeatures": gaps,
+            "workloadCount": av["workloadCount"],
             "workloadsAvailable": av["workloadsAvailable"],
             "workloadsPartlyAffected": av["workloadsPartlyAffected"],
+            "platformAffected": av["platformAffected"],
             "recommendations": {
                 kind: by_region_kind.get((region, kind), 0)
                 for kind in ("procurement", "workload_change", "licensing")
@@ -1267,8 +1276,10 @@ def map_region(region: str):
         "recommendationCounts": {k: len(v) for k, v in by_kind.items()},
         "unavailableFeatures": gaps,
         "allFabricWorkloads": av["allFabricWorkloads"],
+        "workloadCount": av["workloadCount"],
         "workloadsAvailable": av["workloadsAvailable"],
         "workloadsPartlyAffected": av["workloadsPartlyAffected"],
+        "platformAffected": av["platformAffected"],
         "workloadNote": (
             "The nine workloads Microsoft names for Fabric. A workload listed as "
             "affected still runs here -- named features inside it do not."),

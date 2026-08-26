@@ -988,10 +988,16 @@ function mapCard(p) {
             named -- and the panel underneath said it again in full. One of the
             two had to be a summary, and the card is the one that has to fit
             beside a map. */ ""}
-      <div><span>Workloads</span><b>${num((p.workloadsAvailable || []).length)} of 9 fully available
-        <span class="t3">${gaps.length
-          ? `· ${gaps.length} feature(s) missing in ${(p.workloadsPartlyAffected || []).length} area(s)`
-          : "· nothing missing"}</span></b></div>
+      ${/* "6 of 9 fully available" was the first wording and it was wrong in
+            the way that matters: it reads as three workloads being absent, when
+            all nine run and only named features inside three of them do not.
+            Lead with what runs; the gap is the qualifier, not the headline. */ ""}
+      <div><span>Workloads</span><b>${p.powerBIOnly
+        ? `Power BI only <span class="t3">· Fabric workloads do not run here</span>`
+        : `All ${p.workloadCount || 9} run here
+           <span class="t3">${(p.workloadsPartlyAffected || []).length
+             ? `· ${(p.workloadsPartlyAffected || []).length} missing a feature`
+             : "· nothing missing"}</span>`}</b></div>
     </div>
 
     ${(recs.procurement || recs.workload_change || recs.licensing) ? `
@@ -1275,23 +1281,28 @@ function workloadBlock(d) {
   const gaps = d.unavailableFeatures || [];
   if (!ok.length && !gaps.length) return "";
 
+  const total = d.workloadCount || 9;
   return `
+  <p class="wl-lede">${d.powerBIOnly
+    ? `<b>Power BI only.</b> Fabric workloads do not run in this region.`
+    : `<b>All ${total} Fabric workloads run in this region.</b>${part.length
+        ? ` ${num(part.length)} of them ${part.length === 1 ? "is" : "are"} missing a named
+            feature — the workload itself still runs.`
+        : " Nothing Microsoft tracks is missing."}`}</p>
   <div class="workloads">
     <div class="wl ok">
-      <h5>${num(ok.length)} workload(s) fully available</h5>
+      <h5>${num(ok.length)} of ${total} — nothing missing</h5>
       <p>${ok.map((w) => `<span class="wl-chip ok">${esc(w)}</span>`).join("")}</p>
     </div>
     ${part.length ? `
     <div class="wl part">
-      <h5>${num(part.length)} area(s) with a feature missing</h5>
+      <h5>${num(part.length)} of ${total} — runs, but missing a feature</h5>
       <p>${part.map((w) => `<span class="wl-chip part">${esc(w)}</span>`).join("")}</p>
-      <p class="wl-detail"><b>Not available:</b> ${gaps.map(esc).join(", ")}.
-        These areas still run here — the named features inside them do not.</p>
-    </div>` : `
-    <div class="wl ok">
-      <h5>Nothing missing</h5>
-      <p class="wl-detail">Every Fabric workload and feature Microsoft tracks is available in this region.</p>
-    </div>`}
+      <p class="wl-detail"><b>The missing features:</b> ${gaps.map(esc).join(", ")}.${
+        d.platformAffected
+          ? " One of these is platform-level rather than inside a workload."
+          : ""}</p>
+    </div>` : ""}
   </div>
   <p class="wl-src">Microsoft's published regional availability, refreshed from Fabric
     documentation — not a projection and not generated. A region with plenty of headroom is

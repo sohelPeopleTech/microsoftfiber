@@ -164,6 +164,37 @@ def test_affected_is_not_the_same_as_absent():
         [w for w in d["workloadsPartlyAffected"] if w != "Fabric platform"]) == 9
 
 
+def test_the_workload_counts_reconcile_to_nine():
+    """Six clean plus three with gaps must be nine, or the screen is unreadable.
+
+    "Fabric platform" is where a platform-level feature lands and is not one of
+    the nine workloads. Counting it alongside them made southcentralus read as
+    "6 available, 4 affected" -- ten things out of nine -- and there was no way
+    for a reader to make that add up.
+    """
+    for region in ("southcentralus", "eastus", "westus2"):
+        d = api.map_region(region)
+        total = d["workloadCount"]
+        assert total == 9
+        assert len(d["workloadsAvailable"]) + len(d["workloadsPartlyAffected"]) == total, (
+            f"{region}: {len(d['workloadsAvailable'])} + "
+            f"{len(d['workloadsPartlyAffected'])} does not make {total}")
+        assert "Fabric platform" not in d["workloadsPartlyAffected"]
+
+
+def test_a_workload_missing_a_feature_is_not_reported_as_absent():
+    """The distinction the wording exists to protect.
+
+    southcentralus supports every Fabric workload; three of them lack named
+    features. Anything that lets a reader conclude those three do not run is
+    wrong, and "6 of 9 available" -- the first attempt -- did exactly that.
+    """
+    d = api.map_region("southcentralus")
+    assert d["allFabricWorkloads"] is True, (
+        "if this region ever genuinely loses a workload the copy has to change")
+    assert d["workloadsPartlyAffected"], "expected workloads with feature gaps"
+
+
 def test_the_map_marker_carries_both_sides_too():
     by = {p["region"]: p for p in api.capacity_map()["points"]}
     for region in ("southcentralus", "westus2"):

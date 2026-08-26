@@ -449,6 +449,7 @@ h3.sec:first-of-type { margin-top: .4rem; }
 /* What runs here, beside what does not. Available first: a planner choosing
    where to place a workload is asking what the region can do, and the gaps
    answer only half of that. */
+.wl-lede { margin: 0 0 .6rem; font-size: .86rem; color: var(--ink-2); max-width: 100ch; }
 .workloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: .8rem; }
 .wl { padding: .6rem .8rem; border-radius: 3px; border-left: 3px solid var(--rule-strong); }
 .wl.ok { background: var(--good-wash); border-left-color: var(--good); }
