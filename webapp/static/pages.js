@@ -1005,6 +1005,178 @@ function mapCard(p) {
   </div>`;
 }
 
+/* What opens under the map when a marker is picked.
+
+   The card beside the map answers "is this a problem". Review asked for what
+   follows it -- "how many data centres are there, and how they need to change
+   and why, and when are we going to hit the threshold, and what hardware is
+   being used in each and every data centre" -- which is four screens' worth and
+   does not fit a column. It goes full width below the map instead, in the order
+   the questions get asked: when, then what to change and why, then what is
+   actually in each building. */
+
+function whenBlock(d) {
+  const t = d.threshold || {};
+  const late = d.daysUntilOrder != null && d.daysUntilOrder < 0;
+  return `
+  <div class="when">
+    <div class="when-rows">
+      <div><span>Runs at</span><b>${pct(d.utilisation, 1)}</b>
+        <i>against its own ${pct(d.thresholdPct, 1)} safety line</i></div>
+      <div><span>Crosses the line</span>
+        <b class="${t.alreadyBreached ? "t-bad" : ""}">${t.alreadyBreached
+          ? "already past it"
+          : (t.crossingDate ? esc(t.crossingDate) : "not within the year")}</b>
+        <i>${t.crossingEarliest && !t.alreadyBreached
+          ? `somewhere between ${esc(t.crossingEarliest)} and ${esc(t.crossingLatest)}, on ${esc(t.model || "the fitted model")}`
+          : ""}</i></div>
+      <div><span>Completely full</span>
+        <b>${t.saturationDate ? esc(t.saturationDate) : "not within the year"}</b>
+        <i>${t.note ? esc(t.note) : ""}</i></div>
+      <div><span>Order by</span>
+        <b class="${late ? "t-bad" : ""}">${d.orderByDate ? esc(d.orderByDate) : "—"}</b>
+        <i>${d.daysUntilOrder == null ? ""
+          : late ? `${Math.abs(d.daysUntilOrder)} days ago — ${esc(d.skuClass)} takes ${d.leadTimeDays} days to arrive, and the crossing is sooner than that`
+                 : `in ${d.daysUntilOrder} days, allowing ${d.leadTimeDays} days for ${esc(d.skuClass)} to arrive`}</i></div>
+    </div>
+    ${d.reason ? `<p class="when-why">${esc(d.reason)}</p>` : ""}
+  </div>`;
+}
+
+function changeBlock(d) {
+  const kinds = [
+    ["workload_change", "Move the workload", "These have room to spare and still fail more than the fleet. Buying more of the same hardware would not fix them."],
+    ["procurement", "Buy capacity", "Ordered when the time left before the trigger falls below the time the hardware takes to arrive — which is why some are raised while still under their line."],
+    ["licensing", "Change the licence", "A commercial step, not a capacity one. Below F64 every Power BI viewer needs Pro or PPU."],
+  ];
+  const present = kinds.filter(([k]) => (d.recommendations || {})[k]?.length);
+  if (!present.length) return `<p class="empty">Nothing outstanding in this region.</p>`;
+
+  return present.map(([k, label, why]) => {
+    const list = d.recommendations[k];
+
+    /* Grouped by the reason, not printed one card per capacity. Fifteen
+       purchases in a region share one explanation -- the lead time belongs to
+       the hardware class, so every capacity on that class gets the same
+       sentence -- and printing it fifteen times made the panel scroll for a
+       page and hid that they were one finding rather than fifteen. */
+    const groups = new Map();
+    for (const r of list) {
+      if (!groups.has(r.detail)) groups.set(r.detail, []);
+      groups.get(r.detail).push(r);
+    }
+
+    return `
+    <div class="change-group">
+      <h4>${label} <span class="count">${num(list.length)}</span></h4>
+      <p class="group-why">${why}</p>
+      ${[...groups.entries()].map(([detail, rs]) => `
+        <div class="change">
+          ${rs.length === 1
+            ? `<b>${esc(rs[0].headline)}</b>`
+            : `<b>${num(rs.length)} capacities, same reason</b>`}
+          <p>${esc(detail)}</p>
+          ${rs.length > 1 ? `<ul class="targets">${rs.slice(0, 12).map((r) => {
+            const e = r.evidence || {};
+            return `<li>
+              <a href="/capacity/${encodeURIComponent(r.target)}">${esc(r.target)}</a>
+              <span class="t3">${e.fabricSku ? `${esc(e.fabricSku)} · ` : ""}${
+                e.utilisationPct != null ? `${pct(e.utilisationPct, 0)} used` : ""}${
+                e.orderByDate ? ` · order by ${esc(e.orderByDate)}` : ""}${
+                e.moveTo ? ` · to ${esc(e.moveTo.sku_class)}` : ""}</span>
+            </li>`;
+          }).join("")}</ul>
+          ${rs.length > 12 ? `<p class="hint">and ${num(rs.length - 12)} more</p>` : ""}` : ""}
+        </div>`).join("")}
+      ${groups.size > 1 || list.length > 3 ? `<p class="hint">
+        <a href="/recommendations?kind=${k}&region=${encodeURIComponent(d.region)}">Open all ${num(list.length)} with their evidence</a></p>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function sitesBlock(d) {
+  const fleet = d.fleetIncidentsPerNode || 0;
+  return `
+  <div class="tablewrap"><table class="grid caps">
+    <thead><tr>
+      <th>Data centre</th><th>Hardware</th><th class="n">Lead time</th>
+      <th class="n">Capacities</th><th>SKUs</th>
+      <th class="n">Units</th><th class="n">Used</th><th class="n">Free</th>
+      <th class="n">Incidents<br><span class="t3">per node</span></th>
+    </tr></thead>
+    <tbody>${d.sites.map((s) => `
+      <tr>
+        <td><a href="/datacentre/${encodeURIComponent(s.datacentre)}">${esc(s.datacentre)}</a></td>
+        <td class="hw">${esc(s.vendor)} ${esc(s.model)}
+          <span class="t3">${esc(s.skuClass)} · ${esc(s.cpu)} · ${num(s.memoryGB)}GB</span></td>
+        <td class="n">${s.leadTimeDays}d</td>
+        <td class="n">${s.capacities}</td>
+        <td><span class="sku-mix tight">${Object.entries(s.skuMix).map(([sku, n]) =>
+          `<span class="sku-chip${["F64", "F128", "F256", "F512", "F1024", "F2048"].includes(sku)
+            ? " free-ok" : ""}">${esc(sku)}${n > 1 ? `<b>×${n}</b>` : ""}</span>`).join("")}</span></td>
+        <td class="n">${num(s.units)}</td>
+        <td class="n ${s.pastThreshold ? "t-bad" : ""}"
+            title="${s.pastThreshold ? "past" : "inside"} this site's own ${s.thresholdPct}% line">
+          ${pct(s.utilisationPct, 1)}
+          <span class="t3">line ${s.thresholdPct}%</span></td>
+        <td class="n">${num(Math.round(s.freeUnits))}</td>
+        <td class="n ${fleet && s.incidentsPerNode >= fleet * 1.4 ? "t-bad" : ""}"
+            title="${s.incidents} incident(s), ${s.seriousIncidents} Sev1/Sev2, over ${s.nodes} node(s)">
+          ${s.incidents}
+          <span class="t3">${s.incidentsPerNode.toFixed(1)} vs ${fleet.toFixed(1)}</span></td>
+      </tr>`).join("")}</tbody></table></div>
+  <p class="sites-note">
+    Every site here runs its own safety line — ${
+      [...new Set(d.sites.map((s) => s.thresholdPct))].sort((a, b) => a - b).map((t) => `${t}%`).join(", ")
+    } — derived from the thresholds those facilities actually hold, which is why
+    two sites at the same fullness are not equally urgent.
+    ${d.totals.hardwareClasses.length > 1
+      ? `This region runs <b>${d.totals.hardwareClasses.length} hardware classes</b>
+         (${d.totals.hardwareClasses.map(esc).join(", ")}), so a lead time quoted
+         at region level would be wrong for some of these buildings.`
+      : ""}
+  </p>`;
+}
+
+function mapDetail(d) {
+  const t = d.totals;
+  return `
+  <section class="panel detail">
+    <header>
+      <b>${esc(d.region)}</b>
+      <span class="pill ${d.status === "breached" ? "bad"
+        : (d.status === "overdue" || d.status === "due") ? "warn" : "good"}">${esc(d.status || "—")}</span>
+      <span class="hint">${num(t.sites)} data centres · ${num(t.capacities)} capacities ·
+        ${num(t.units)} units · ${num(t.nodes)} nodes</span>
+      <a class="closer" href="#" id="detail-close" aria-label="Close">×</a>
+    </header>
+    <div class="body">
+      ${d.unavailableFeatures.length ? `<p class="gapline">
+        <b>${d.unavailableFeatures.length} Fabric workload(s) do not run here</b> —
+        ${d.unavailableFeatures.map(esc).join(", ")}.
+        <span class="t3">Microsoft's published availability. A region with headroom is
+        still the wrong home for a workload it cannot run.</span></p>` : ""}
+
+      <h3 class="sec">When does it hit the threshold?</h3>
+      ${whenBlock(d)}
+
+      <h3 class="sec">What has to change, and why?</h3>
+      ${changeBlock(d)}
+
+      <h3 class="sec">What is in each data centre?</h3>
+      ${sitesBlock(d)}
+
+      <p class="prov">
+        ${num(t.sitesPastThreshold)} of ${num(t.sites)} sites are past their own line.
+        ${t.freeViewerCapable} of ${num(t.capacities)} capacities are F64 or larger, so Power BI
+        content on the rest needs a Pro or PPU licence per viewer.
+        Capacities, hardware, per-capacity utilisation and incidents are generated;
+        the Fabric SKU ladder, the F64 rule and the workload availability above are real.
+      </p>
+    </div>
+  </section>`;
+}
+
 PAGES["/map"] = async (view) => {
   const d = await get("/api/map");
   const r = await get("/api/recommendations?limit=1");
@@ -1027,9 +1199,10 @@ PAGES["/map"] = async (view) => {
     ],
     next: "Start with the red markers, then the amber ones carrying a move recommendation — those are the ones no utilisation figure would have surfaced.",
     sources: "Azure region coordinates and Microsoft Fabric regional availability are real. Capacities, hardware, per-capacity utilisation and operational incidents are generated — every generated row carries its provenance.",
-  }) + title("Fleet map", `${d.points.length} regions · ${num(d.points.reduce((a, p) => a + p.capacities, 0))} capacities · data to ${esc(d.asOf)}`) + `
+  }) + `
 
   <section class="panel"><div class="body map-summary">
+    <span class="t3">${d.points.length} regions · ${num(d.points.reduce((a, p) => a + p.capacities, 0))} capacities · data to ${esc(d.asOf)}</span>
     <span><b class="${breached ? "t-bad" : ""}">${breached}</b> region(s) past their safety line</span>
     <span><b>${r.countsByKind.procurement || 0}</b> purchases outstanding,
       <b class="t-warn">${r.earlyRaises}</b> of them earlier than the usual trigger</span>
@@ -1051,17 +1224,39 @@ PAGES["/map"] = async (view) => {
         <p class="empty">Select a region on the map.</p>
       </aside>
     </div>
-  </section>`;
+  </section>
+
+  <div id="map-detail"></div>`;
 
   const byRegion = Object.fromEntries(d.points.map((p) => [p.region, p]));
   const side = $("map-side");
 
-  function select(region) {
+  const detail = $("map-detail");
+  let pending = null;
+
+  async function select(region) {
     const p = byRegion[region];
     if (!p) return;
     side.innerHTML = mapCard(p);
     view.querySelectorAll("circle.mk").forEach((c) =>
       c.classList.toggle("on", c.dataset.region === region));
+
+    // The drill-down is a second request, so a slow one must not paint over a
+    // marker picked after it. Only the newest selection is allowed to render.
+    const token = region;
+    pending = token;
+    detail.innerHTML = `<p class="loading">Loading ${esc(region)}…</p>`;
+    try {
+      const d = await get(`/api/map/${encodeURIComponent(region)}`);
+      if (pending !== token) return;
+      detail.innerHTML = mapDetail(d);
+      const close = $("detail-close");
+      if (close) close.onclick = (ev) => { ev.preventDefault(); detail.innerHTML = ""; };
+    } catch (err) {
+      if (pending !== token) return;
+      detail.innerHTML = `<section class="panel"><div class="body">
+        <p class="error">Could not load the detail for ${esc(region)}.</p></div></section>`;
+    }
   }
 
   view.querySelectorAll("circle.mk").forEach((c) => {

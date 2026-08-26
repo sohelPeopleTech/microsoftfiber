@@ -72,6 +72,59 @@ def test_feature_availability_on_the_map_is_the_real_table():
         "westus2 has the full set in Microsoft's table")
 
 
+def test_map_region_answers_the_four_questions_the_marker_raises():
+    """How many buildings, what is in each, when it crosses, what to change.
+
+    Review asked for exactly these when a marker is clicked, and they were four
+    separate tabs before. If any of these keys disappears the drill-down renders
+    a section with nothing under it.
+    """
+    d = api.map_region("centralindia")
+
+    # How many, and what is in each.
+    assert d["totals"]["sites"] == len(d["sites"]) > 1
+    for s in d["sites"]:
+        assert s["vendor"] and s["model"] and s["cpu"], f"{s['datacentre']} has no hardware"
+        assert s["skuMix"], f"{s['datacentre']} lists no SKUs"
+        assert s["units"] > 0 and s["leadTimeDays"] > 0
+        assert 0 <= s["utilisationPct"] <= 100
+        assert s["thresholdPct"] > 0, "a site with no line of its own cannot be judged"
+
+    # When it crosses, and when it is actually full -- different questions.
+    t = d["threshold"]
+    assert "crossingDate" in t and "saturationDate" in t
+    if t["crossingDate"] and t["saturationDate"]:
+        assert t["saturationDate"] > t["crossingDate"], (
+            "running out must come after crossing the safety line, which is a "
+            "margin below full")
+
+    # What to change.
+    assert d["recommendations"], "no advice for a region flagged overdue"
+    assert set(d["recommendationCounts"]) <= {"procurement", "workload_change", "licensing"}
+
+
+def test_map_region_sites_reconcile_with_the_region_total():
+    d = api.map_region("centralindia")
+    assert sum(s["units"] for s in d["sites"]) == d["totals"]["units"]
+    assert sum(s["capacities"] for s in d["sites"]) == d["totals"]["capacities"]
+
+
+def test_map_region_shows_that_sites_differ():
+    """The drill-down exists because buildings are not interchangeable. If they
+    all held the same units on the same hardware there would be nothing to open."""
+    d = api.map_region("centralindia")
+    assert len({s["units"] for s in d["sites"]}) > 1, "every site holds identical units"
+    assert len({s["thresholdPct"] for s in d["sites"]}) > 1, "every site runs one line"
+
+
+def test_unknown_region_on_the_map_is_a_404():
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as e:
+        api.map_region("atlantis")
+    assert e.value.status_code == 404
+
+
 # --------------------------------------------------------------------------
 # capacities
 # --------------------------------------------------------------------------

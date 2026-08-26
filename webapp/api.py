@@ -1128,6 +1128,121 @@ def capacity_map():
     }
 
 
+@app.get("/api/map/{region}")
+def map_region(region: str):
+    """Everything behind one marker, fetched when it is clicked.
+
+    The marker card answers "is this region a problem". This answers the four
+    questions that follow and previously took four tabs: how many buildings are
+    there and what is in each, when does it cross its line, what has to change,
+    and why. Kept out of `/api/map` so the map itself stays a small payload --
+    eleven of these would be most of the fleet.
+    """
+    onto = get_ontology()
+    if region not in set(onto["dim_region"]["Region"]):
+        raise HTTPException(404, f"unknown region {region!r}")
+
+    health = _capacity_health()
+    mine = health[health["Region"] == region]
+    hw = onto["dim_hardware"].set_index("SKUClass")
+    sites_dim = onto["dim_datacentre"]
+    sites_dim = sites_dim[sites_dim["Region"] == region]
+
+    flags = {f["region"]: f for f in _records(
+        module1.project_all(onto, crossing_for=_forecast_crossing))}
+    f = flags.get(region, {})
+    fc = _trim_for_plotting(_clean(
+        _forecast(region, _region_threshold(region)).to_dict()), trim=True)
+
+    # One row per building, with what is actually in it.
+    sites = []
+    for s in sites_dim.itertuples():
+        here = mine[mine["DatacentreId"] == s.DatacentreId]
+        spec = hw.loc[s.SKUClass] if s.SKUClass in hw.index else None
+        used_pct = (float(s.UsedUnits) / float(s.DeployedUnits) * 100
+                    if float(s.DeployedUnits) else 0.0)
+        sites.append({
+            "datacentre": s.DatacentreId,
+            "skuClass": s.SKUClass,
+            "vendor": str(spec["Vendor"]) if spec is not None else "",
+            "model": str(spec["Model"]) if spec is not None else "",
+            "cpu": str(spec["Cpu"]) if spec is not None else "",
+            "memoryGB": int(spec["MemoryGB"]) if spec is not None else None,
+            "coresPerNode": int(spec["CoresPerNode"]) if spec is not None else None,
+            "leadTimeDays": int(s.LeadTimeDays),
+            "capacities": int(len(here)),
+            "skuMix": {sku: int(n) for sku, n in
+                       sorted(here["FabricSku"].value_counts().items())},
+            "units": int(s.DeployedUnits),
+            "usedUnits": round(float(s.UsedUnits), 1),
+            "freeUnits": round(float(s.FreeUnits), 1),
+            "utilisationPct": round(used_pct, 1),
+            "thresholdPct": round(float(s.ThresholdPct), 1),
+            "headroomToThreshold": round(float(s.HeadroomToThreshold), 1),
+            "pastThreshold": bool(used_pct >= float(s.ThresholdPct)),
+            "nodes": int(here["Nodes"].sum()) if len(here) else 0,
+            "incidents": int(here["Incidents"].sum()) if len(here) else 0,
+            "seriousIncidents": int(here["SeriousIncidents"].sum()) if len(here) else 0,
+            "incidentsPerNode": (round(float(here["Incidents"].sum())
+                                       / float(here["Nodes"].sum()), 2)
+                                 if len(here) and here["Nodes"].sum() else 0.0),
+            "freeViewerCapable": int(here["SupportsFreeViewers"].sum()) if len(here) else 0,
+        })
+    sites.sort(key=lambda s: -s["units"])
+
+    recs = [r for r in _recommendations() if r["evidence"].get("region") == region]
+    by_kind: dict[str, list] = {}
+    for r in recs:
+        by_kind.setdefault(r["kind"], []).append(r)
+
+    avail = onto["bridge_region_fabric_availability"].set_index("Region")
+    a = avail.loc[region] if region in avail.index else None
+    gaps = ([s for s in str(a["UnavailableFeatures"]).split(";") if s]
+            if a is not None and isinstance(a["UnavailableFeatures"], str) else [])
+
+    fleet_rate = float(health["FleetRate"].iloc[0]) if len(health) else 0.0
+    return {
+        "region": region,
+        "status": f.get("status"),
+        "utilisation": f.get("current_utilisation_pct"),
+        "thresholdPct": f.get("threshold_pct"),
+        "reason": f.get("reason"),
+        "skuClass": f.get("sku_class"),
+        "leadTimeDays": f.get("lead_time_days"),
+        "daysUntilOrder": f.get("days_until_order"),
+        "orderByDate": f.get("order_by_date"),
+        "threshold": {
+            "crossingDate": fc.get("crossingDate"),
+            "crossingEarliest": fc.get("crossingEarliest"),
+            "crossingLatest": fc.get("crossingLatest"),
+            "saturationDate": fc.get("saturationDate"),
+            "alreadyBreached": bool(fc.get("alreadyBreached")),
+            "model": fc.get("model"),
+            "note": ("Crossing the safety line is not running out. The line is a "
+                     "margin below full; the saturation date is when there is "
+                     "nothing left at all."),
+        },
+        "sites": sites,
+        "totals": {
+            "sites": len(sites),
+            "capacities": int(len(mine)),
+            "units": int(mine["DeployedUnits"].sum()) if len(mine) else 0,
+            "nodes": int(mine["Nodes"].sum()) if len(mine) else 0,
+            "incidents": int(mine["Incidents"].sum()) if len(mine) else 0,
+            "hardwareClasses": sorted(mine["SKUClass"].unique().tolist()) if len(mine) else [],
+            "skuMix": {sku: int(n) for sku, n in
+                       sorted(mine["FabricSku"].value_counts().items())} if len(mine) else {},
+            "sitesPastThreshold": sum(1 for s in sites if s["pastThreshold"]),
+            "freeViewerCapable": int(mine["SupportsFreeViewers"].sum()) if len(mine) else 0,
+        },
+        "fleetIncidentsPerNode": round(fleet_rate, 3),
+        "recommendations": by_kind,
+        "recommendationCounts": {k: len(v) for k, v in by_kind.items()},
+        "unavailableFeatures": gaps,
+        "allFabricWorkloads": bool(a["AllFabricWorkloads"]) if a is not None else None,
+    }
+
+
 @app.get("/api/recommendations")
 def recommendations(kind: Annotated[str | None, Query()] = None,
                     region: Annotated[str | None, Query()] = None,

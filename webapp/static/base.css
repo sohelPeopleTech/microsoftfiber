@@ -429,6 +429,69 @@ table.caps td.n .t3 { display: block; color: var(--ink-3); font-size: .74rem; fo
 .rec .ev { margin: .5rem 0 0; font-size: .78rem; color: var(--ink-3); }
 .rec .ev a { color: var(--ink-2); }
 
+/* ------------------------------------------------- map drill-down */
+
+.panel.detail > header { display: flex; align-items: center; gap: .6rem; }
+.panel.detail > header b { font-size: 1.05rem; }
+.panel.detail > header .hint { margin-left: 0; }
+.panel.detail .closer {
+  margin-left: auto; font-size: 1.3rem; line-height: 1;
+  color: var(--ink-3); text-decoration: none; padding: 0 .3rem;
+}
+.panel.detail .closer:hover { color: var(--ink); text-decoration: none; }
+
+h3.sec {
+  font-size: .95rem; font-weight: 600; margin: 1.6rem 0 .7rem;
+  padding-bottom: .35rem; border-bottom: 1px solid var(--rule);
+}
+h3.sec:first-of-type { margin-top: .4rem; }
+
+.gapline {
+  margin: 0 0 .2rem; padding: .6rem .8rem; font-size: .84rem;
+  background: var(--warn-wash); border-left: 3px solid var(--warn); border-radius: 2px;
+}
+
+/* Four dates in a row, each with the sentence that makes it actionable. A
+   crossing date with no lead time beside it is the thing this page exists to
+   stop being read on its own. */
+.when-rows { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: .9rem; }
+.when-rows > div { display: flex; flex-direction: column; gap: .1rem; }
+.when-rows span { font-size: .78rem; color: var(--ink-2); }
+.when-rows b { font-size: 1.15rem; font-weight: 600; }
+.when-rows i { font-style: normal; font-size: .78rem; color: var(--ink-3); line-height: 1.35; }
+.when-why {
+  margin: .9rem 0 0; padding: .55rem .8rem; font-size: .84rem;
+  background: var(--page); border-left: 3px solid var(--brand); border-radius: 2px;
+}
+
+.change-group { margin: 0 0 1.1rem; }
+.change-group h4 { margin: 0 0 .15rem; font-size: .88rem; font-weight: 600; }
+.change-group h4 .count {
+  display: inline-block; margin-left: .3rem; padding: .05rem .4rem;
+  border-radius: 999px; background: var(--rule); color: var(--ink-2);
+  font-size: .74rem; font-weight: 600;
+}
+.change-group .group-why { margin: 0 0 .55rem; font-size: .8rem; color: var(--ink-3); max-width: 82ch; }
+.change {
+  border-left: 2px solid var(--rule-strong); padding: .1rem 0 .1rem .75rem; margin: 0 0 .6rem;
+}
+.change b { font-size: .86rem; }
+.change p { margin: .2rem 0 0; font-size: .82rem; color: var(--ink-2); max-width: 82ch; line-height: 1.45; }
+/* The capacities a shared reason applies to. Laid out in columns rather than a
+   list: fifteen ids down the page is the repetition this grouping removed. */
+.change .targets {
+  margin: .5rem 0 0; padding: 0; list-style: none;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: .2rem .9rem;
+}
+.change .targets li { font-size: .8rem; }
+.change .targets .t3 { color: var(--ink-3); }
+
+.sku-mix.tight { margin: 0; gap: .2rem; }
+.sku-mix.tight .sku-chip { padding: .05rem .3rem; font-size: .72rem; }
+.sites-note { margin: .7rem 0 0; font-size: .8rem; color: var(--ink-3); max-width: 95ch; }
+.prov { margin: 1.4rem 0 0; padding-top: .7rem; border-top: 1px solid var(--rule);
+        font-size: .78rem; color: var(--ink-3); }
+
 /* --------------------------------------------------------------- assistant */
 
 .chat-fab {
