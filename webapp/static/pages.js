@@ -983,15 +983,16 @@ function mapCard(p) {
         <span class="t3">· ${p.leadTimeDays ?? "—"}-day lead time</span></b></div>
       ${p.coresPending ? `<div><span>Owed</span><b>${num(p.coresPending)} cores pending
         <span class="t3">· ${num(p.failed)} failed requests</span></b></div>` : ""}
+      ${/* One line here, the breakdown below the map. This card was carrying
+            the whole availability block -- both lists and every missing feature
+            named -- and the panel underneath said it again in full. One of the
+            two had to be a summary, and the card is the one that has to fit
+            beside a map. */ ""}
+      <div><span>Workloads</span><b>${num((p.workloadsAvailable || []).length)} of 9 fully available
+        <span class="t3">${gaps.length
+          ? `· ${gaps.length} feature(s) missing in ${(p.workloadsPartlyAffected || []).length} area(s)`
+          : "· nothing missing"}</span></b></div>
     </div>
-
-    ${gaps.length ? `<p class="gaps">
-      <b>${num((p.workloadsAvailable || []).length)} of 9 workloads fully available.</b>
-      ${gaps.length} feature(s) missing across ${(p.workloadsPartlyAffected || []).length} area(s)
-      — ${gaps.map(esc).join(", ")}.
-      <span class="t3">Microsoft's published availability, not a projection.</span></p>`
-      : `<p class="gaps ok">All 9 Fabric workloads available here, with nothing missing.
-         <span class="t3">Microsoft's published availability.</span></p>`}
 
     ${(recs.procurement || recs.workload_change || recs.licensing) ? `
       <p class="acts">

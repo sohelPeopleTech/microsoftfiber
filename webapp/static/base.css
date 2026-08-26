@@ -379,11 +379,6 @@ svg.chart text { font-family: var(--sans); }
 .map-card .rows > div { display: grid; grid-template-columns: 5.5rem 1fr; gap: .5rem; }
 .map-card .rows span { color: var(--ink-2); }
 .map-card .t3, .map-summary .t3 { color: var(--ink-3); font-weight: 400; }
-.map-card .gaps {
-  margin: .9rem 0 0; padding: .55rem .7rem; font-size: .8rem;
-  background: var(--warn-wash); border-left: 3px solid var(--warn); border-radius: 2px;
-}
-.map-card .gaps.ok { background: var(--good-wash); border-left-color: var(--good); }
 .map-card .acts { margin: .8rem 0 0; display: flex; flex-wrap: wrap; gap: .4rem .9rem; font-size: .84rem; }
 .map-card .acts a.warn { color: var(--warn); }
 .map-card .links { margin: .8rem 0 0; font-size: .82rem; }
