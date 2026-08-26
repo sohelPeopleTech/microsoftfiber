@@ -973,9 +973,14 @@ function mapCard(p) {
     <p class="where">${esc(p.displayName)}${p.city ? ` · ${esc(p.city)}` : ""}</p>
 
     <div class="rows">
-      <div><span>How full</span><b>${p.utilisation != null ? pct(p.utilisation, 1) : "—"}
+      ${/* Colour is the state against the region's own line, matching the
+            markers and the pills. Only the rows that can be alarming carry it:
+            a fleet count is never a danger, and colouring it would make the
+            colour mean nothing. */ ""}
+      <div><span>How full</span><b class="${tone === "bad" ? "t-bad" : tone === "warn" ? "t-warn" : ""}">
+        ${p.utilisation != null ? pct(p.utilisation, 1) : "—"}
         <span class="t3">of a ${p.thresholdPct != null ? pct(p.thresholdPct, 1) : "—"} line</span></b></div>
-      <div><span>Crosses</span><b>${p.crossingDate ? esc(p.crossingDate)
+      <div><span>Crosses</span><b class="${p.status === "breached" ? "t-bad" : ""}">${p.crossingDate ? esc(p.crossingDate)
         : (p.status === "breached" ? "already past it" : "not within the year")}</b></div>
       <div><span>Fleet</span><b>${num(p.capacities)} capacities in ${num(p.sites)} sites
         <span class="t3">· ${num(p.units)} units</span></b></div>
@@ -1030,7 +1035,7 @@ function whenBlock(d) {
   return `
   <div class="when">
     <div class="when-rows">
-      <div><span>Runs at</span><b>${pct(d.utilisation, 1)}</b>
+      <div><span>Runs at</span><b class="${d.utilisation >= d.thresholdPct ? "t-bad" : ""}">${pct(d.utilisation, 1)}</b>
         <i>against its own ${pct(d.thresholdPct, 1)} safety line</i></div>
       <div><span>Crosses the line</span>
         <b class="${t.alreadyBreached ? "t-bad" : ""}">${t.alreadyBreached
@@ -1040,7 +1045,7 @@ function whenBlock(d) {
           ? `somewhere between ${esc(t.crossingEarliest)} and ${esc(t.crossingLatest)}, on ${esc(t.model || "the fitted model")}`
           : ""}</i></div>
       <div><span>Completely full</span>
-        <b>${t.saturationDate ? esc(t.saturationDate) : "not within the year"}</b>
+        <b class="${t.saturationDate && t.alreadyBreached ? "t-bad" : ""}">${t.saturationDate ? esc(t.saturationDate) : "not within the year"}</b>
         <i>${t.note ? esc(t.note) : ""}</i></div>
       <div><span>Order by</span>
         <b class="${late ? "t-bad" : ""}">${d.orderByDate ? esc(d.orderByDate) : "—"}</b>
@@ -1074,6 +1079,36 @@ function overdueCell(days) {
   return `in ${num(days)}d`;
 }
 
+/* How urgent a purchase is, as one word the row can be coloured by.
+
+   Split on whether the capacity is past its own line, not on lateness alone.
+   Every purchase in this fleet is overdue -- lead times run to 45 days and the
+   estate sits near its thresholds -- so colouring by lateness painted all 149
+   rows the same red and said nothing.
+
+   What differs, and what the product exists to surface, is that eleven of them
+   are still *under* their line. Those are not out of room; they are overdue
+   only because the hardware takes longer to arrive than the room they have
+   left. That is a different conversation with whoever signs the order, so it
+   gets its own colour. */
+function buyUrgency(e) {
+  const days = e.daysUntilOrder;
+  const late = days != null && days < 0;
+  if (late && !e.raisedEarly) return "danger";
+  if (late && e.raisedEarly) return "early";
+  if (days != null && days <= 14) return "soon";
+  return "later";
+}
+
+const BUY_ACTION = {
+  danger: { pill: "bad", label: "Increase capacity now",
+            why: "past its line and the order is late" },
+  early: { pill: "warn", label: "Order now — still under its line",
+           why: "not out of room; the wait is longer than the room left" },
+  soon: { pill: "wash", label: "Increase capacity", why: "order due shortly" },
+  later: { pill: "", label: "Plan the order", why: "" },
+};
+
 function buyTable(list) {
   // The lead-time argument depends on the hardware, so it is stated per class
   // rather than per capacity -- which is what made it repeat.
@@ -1087,23 +1122,30 @@ function buyTable(list) {
     <thead><tr>
       <th>Capacity</th><th>Data centre</th><th>SKU</th><th>Hardware</th>
       <th class="n">Used</th><th class="n">Its line</th><th class="n">Raise at</th>
-      <th class="n">Order by</th><th class="n">Overdue</th><th class="n">Units</th>
+      <th class="n">Order by</th><th class="n">Overdue</th><th>What to do</th>
     </tr></thead>
     <tbody>${list.map((r) => {
       const e = r.evidence || {};
-      return `<tr>
+      const urg = buyUrgency(e);
+      const act = BUY_ACTION[urg];
+      return `<tr class="row-${urg}">
         <td><a href="/capacity/${encodeURIComponent(r.target)}">${esc(r.target)}</a></td>
         <td>${esc(e.datacentre || "")}</td>
         <td><b>${esc(e.fabricSku || "")}</b></td>
         <td>${esc(e.skuClass || "")}<span class="t3"> · ${e.leadTimeDays}d</span></td>
-        <td class="n ${e.utilisationPct >= 90 ? "t-bad" : ""}">${pct(e.utilisationPct, 0)}</td>
+        ${/* Against its own line, not a fixed 90. A capacity at 88% is fine on
+              a 90% site and past its line on an 85% one, and a constant here
+              coloured the second green. */ ""}
+        <td class="n ${e.utilisationPct >= e.standardTriggerPct ? "t-bad" : ""}">${pct(e.utilisationPct, 0)}</td>
         <td class="n">${pct(e.standardTriggerPct, 0)}</td>
         <td class="n ${e.raisedEarly ? "t-warn" : ""}"
             title="${e.raisedEarly ? "below its line, but the wait is longer than the time left" : ""}">
           ${pct(e.adjustedTriggerPct, 1)}</td>
         <td class="n">${esc(e.orderByDate || "—")}</td>
         <td class="n">${overdueCell(e.daysUntilOrder)}</td>
-        <td class="n">${num(e.unitsToAdd)}</td>
+        <td class="act"><span class="pill ${act.pill}">${act.label}</span>
+          <span class="t3">add ${num(e.unitsToAdd)} units of ${esc(e.skuClass || "")}${
+            act.why ? ` — ${act.why}` : ""}</span></td>
       </tr>`;
     }).join("")}</tbody></table></div>
   <div class="why-notes">
@@ -1231,7 +1273,7 @@ function sitesBlock(d) {
       <th class="n">Incidents<br><span class="t3">per node</span></th>
     </tr></thead>
     <tbody>${d.sites.map((s) => `
-      <tr>
+      <tr class="${s.pastThreshold ? "row-danger" : ""}">
         <td><a href="/datacentre/${encodeURIComponent(s.datacentre)}">${esc(s.datacentre)}</a></td>
         <td class="hw">${esc(s.vendor)} ${esc(s.model)}
           <span class="t3">${esc(s.skuClass)} · ${esc(s.cpu)} · ${num(s.memoryGB)}GB</span></td>
@@ -1276,37 +1318,36 @@ function sitesBlock(d) {
    of them. Affected is not the same as absent, and the block says so rather
    than letting a reader infer the worse reading. */
 function workloadBlock(d) {
-  const ok = d.workloadsAvailable || [];
   const part = d.workloadsPartlyAffected || [];
   const gaps = d.unavailableFeatures || [];
-  if (!ok.length && !gaps.length) return "";
-
   const total = d.workloadCount || 9;
+
+  if (d.powerBIOnly) {
+    return `<p class="wl-lede bad"><b>Power BI only.</b> Fabric workloads do not run in
+      this region at all.</p>`;
+  }
+  // Nothing missing is worth one green line, not a panel listing all nine.
+  if (!gaps.length) {
+    return `<p class="wl-lede ok"><b>All ${total} Fabric workloads run here with nothing
+      missing.</b> <span class="t3">Microsoft's published availability.</span></p>`;
+  }
+
+  /* Only the gaps. Review asked for the available list two turns ago and then
+     asked for it removed: with six of nine listed green it was half the width
+     saying nothing was wrong, and the three that matter had to compete with it.
+     The count still says nine so a reader can infer the rest. */
   return `
-  <p class="wl-lede">${d.powerBIOnly
-    ? `<b>Power BI only.</b> Fabric workloads do not run in this region.`
-    : `<b>All ${total} Fabric workloads run in this region.</b>${part.length
-        ? ` ${num(part.length)} of them ${part.length === 1 ? "is" : "are"} missing a named
-            feature — the workload itself still runs.`
-        : " Nothing Microsoft tracks is missing."}`}</p>
-  <div class="workloads">
-    <div class="wl ok">
-      <h5>${num(ok.length)} of ${total} — nothing missing</h5>
-      <p>${ok.map((w) => `<span class="wl-chip ok">${esc(w)}</span>`).join("")}</p>
-    </div>
-    ${part.length ? `
-    <div class="wl part">
-      <h5>${num(part.length)} of ${total} — runs, but missing a feature</h5>
-      <p>${part.map((w) => `<span class="wl-chip part">${esc(w)}</span>`).join("")}</p>
-      <p class="wl-detail"><b>The missing features:</b> ${gaps.map(esc).join(", ")}.${
-        d.platformAffected
-          ? " One of these is platform-level rather than inside a workload."
-          : ""}</p>
-    </div>` : ""}
+  <div class="wl part standalone">
+    <h5>${num(part.length)} of ${total} workloads are missing a feature</h5>
+    <p>${part.map((w) => `<span class="wl-chip part">${esc(w)}</span>`).join("")}</p>
+    <p class="wl-detail"><b>Not available here:</b> ${gaps.map(esc).join(", ")}.${
+      d.platformAffected ? " One of these is platform-level rather than inside a workload." : ""}
+      These workloads still run — the named features inside them do not, so this is a
+      constraint on <i>what you can build</i> here, not on whether the region works.
+      The other ${num(total - part.length)} have nothing missing.</p>
   </div>
   <p class="wl-src">Microsoft's published regional availability, refreshed from Fabric
-    documentation — not a projection and not generated. A region with plenty of headroom is
-    still the wrong home for a workload it cannot run.</p>`;
+    documentation — not a projection and not generated.</p>`;
 }
 
 function mapDetail(d) {

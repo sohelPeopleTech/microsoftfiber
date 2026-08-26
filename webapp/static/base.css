@@ -450,6 +450,27 @@ h3.sec:first-of-type { margin-top: .4rem; }
    where to place a workload is asking what the region can do, and the gaps
    answer only half of that. */
 .wl-lede { margin: 0 0 .6rem; font-size: .86rem; color: var(--ink-2); max-width: 100ch; }
+.wl-lede.ok {
+  padding: .5rem .8rem; border-radius: 3px;
+  background: var(--good-wash); border-left: 3px solid var(--good); color: var(--ink-2);
+}
+.wl-lede.bad {
+  padding: .5rem .8rem; border-radius: 3px;
+  background: var(--bad-wash); border-left: 3px solid var(--bad); color: var(--ink-2);
+}
+.wl.standalone { max-width: 100ch; }
+
+/* Danger colouring on table rows.
+   A tinted left edge rather than a filled row: a page where half the rows are
+   shaded red reads as decoration, and the point is to make the eye land on the
+   ones that need an order raised today. */
+tr.row-danger > td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+tr.row-soon > td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+tr.row-early > td:first-child { box-shadow: inset 3px 0 0 var(--brand); }
+tr.row-danger > td, tr.row-soon > td { background: rgba(0, 0, 0, .012); }
+
+td.act { white-space: nowrap; }
+td.act .t3 { display: block; margin-top: .15rem; color: var(--ink-3); font-size: .74rem; }
 .workloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: .8rem; }
 .wl { padding: .6rem .8rem; border-radius: 3px; border-left: 3px solid var(--rule-strong); }
 .wl.ok { background: var(--good-wash); border-left-color: var(--good); }

@@ -195,6 +195,31 @@ def test_a_workload_missing_a_feature_is_not_reported_as_absent():
     assert d["workloadsPartlyAffected"], "expected workloads with feature gaps"
 
 
+def test_early_raises_are_distinguishable_from_out_of_room():
+    """The colour on a purchase row has to carry a real distinction.
+
+    Every purchase in this fleet is overdue, so colouring by lateness alone
+    paints all of them the same and says nothing. What differs is whether the
+    capacity is actually out of room: eleven are still under their own line and
+    are late only because the hardware takes longer to arrive than the room
+    they have left. If that population ever empties, the colour is decoration.
+    """
+    recs = api.recommendations(kind="procurement", limit=500)["recommendations"]
+    late = [r for r in recs if (r["evidence"]["daysUntilOrder"] or 0) < 0]
+    assert late, "expected overdue purchases"
+
+    early = [r for r in late if r["evidence"]["raisedEarly"]]
+    out_of_room = [r for r in late if not r["evidence"]["raisedEarly"]]
+    assert early and out_of_room, (
+        "every overdue purchase falls in one bucket -- the row colour is "
+        "carrying no information")
+    for r in early:
+        e = r["evidence"]
+        assert e["utilisationPct"] < e["standardTriggerPct"], (
+            f"{r['target']} is flagged as under its line at "
+            f"{e['utilisationPct']}% against {e['standardTriggerPct']}%")
+
+
 def test_the_map_marker_carries_both_sides_too():
     by = {p["region"]: p for p in api.capacity_map()["points"]}
     for region in ("southcentralus", "westus2"):
