@@ -672,27 +672,28 @@ function capacityRows(d) {
   return `
   <div class="tablewrap"><table class="grid caps">
     <thead><tr>
-      <th>Capacity</th><th>SKU</th><th class="n">CU</th><th class="n">Workspaces</th>
-      <th class="n">Mean CU used</th><th class="n">Peak</th>
-      <th class="n">Throttled</th><th>Worst stage</th><th class="n">Rejected</th>
+      <th>Capacity</th><th>Size</th><th class="n">Wants</th><th class="n">Workspaces</th>
+      <th>What is happening</th><th class="n">How often</th><th class="n">Queries refused</th>
       <th>Free viewers</th>
     </tr></thead>
     <tbody>${d.capacities.map((c) => {
       const bad = c.throttledDays > 0;
       const rejected = c.interactiveRejected + c.backgroundRejected;
+      const wants = c.capacityUnits * c.meanUtilisationPct / 100;
+      const p = bad ? (PROBLEM[c.worstStage] || PROBLEM.none)
+                    : { text: "Fine", tone: "", why: "not delaying or refusing anything" };
       return `<tr class="${bad ? "row-danger" : ""}">
         <td><a href="/capacity/${encodeURIComponent(c.capacityId)}">${esc(c.capacityId)}</a></td>
-        <td><b>${esc(c.fabricSku)}</b></td>
-        <td class="n">${num(c.capacityUnits)}</td>
+        <td><b>${esc(c.fabricSku)}</b><span class="t3">${num(c.capacityUnits)} CU</span></td>
+        <td class="n" title="averaged over ${c.windowDays} days; peaked at ${Math.round(c.peakUtilisationPct)}% of its CU">
+          <b class="${bad ? "t-bad" : ""}">${wants.toFixed(1)} CU</b>
+          <span class="t3">has ${num(c.capacityUnits)}</span></td>
         <td class="n">${num(c.workspaces)}</td>
-        <td class="n ${c.meanUtilisationPct >= 85 ? "t-bad" : ""}"
-            title="mean over the last ${c.windowDays} days">${pct(c.meanUtilisationPct, 0)}</td>
-        <td class="n ${c.peakUtilisationPct > 100 ? "t-warn" : ""}"
-            title="${c.peakUtilisationPct > 100 ? "over 100% is bursting, which Fabric smooths" : ""}">
-          ${pct(c.peakUtilisationPct, 0)}</td>
+        <td title="${esc(p.why)}">${bad
+          ? `<span class="pill ${p.tone}">${p.text}</span>`
+          : `<span class="t3">fine</span>`}</td>
         <td class="n ${bad ? "t-bad" : ""}">${c.throttledDays
-          ? `${c.throttledDays}/${c.windowDays}d` : "—"}</td>
-        <td>${stageCell(c.worstStage, c.worstStageLabel)}</td>
+          ? `${c.throttledDays} of ${c.windowDays} days` : "—"}</td>
         <td class="n ${rejected ? "t-bad" : ""}">${rejected ? num(rejected) : "—"}</td>
         <td>${c.supportsFreeViewers
           ? `<span class="pill good">F64+</span>`
@@ -1253,8 +1254,7 @@ function sitesBlock(d) {
     <thead><tr>
       <th>Data centre</th><th class="n">Capacities</th><th>SKUs</th>
       <th class="n">CU</th><th class="n">Workspaces</th>
-      <th class="n">Mean used</th><th class="n">Peak</th>
-      <th class="n">Throttling</th><th>Worst stage</th><th class="n">Rejected</th>
+      <th>What is happening</th><th class="n">Queries refused</th>
     </tr></thead>
     <tbody>${d.sites.map((s) => {
       const rejected = s.interactiveRejected + s.backgroundRejected;
@@ -1266,20 +1266,26 @@ function sitesBlock(d) {
             ? " free-ok" : ""}">${esc(sku)}${n > 1 ? `<b>×${n}</b>` : ""}</span>`).join("")}</span></td>
         <td class="n">${num(s.capacityUnits)}</td>
         <td class="n">${num(s.workspaces)}</td>
-        <td class="n ${s.meanUtilisationPct >= 85 ? "t-bad" : ""}">${pct(s.meanUtilisationPct, 0)}</td>
-        <td class="n ${s.peakUtilisationPct > 100 ? "t-warn" : ""}">${pct(s.peakUtilisationPct, 0)}</td>
-        <td class="n ${s.throttlingCapacities ? "t-bad" : ""}">${s.throttlingCapacities
-          ? `${s.throttlingCapacities} of ${s.capacities}` : "—"}</td>
-        <td>${stageCell(s.worstStage, s.worstStageLabel)}</td>
+        ${/* No site-level "wants" figure. Averaging demand across a site's
+              capacities produced rows reading "wants 78 CU, has 92" beside
+              "refusing queries", which looks like a contradiction and is not:
+              CU does not pool. An F4 at 120% throttles while the F64 next to it
+              sits idle, and a site average hides exactly that. The count of
+              throttling capacities is the honest figure at this grain. */ ""}
+        <td>${s.throttlingCapacities
+          ? `<span class="pill ${(PROBLEM[s.worstStage] || PROBLEM.none).tone}">${
+              (PROBLEM[s.worstStage] || PROBLEM.none).text}</span>
+             <span class="t3">${s.throttlingCapacities} of ${s.capacities} capacities</span>`
+          : `<span class="t3">nothing throttling</span>`}</td>
         <td class="n ${rejected ? "t-bad" : ""}">${rejected ? num(rejected) : "—"}</td>
       </tr>`;
     }).join("")}</tbody></table></div>
   <p class="sites-note">
-    Capacity Units are what a Fabric SKU provides — an F64 gives 64 CUs, and a day of it is
-    64 × 86,400 CU seconds. <b>Peak above 100% is bursting</b>, which Fabric smooths across
-    future timepoints and is not by itself a fault. What matters is the throttling columns:
-    Fabric absorbs ten minutes of future capacity, then delays interactive jobs, then
-    rejects them, then rejects everything.
+    <b>CU does not pool across capacities.</b> Each Fabric capacity is throttled on its own
+    consumption, so an F4 running hot is delayed or refused even when the F64 beside it is
+    idle — which is why a site can hold plenty of CU in total and still be refusing queries.
+    That is also why the fix is usually to scale the one capacity, or move a workspace off
+    it, rather than to buy more CU for the site.
   </p>`;
 }
 
@@ -2186,17 +2192,21 @@ PAGES["/capacity"] = async (view, id) => {
     `${d.fabricSku} · ${num(d.capacityUnits)} Capacity Units · in ${d.datacentre}, ${d.region}`) + `
 
   <div class="kpis">
-    <div class="kpi"><div class="label">Mean CU used</div>
-      <div class="value${h.meanUtilisationPct >= 85 ? " bad" : ""}">${pct(h.meanUtilisationPct, 0)}</div>
-      <div class="sub">peak ${pct(h.peakUtilisationPct, 0)} over ${h.windowDays} days</div></div>
+    <div class="kpi"><div class="label">Wants, on an average day</div>
+      <div class="value${h.meanUtilisationPct >= 85 ? " bad" : ""}">${
+        (d.capacityUnits * h.meanUtilisationPct / 100).toFixed(1)}<span style="font-size:1.2rem"> CU</span></div>
+      <div class="sub">it has ${num(d.capacityUnits)} · busiest day wanted
+        ${(d.capacityUnits * h.peakUtilisationPct / 100).toFixed(1)} CU</div></div>
     <div class="kpi"><div class="label">Throttled</div>
       <div class="value${bad ? " bad" : ""}">${h.throttledDays}</div>
       <div class="sub">of the last ${h.windowDays} days</div></div>
-    <div class="kpi"><div class="label">Worst stage</div>
+    <div class="kpi"><div class="label">What is happening</div>
       <div class="value${bad ? " bad" : " good"}" style="font-size:1.5rem;line-height:1.5">
-        ${esc(h.worstStageLabel)}</div>
-      <div class="sub">peaked ${num(Math.round(h.peakFutureMinutes))} min into future capacity</div></div>
-    <div class="kpi"><div class="label">Operations refused</div>
+        ${esc((PROBLEM[bad ? h.worstStage : "none"] || PROBLEM.none).text)}</div>
+      <div class="sub">${bad
+        ? `borrowed ${num(Math.round(h.peakFutureMinutes))} minutes of future capacity at its worst`
+        : "never delayed or refused anything"}</div></div>
+    <div class="kpi"><div class="label">Queries refused</div>
       <div class="value${(h.interactiveRejected + h.backgroundRejected) ? " bad" : ""}">
         ${num(h.interactiveRejected + h.backgroundRejected)}</div>
       <div class="sub">${num(h.interactiveRejected)} interactive · ${num(h.backgroundRejected)} background</div></div>
