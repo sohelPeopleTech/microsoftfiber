@@ -1,9 +1,12 @@
-"""The fleet tables: do they reconcile, and do they say what they claim?
+"""The Fabric capacity tables: do they reconcile, and are they Fabric's?
 
-The point of this grain is that a capacity manager can drill from a region to a
-building to a single F-SKU without the numbers changing under them. That only
-holds if the finer tables sum to the coarser ones, so most of what is asserted
-here is arithmetic between levels rather than the content of any one table.
+The point of this grain is that an admin can drill from a region to a building
+to a single capacity without the numbers changing under them. So most of what is
+asserted is arithmetic between levels rather than the content of any one table.
+
+The rest guards the reframe. An earlier model described Azure infrastructure --
+hardware classes, provisioning lead times, node failures. Fabric exposes none of
+it, and there are tests here that fail if any of it comes back.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
-from src.synthdata import fleet  # noqa: E402
+from src.synthdata import fabric, fleet  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -37,59 +40,99 @@ def test_capacity_units_sum_to_region_deployed_units(onto):
     """A region is its capacities, less at most one unbuyable remainder.
 
     Four units is an F2 and there is nothing smaller, so a region holding 2597
-    units can allocate 2596 of them. More drift than that means the split lost
-    capacity somewhere.
+    units can allocate 2596 of them.
     """
     got = onto["dim_capacity"].groupby("Region")["DeployedUnits"].sum()
     want = onto["dim_region"].set_index("Region")["DeployedUnits"]
     for region in want.index:
         gap = float(want[region]) - float(got.get(region, 0))
-        assert 0 <= gap < fleet.SKU_UNITS["F2"], (
-            f"{region}: capacities account for {got.get(region, 0)} of "
-            f"{want[region]} units, a gap of {gap}")
+        assert 0 <= gap < 4, f"{region}: {got.get(region, 0)} of {want[region]}"
 
 
-def test_capacity_usage_sums_to_the_region_reading(onto):
-    """The drill-down cannot disagree with the screen above it.
+def test_cu_available_is_the_sku_times_a_day(onto):
+    """An F64 provides 64 CUs, so a day of it is 64 x 86,400 CU seconds.
 
-    Per-capacity usage is built by distributing the region's used units, so this
-    is exact by construction and not an approximation. The tolerance is for
-    rounding each capacity to one decimal, nothing more.
+    Real arithmetic, not a modelling choice, and everything downstream divides
+    by it -- so if it drifts, every utilisation figure in the product is wrong
+    by the same factor and nothing looks obviously broken.
     """
-    caps = (onto["fact_capacity_usage_daily"]
-            .groupby(["Region", "Date"])["UsedUnits"].sum())
-    region = onto["fact_usage_daily"].set_index(["Region", "Date"])["UsedUnits"]
-    joined = pd.DataFrame({"caps": caps, "region": region}).dropna()
-    assert len(joined) > 1000, "expected a reading per region per day"
-    worst = (joined["caps"] - joined["region"]).abs().max()
-    assert worst < 2.0, f"capacity usage drifts from the region by {worst:.2f} units"
+    cu = onto["fact_capacity_cu_daily"]
+    sample = cu.sample(min(200, len(cu)), random_state=0)
+    for r in sample.itertuples():
+        assert r.CuSecondsAvailable == pytest.approx(r.CapacityUnits * 86_400, rel=1e-6)
 
 
-def test_no_capacity_is_more_than_full(onto):
-    use = onto["fact_capacity_usage_daily"]
-    over = use[use["UsedUnits"] > use["TotalUnits"] + 0.05]
-    assert over.empty, f"{len(over)} readings exceed the capacity's own size"
+def test_utilisation_is_consumed_over_available(onto):
+    cu = onto["fact_capacity_cu_daily"]
+    sample = cu.sample(min(200, len(cu)), random_state=1)
+    for r in sample.itertuples():
+        expected = r.CuSecondsConsumed / r.CuSecondsAvailable * 100
+        assert r.UtilisationPct == pytest.approx(expected, abs=0.05)
+
+
+def test_throttle_stage_matches_the_recorded_overage(onto):
+    """Every row's stage has to follow from its own future-capacity minutes.
+
+    If these ever disagree the screen shows one thing and the policy says
+    another, which is the class of split this project keeps removing.
+    """
+    cu = onto["fact_capacity_cu_daily"]
+    sample = cu.sample(min(500, len(cu)), random_state=2)
+    for r in sample.itertuples():
+        stage, _ = fabric.throttle_stage(r.FutureCapacityMinutes)
+        assert r.ThrottleStage == stage, (
+            f"{r.CapacityId} on {r.Date}: {r.FutureCapacityMinutes} min recorded "
+            f"as {r.ThrottleStage}, policy says {stage}")
+
+
+def test_bursting_is_allowed_and_recorded(onto):
+    """Fabric lets operations use more compute than the SKU provides. A model
+    that clamped at 100% would make smoothing invisible and throttling
+    inexplicable."""
+    cu = onto["fact_capacity_cu_daily"]
+    assert (cu["UtilisationPct"] > 100).any(), "nothing ever bursts"
+    over = cu[cu["UtilisationPct"] > 100]
+    assert (over["FutureCapacityMinutes"] > 0).all(), (
+        "bursting must produce overage, or smoothing is not being modelled")
+
+
+def test_every_throttling_stage_actually_occurs(onto):
+    """Including the worst. A product that describes background rejection but
+    can never show it is asserting something nobody has checked."""
+    seen = set(onto["fact_capacity_cu_daily"]["ThrottleStage"])
+    for stage in ("none", "interactive_delay", "interactive_rejection",
+                  "background_rejection"):
+        assert stage in seen, f"{stage} never occurs anywhere in the fleet"
+
+
+def test_throttling_events_match_the_throttled_days(onto):
+    cu = onto["fact_capacity_cu_daily"]
+    ev = onto["fact_throttling_event"]
+    assert len(ev) == int((cu["ThrottleStage"] != "none").sum())
+
+
+def test_interactive_delay_delays_rather_than_rejects(onto):
+    """The first stage adds 20 seconds; it does not refuse anything. Counting
+    rejections against it would overstate what users actually experienced."""
+    ev = onto["fact_throttling_event"]
+    delay = ev[ev["Stage"] == "interactive_delay"]
+    assert len(delay)
+    assert (delay["InteractiveRejected"] == 0).all()
+    assert (delay["BackgroundRejected"] == 0).all()
+
+
+def test_only_background_rejection_refuses_background_work(onto):
+    ev = onto["fact_throttling_event"]
+    not_bg = ev[ev["Stage"] != "background_rejection"]
+    assert (not_bg["BackgroundRejected"] == 0).all(), (
+        "background work refused before the 24-hour stage")
 
 
 def test_datacentre_units_are_read_from_capacities_not_apportioned(onto):
-    """Sites within a region must stop being ten identical rows.
-
-    The old model split a region's units evenly and copied its hardware down, so
-    every site in a region matched every other. If that ever comes back the
-    drill-down is decorative.
-    """
     sites = onto["dim_datacentre"]
     for region, g in sites.groupby("Region"):
         assert g["DeployedUnits"].nunique() > 1, (
             f"{region}: all {len(g)} sites hold identical units")
-
-
-def test_hardware_class_varies_within_a_region(onto):
-    """The UI has always claimed a region mixes hardware. Now the data agrees."""
-    caps = onto["dim_capacity"]
-    mixed = sum(1 for _, g in caps.groupby("Region") if g["SKUClass"].nunique() > 1)
-    assert mixed == caps["Region"].nunique(), (
-        f"only {mixed} regions run more than one hardware class")
 
 
 # --------------------------------------------------------------------------
@@ -98,38 +141,44 @@ def test_hardware_class_varies_within_a_region(onto):
 
 
 def test_the_sku_ladder_matches_the_admission_module(onto):
-    """Two definitions of the Fabric ladder is one too many.
+    from admission import F_SKUS
 
-    `fleet` cannot import `admission` at generation time without a cycle, so the
-    duplicate is asserted equal here instead of being prevented structurally.
-    """
-    from admission import F_SKUS, UNITS_PER_CU
-
+    assert fabric.F_SKUS == F_SKUS
     assert fleet.F_SKUS == F_SKUS
-    assert fleet.UNITS_PER_CU == UNITS_PER_CU
 
 
 def test_more_than_two_sku_sizes_are_in_use(onto):
-    """The old model derived one SKU label per region and only ever produced
-    F512 and F2048, which is not a fleet anyone buys."""
-    mix = onto["dim_capacity"]["FabricSku"].nunique()
-    assert mix >= 5, f"only {mix} distinct F-SKUs across the whole fleet"
+    assert onto["dim_capacity"]["FabricSku"].nunique() >= 5
 
 
 def test_free_viewer_flag_matches_the_f64_rule(onto):
-    """F64 is where a Free licence can read Power BI. Real, documented, and the
-    reason an F32 next to an F64 is a commercial question."""
-    caps = onto["dim_capacity"]
-    for c in caps.itertuples():
-        assert bool(c.SupportsFreeViewers) == (c.CapacityUnits >= 64), (
-            f"{c.CapacityId}: {c.FabricSku} flagged {c.SupportsFreeViewers}")
+    for c in onto["dim_capacity"].itertuples():
+        assert bool(c.SupportsFreeViewers) == (c.CapacityUnits >= 64)
+
+
+def test_every_workspace_belongs_to_a_real_capacity(onto):
+    caps = set(onto["dim_capacity"]["CapacityId"])
+    assert set(onto["dim_workspace"]["CapacityId"]) <= caps
+
+
+def test_workspace_shares_add_up_on_each_capacity(onto):
+    ws = onto["dim_workspace"]
+    for cap, g in ws.groupby("CapacityId"):
+        assert g["ShareOfCapacityPct"].sum() == pytest.approx(100.0, abs=0.6), cap
+
+
+def test_some_capacities_are_dominated_by_one_workspace(onto):
+    """Otherwise there is never anything to load balance and the
+    recommendation is unreachable in practice."""
+    ws = onto["dim_workspace"]
+    multi = ws.groupby("CapacityId").filter(lambda g: len(g) > 1)
+    dominant = multi.groupby("CapacityId")["ShareOfCapacityPct"].max()
+    assert (dominant >= 55).any()
 
 
 def test_every_generated_row_says_it_is_generated(onto):
-    """The rule the whole project rests on: nothing invented is unmarked."""
-    for name in ("dim_capacity", "fact_capacity_usage_daily", "dim_hardware",
-                 "dim_lead_time_history", "fact_operational_incident",
-                 "fact_partial_grant"):
+    for name in ("dim_capacity", "fact_capacity_cu_daily", "dim_workspace",
+                 "fact_throttling_event", "fact_partial_grant"):
         df = onto[name]
         assert "IsSynthetic" in df.columns, f"{name} has no IsSynthetic column"
         assert df["IsSynthetic"].all(), f"{name} has unmarked rows"
@@ -137,72 +186,45 @@ def test_every_generated_row_says_it_is_generated(onto):
 
 
 def test_the_real_tables_are_marked_real(onto):
-    """The two that are not invented must not be tarred with the same brush."""
     for name in ("dim_region_geography", "bridge_region_fabric_availability"):
         df = onto[name]
-        assert not df["IsSynthetic"].any(), f"{name} is marked synthetic"
+        assert not df["IsSynthetic"].any()
         assert df["Provenance"].str.startswith("REAL").all()
 
 
 def test_every_region_has_real_coordinates(onto):
     geo = onto["dim_region_geography"].set_index("Region")
     for region in onto["dim_region"]["Region"]:
-        assert region in geo.index, f"{region} has no coordinates"
+        assert region in geo.index
         assert -90 <= float(geo.loc[region, "Latitude"]) <= 90
         assert -180 <= float(geo.loc[region, "Longitude"]) <= 180
 
 
-def test_lead_time_history_agrees_with_todays_lead_time(onto):
-    """The history adds the past; it must not restate the present.
-
-    Every order-by date in Module 1 turns on `dim_sku.LeadTimeDays`. If the
-    newest row of the history disagreed with it, two screens would give two
-    answers to when a purchase is due.
-    """
-    current = onto["dim_sku"].set_index("SKUClass")["LeadTimeDays"].to_dict()
-    latest = (onto["dim_lead_time_history"].sort_values("EffectiveFrom")
-              .groupby("SKUClass").tail(1).set_index("SKUClass"))
-    for cls, days in current.items():
-        assert cls in latest.index, f"{cls} has no lead-time history"
-        assert float(latest.loc[cls, "LeadTimeDays"]) == float(days), (
-            f"{cls}: history ends at {latest.loc[cls, 'LeadTimeDays']}d but "
-            f"dim_sku says {days}d")
+# --------------------------------------------------------------------------
+# the reframe
+# --------------------------------------------------------------------------
 
 
-def test_at_least_one_class_has_a_lead_time_that_materially_moved(onto):
-    """Without drift somewhere, "buy earlier than the trigger" is unreachable."""
-    from planning import LEAD_TIME_DRIFT_PCT, lead_time_drift
+def test_the_azure_hardware_model_is_gone(onto):
+    """Hardware classes, lead-time history and node incidents described Azure
+    infrastructure Fabric does not expose. If these tables come back, so has a
+    model that tells a Fabric customer things that are not true of Fabric."""
+    for gone in ("dim_hardware", "dim_lead_time_history",
+                 "fact_operational_incident", "fact_capacity_usage_daily"):
+        assert gone not in onto.tables, f"{gone} is back"
 
-    drift = lead_time_drift(onto["dim_lead_time_history"])
-    moved = [c for c, d in drift.items() if d["changePct"] >= LEAD_TIME_DRIFT_PCT]
-    assert moved, f"no hardware class drifted: {drift}"
 
-
-def test_incidents_are_not_a_restatement_of_utilisation(onto):
-    """Operational incidents have to carry information utilisation does not.
-
-    If incident counts simply tracked fullness they would add nothing, and the
-    whole workload-change recommendation would be a second utilisation ranking
-    wearing a different hat.
-    """
-    from planning import capacity_health
-
-    h = capacity_health(onto["dim_capacity"], onto["fact_operational_incident"],
-                        onto["fact_capacity_usage_daily"])
-    corr = h["UtilisationPct"].corr(h["IncidentRate"])
-    assert abs(corr) < 0.45, (
-        f"incident rate correlates {corr:.2f} with utilisation -- it is not "
-        f"telling you anything new")
+def test_capacities_carry_no_hardware_attributes(onto):
+    caps = onto["dim_capacity"]
+    for column in ("SKUClass", "Vendor", "Model", "NodeCount", "Nodes"):
+        assert column not in caps.columns, f"dim_capacity still carries {column}"
 
 
 def test_partial_grants_are_partial(onto):
     pg = onto["fact_partial_grant"]
-    assert len(pg), "no partial grants generated"
+    assert len(pg)
     assert (pg["PartiallyGrantedUnits"] > 0).all()
-    assert (pg["PartiallyGrantedUnits"] < pg["RequestedUnits"]).all(), (
-        "a partial grant that gave everything is not partial")
-    assert (pg["ShortfallUnits"]
-            == pg["RequestedUnits"] - pg["PartiallyGrantedUnits"]).all()
+    assert (pg["PartiallyGrantedUnits"] < pg["RequestedUnits"]).all()
 
 
 def test_generation_is_deterministic():

@@ -655,46 +655,49 @@ function skuBar(mix, total) {
     <span class="t3">${num(total)} units in ${present.length} SKU size(s)</span></div>`;
 }
 
-function capacityRows(d, region) {
-  const fleet = d.capacities.length ? d.capacities[0].fleetIncidentsPerNode : 0;
+
+/* Throttling stage as the reader should see it. Fabric's own ladder, so the
+   colour follows the policy rather than a judgement made here: a delay is a
+   nuisance, a rejection is users being refused. */
+const STAGE_TONE = {
+  none: "", interactive_delay: "warn",
+  interactive_rejection: "bad", background_rejection: "bad",
+};
+function stageCell(stage, label) {
+  if (!stage || stage === "none") return `<span class="t3">none</span>`;
+  return `<span class="pill ${STAGE_TONE[stage] || ""}">${esc(label || stage)}</span>`;
+}
+
+function capacityRows(d) {
   return `
   <div class="tablewrap"><table class="grid caps">
     <thead><tr>
-      <th>Capacity</th><th>SKU</th><th class="n">CU</th><th class="n">Units</th>
-      <th class="n">Used</th><th>Hardware</th><th class="n">Nodes</th>
-      ${/* Two numbers, so two columns. These were stacked under one heading
-            reading "Incidents per node", which labelled a count as a rate: the
-            large figure was the raw count and the small one the per-node rate,
-            and a reader had no way to know which was which. The fleet
-            comparison also only appeared on capacities that crossed the
-            unhealthy line, so a healthy one showed a bare rate with nothing to
-            judge it against. Both are now always stated. */ ""}
-      <th class="n">Incidents<br><span class="t3">total</span></th>
-      <th class="n" title="The fleet is every capacity in the estate, across all regions — not only the ones on this page. It stays the whole estate when this page is filtered, so a region of uniformly poor hardware cannot compare itself against itself and call it normal.">Per node<br><span class="t3">vs fleet ${fleet.toFixed(1)}</span></th>
+      <th>Capacity</th><th>SKU</th><th class="n">CU</th><th class="n">Workspaces</th>
+      <th class="n">Mean CU used</th><th class="n">Peak</th>
+      <th class="n">Throttled</th><th>Worst stage</th><th class="n">Rejected</th>
       <th>Free viewers</th>
     </tr></thead>
     <tbody>${d.capacities.map((c) => {
-      const hot = c.utilisationPct >= 90;
-      const sick = fleet > 0 && c.rateVsFleet >= 1.4;
-      return `<tr>
-      <td><a href="/capacity/${encodeURIComponent(c.capacityId)}">${esc(c.capacityId)}</a></td>
-      <td><b>${esc(c.fabricSku)}</b></td>
-      <td class="n">${num(c.capacityUnits)}</td>
-      <td class="n">${num(c.deployedUnits)}</td>
-      <td class="n ${hot ? "t-bad" : ""}">${pct(c.utilisationPct, 1)}</td>
-      <td class="hw">${esc(c.vendor)} ${esc(c.model)}
-        <span class="t3">${esc(c.skuClass)} · ${esc(c.cpu)} · ${num(c.memoryGB)}GB</span></td>
-      <td class="n">${c.nodes}</td>
-      <td class="n" title="${c.incidents} incident(s) recorded, ${c.seriousIncidents} of them Sev1 or Sev2, ${c.downtimeHours}h lost">
-        ${c.incidents}
-        <span class="t3">${c.seriousIncidents} sev1/2</span></td>
-      <td class="n ${sick ? "t-bad" : ""}" title="${c.incidents} incident(s) over ${c.nodes} node(s), shrunk toward the fleet rate of ${c.fleetIncidentsPerNode.toFixed(1)}">
-        ${c.incidentsPerNode.toFixed(1)}
-        <span class="t3">${c.rateVsFleet}×${sick ? " — worse" : ""}</span></td>
-      <td>${c.supportsFreeViewers
-        ? `<span class="pill good">F64+</span>`
-        : `<span class="pill wash" title="Below F64: each Power BI viewer needs Pro or PPU">Pro needed</span>`}</td>
-    </tr>`;
+      const bad = c.throttledDays > 0;
+      const rejected = c.interactiveRejected + c.backgroundRejected;
+      return `<tr class="${bad ? "row-danger" : ""}">
+        <td><a href="/capacity/${encodeURIComponent(c.capacityId)}">${esc(c.capacityId)}</a></td>
+        <td><b>${esc(c.fabricSku)}</b></td>
+        <td class="n">${num(c.capacityUnits)}</td>
+        <td class="n">${num(c.workspaces)}</td>
+        <td class="n ${c.meanUtilisationPct >= 85 ? "t-bad" : ""}"
+            title="mean over the last ${c.windowDays} days">${pct(c.meanUtilisationPct, 0)}</td>
+        <td class="n ${c.peakUtilisationPct > 100 ? "t-warn" : ""}"
+            title="${c.peakUtilisationPct > 100 ? "over 100% is bursting, which Fabric smooths" : ""}">
+          ${pct(c.peakUtilisationPct, 0)}</td>
+        <td class="n ${bad ? "t-bad" : ""}">${c.throttledDays
+          ? `${c.throttledDays}/${c.windowDays}d` : "—"}</td>
+        <td>${stageCell(c.worstStage, c.worstStageLabel)}</td>
+        <td class="n ${rejected ? "t-bad" : ""}">${rejected ? num(rejected) : "—"}</td>
+        <td>${c.supportsFreeViewers
+          ? `<span class="pill good">F64+</span>`
+          : `<span class="pill wash" title="Below F64: each Power BI viewer needs Pro or PPU">Pro needed</span>`}</td>
+      </tr>`;
     }).join("")}</tbody></table></div>`;
 }
 
@@ -706,39 +709,26 @@ async function capacityPanel(scope, id) {
     return "";
   }
   if (!d.count) return "";
-  const usedPct = d.totalUnits ? (d.usedUnits / d.totalUnits) * 100 : 0;
 
-  return panel(`Capacities here — ${d.count} on ${Object.keys(d.skuMix).length} SKU size(s)`, `
-    ${skuBar(d.skuMix, d.totalUnits)}
-    ${capacityRows(d, id)}
+  return panel(`Fabric capacities here — ${d.count} on ${Object.keys(d.skuMix).length} SKU size(s)`, `
+    ${skuBar(d.skuMix, d.totalCapacityUnits)}
+    ${capacityRows(d)}
     <p style="background:var(--page);border-left:3px solid var(--brand);
        padding:.7rem .9rem;margin:.9rem 0 0;font-size:.88rem">
-      <b>In plain terms:</b> this holds <b>${num(d.totalUnits)} units</b> across
-      <b>${d.count} Fabric capacit${d.count === 1 ? "y" : "ies"}</b>, of which
-      <b>${num(Math.round(d.usedUnits))}</b> are in use
-      (${pct(usedPct, 1)}) and <b>${num(Math.round(d.freeUnits))}</b> are free.
+      <b>In plain terms:</b> this holds <b>${num(d.totalCapacityUnits)} Capacity Units</b>
+      across <b>${d.count} Fabric capacit${d.count === 1 ? "y" : "ies"}</b>, using
+      <b>${pct(d.meanUtilisationPct, 0)}</b> of them on average.
+      ${d.throttling
+        ? `<b class="t-bad">${num(d.throttling)}</b> of them throttled at some point —
+           Fabric absorbs ten minutes of overage, then delays interactive jobs by
+           20 seconds, then rejects them at an hour, then rejects everything at 24.`
+        : `None of them throttled. Peaks above 100% are <i>bursting</i>, which Fabric
+           smooths over future timepoints and is not by itself a fault.`}
       ${d.freeViewerCapable
-        ? `${d.freeViewerCapable} of them ${d.freeViewerCapable === 1 ? "is" : "are"}
-           F64 or larger, so Power BI content on ${d.freeViewerCapable === 1 ? "it" : "them"}
-           can be read on a free licence.`
-        : `None is F64 or larger, so every user viewing Power BI content on any of
-           these needs a Pro or PPU licence — a commercial cost that no utilisation
-           figure shows.`}
-      <b>Incidents</b> is the raw count; <b>per node</b> divides it by the
-      machines underneath, which is the only way to compare a one-node F4 with a
-      two-node F64 — the larger one will always see more trouble simply for
-      being larger. That rate is then shrunk toward the fleet average in
-      proportion to how many nodes stand behind it, so a one-node capacity
-      having a bad month does not outrank a whole estate.
-      ${d.fleet ? `<b>The fleet</b> means every capacity everywhere —
-      ${num(d.fleet.capacities)} of them across ${num(d.fleet.sites)} sites in
-      ${num(d.fleet.regions)} regions, ${num(d.fleet.incidents)} incidents over
-      ${num(d.fleet.nodes)} nodes, so <b>${d.fleet.incidentsPerNode}</b> per node
-      is ordinary. It stays the whole estate even when this page shows one site,
-      because a region of uniformly poor hardware compared against itself would
-      report that everything was fine.` : ""}
-      Anything at 1.4× or worse is where moving the workload starts to beat
-      buying more of the same hardware.
+        ? `${d.freeViewerCapable} ${d.freeViewerCapable === 1 ? "is" : "are"} F64 or larger,
+           so Power BI content on ${d.freeViewerCapable === 1 ? "it" : "them"} reads on a free licence.`
+        : `None is F64 or larger, so every user viewing Power BI content here needs a
+           Pro or PPU licence — a cost no utilisation figure shows.`}
     </p>
     <p style="color:var(--ink-3);font-size:.78rem;margin:.5rem 0 0">${esc(d.note)}</p>`);
 }
@@ -933,7 +923,7 @@ function fleetMap(d) {
   // Marker area, not radius, tracks deployed units: doubling the radius of a
   // circle quadruples what the eye reads, so sizing by radius would overstate
   // the big regions by the square.
-  const maxUnits = Math.max(...pts.map((p) => p.units), 1);
+  const maxUnits = Math.max(...pts.map((p) => p.capacityUnits), 1);
   const radius = (u) => 1.6 + 2.9 * Math.sqrt(u / maxUnits);
 
   return `<svg class="chart fleet-map" viewBox="${W.x} ${W.y - pad} ${W.w} ${W.h + pad * 2}"
@@ -942,7 +932,7 @@ function fleetMap(d) {
     <path d="${WORLD_PATH}" fill="var(--map-land)" stroke="var(--map-edge)" stroke-width=".25"/>
     ${pts.map((p) => {
       const tone = mapTone(p);
-      const r = radius(p.units);
+      const r = radius(p.capacityUnits);
       return `
       ${p.moved ? `<line x1="${(p.lon + 180).toFixed(2)}" y1="${(90 - p.lat).toFixed(2)}"
         x2="${p.mx.toFixed(2)}" y2="${p.my.toFixed(2)}"
@@ -983,9 +973,9 @@ function mapCard(p) {
       <div><span>Crosses</span><b class="${p.status === "breached" ? "t-bad" : ""}">${p.crossingDate ? esc(p.crossingDate)
         : (p.status === "breached" ? "already past it" : "not within the year")}</b></div>
       <div><span>Fleet</span><b>${num(p.capacities)} capacities in ${num(p.sites)} sites
-        <span class="t3">· ${num(p.units)} units</span></b></div>
-      <div><span>Hardware</span><b>${esc(p.skuClass || "—")}
-        <span class="t3">· ${p.leadTimeDays ?? "—"}-day lead time</span></b></div>
+        <span class="t3">· ${num(p.capacityUnits)} CU</span></b></div>
+      <div><span>Capacity</span><b>${num(p.capacityUnits || 0)} CU
+        <span class="t3">across ${num(p.capacities)} Fabric capacities</span></b></div>
       ${p.coresPending ? `<div><span>Owed</span><b>${num(p.coresPending)} cores pending
         <span class="t3">· ${num(p.failed)} failed requests</span></b></div>` : ""}
       ${/* One line here, the breakdown below the map. This card was carrying
@@ -1005,10 +995,11 @@ function mapCard(p) {
              : "· nothing missing"}</span>`}</b></div>
     </div>
 
-    ${(recs.procurement || recs.workload_change || recs.licensing) ? `
+    ${(recs.scale_up || recs.load_balance || recs.scale_down || recs.licensing) ? `
       <p class="acts">
-        ${recs.procurement ? `<a href="/recommendations?region=${encodeURIComponent(p.region)}&kind=procurement">${recs.procurement} to buy</a>` : ""}
-        ${recs.workload_change ? `<a href="/recommendations?region=${encodeURIComponent(p.region)}&kind=workload_change" class="warn">${recs.workload_change} to move</a>` : ""}
+        ${recs.scale_up ? `<a href="/recommendations?region=${encodeURIComponent(p.region)}&kind=scale_up" class="warn">${recs.scale_up} to scale up</a>` : ""}
+        ${recs.load_balance ? `<a href="/recommendations?region=${encodeURIComponent(p.region)}&kind=load_balance" class="warn">${recs.load_balance} to rebalance</a>` : ""}
+        ${recs.scale_down ? `<a href="/recommendations?region=${encodeURIComponent(p.region)}&kind=scale_down">${recs.scale_down} to scale down</a>` : ""}
         ${recs.licensing ? `<a href="/recommendations?region=${encodeURIComponent(p.region)}&kind=licensing">${recs.licensing} licensing</a>` : ""}
       </p>` : `<p class="acts t3">Nothing outstanding here.</p>`}
 
@@ -1031,7 +1022,6 @@ function mapCard(p) {
 
 function whenBlock(d) {
   const t = d.threshold || {};
-  const late = d.daysUntilOrder != null && d.daysUntilOrder < 0;
   return `
   <div class="when">
     <div class="when-rows">
@@ -1047,11 +1037,15 @@ function whenBlock(d) {
       <div><span>Completely full</span>
         <b class="${t.saturationDate && t.alreadyBreached ? "t-bad" : ""}">${t.saturationDate ? esc(t.saturationDate) : "not within the year"}</b>
         <i>${t.note ? esc(t.note) : ""}</i></div>
-      <div><span>Order by</span>
-        <b class="${late ? "t-bad" : ""}">${d.orderByDate ? esc(d.orderByDate) : "—"}</b>
-        <i>${d.daysUntilOrder == null ? ""
-          : late ? `${Math.abs(d.daysUntilOrder)} days ago — ${esc(d.skuClass)} takes ${d.leadTimeDays} days to arrive, and the crossing is sooner than that`
-                 : `in ${d.daysUntilOrder} days, allowing ${d.leadTimeDays} days for ${esc(d.skuClass)} to arrive`}</i></div>
+      ${/* No order-by date. Scaling an F SKU takes effect immediately, so the
+            question is not when to raise an order but whether the capacities in
+            this region are already throttling. */ ""}
+      <div><span>Capacities throttling</span>
+        <b class="${d.totals.throttlingCapacities ? "t-bad" : ""}">${num(d.totals.throttlingCapacities)}
+          <span class="t3">of ${num(d.totals.capacities)}</span></b>
+        <i>${d.totals.throttlingCapacities
+          ? `${num(d.totals.interactiveRejected + d.totals.backgroundRejected)} operations refused. Scaling an F SKU is immediate — there is nothing to order.`
+          : "None is delaying or refusing operations."}</i></div>
     </div>
     ${d.reason ? `<p class="when-why">${esc(d.reason)}</p>` : ""}
   </div>`;
@@ -1072,96 +1066,48 @@ function whenBlock(d) {
    on -- for a purchase that is the hardware class, because the lead time is a
    property of the hardware and not of the capacity. */
 
-function overdueCell(days) {
-  if (days == null) return "—";
-  if (days < 0) return `<b class="t-bad">${num(Math.abs(days))}d late</b>`;
-  if (days === 0) return `<b class="t-warn">today</b>`;
-  return `in ${num(days)}d`;
-}
-
-/* How urgent a purchase is, as one word the row can be coloured by.
-
-   Split on whether the capacity is past its own line, not on lateness alone.
-   Every purchase in this fleet is overdue -- lead times run to 45 days and the
-   estate sits near its thresholds -- so colouring by lateness painted all 149
-   rows the same red and said nothing.
-
-   What differs, and what the product exists to surface, is that eleven of them
-   are still *under* their line. Those are not out of room; they are overdue
-   only because the hardware takes longer to arrive than the room they have
-   left. That is a different conversation with whoever signs the order, so it
-   gets its own colour. */
-function buyUrgency(e) {
-  const days = e.daysUntilOrder;
-  const late = days != null && days < 0;
-  if (late && !e.raisedEarly) return "danger";
-  if (late && e.raisedEarly) return "early";
-  if (days != null && days <= 14) return "soon";
-  return "later";
-}
-
-const BUY_ACTION = {
-  danger: { pill: "bad", label: "Increase capacity now",
-            why: "past its line and the order is late" },
-  early: { pill: "warn", label: "Order now — still under its line",
-           why: "not out of room; the wait is longer than the room left" },
-  soon: { pill: "wash", label: "Increase capacity", why: "order due shortly" },
-  later: { pill: "", label: "Plan the order", why: "" },
-};
-
-function buyTable(list) {
-  // The lead-time argument depends on the hardware, so it is stated per class
-  // rather than per capacity -- which is what made it repeat.
-  const classes = new Map();
-  for (const r of list) {
-    const e = r.evidence || {};
-    if (!classes.has(e.skuClass)) classes.set(e.skuClass, e);
-  }
+function scaleTable(list, up) {
   return `
   <div class="tablewrap"><table class="grid caps">
     <thead><tr>
-      <th>Capacity</th><th>Data centre</th><th>SKU</th><th>Hardware</th>
-      <th class="n">Used</th><th class="n">Its line</th><th class="n">Raise at</th>
-      <th class="n">Order by</th><th class="n">Overdue</th><th>What to do</th>
+      <th>Capacity</th><th>Data centre</th><th>SKU</th><th class="n">CU</th>
+      <th class="n">Mean used</th><th class="n">Peak</th>
+      ${up ? `<th class="n">Throttled</th><th>Worst stage</th><th class="n">Rejected</th>` : ""}
+      <th>What to do</th>
     </tr></thead>
     <tbody>${list.map((r) => {
       const e = r.evidence || {};
-      const urg = buyUrgency(e);
-      const act = BUY_ACTION[urg];
-      return `<tr class="row-${urg}">
+      const rejected = (e.interactiveRejected || 0) + (e.backgroundRejected || 0);
+      return `<tr class="${up && e.isThrottling ? "row-danger" : up ? "row-soon" : ""}">
         <td><a href="/capacity/${encodeURIComponent(r.target)}">${esc(r.target)}</a></td>
         <td>${esc(e.datacentre || "")}</td>
-        <td><b>${esc(e.fabricSku || "")}</b></td>
-        <td>${esc(e.skuClass || "")}<span class="t3"> · ${e.leadTimeDays}d</span></td>
-        ${/* Against its own line, not a fixed 90. A capacity at 88% is fine on
-              a 90% site and past its line on an 85% one, and a constant here
-              coloured the second green. */ ""}
-        <td class="n ${e.utilisationPct >= e.standardTriggerPct ? "t-bad" : ""}">${pct(e.utilisationPct, 0)}</td>
-        <td class="n">${pct(e.standardTriggerPct, 0)}</td>
-        <td class="n ${e.raisedEarly ? "t-warn" : ""}"
-            title="${e.raisedEarly ? "below its line, but the wait is longer than the time left" : ""}">
-          ${pct(e.adjustedTriggerPct, 1)}</td>
-        <td class="n">${esc(e.orderByDate || "—")}</td>
-        <td class="n">${overdueCell(e.daysUntilOrder)}</td>
-        <td class="act"><span class="pill ${act.pill}">${act.label}</span>
-          <span class="t3">add ${num(e.unitsToAdd)} units of ${esc(e.skuClass || "")}${
-            act.why ? ` — ${act.why}` : ""}</span></td>
+        <td><b>${esc(e.fabricSku)}</b></td>
+        <td class="n">${num(e.capacityUnits)}</td>
+        <td class="n ${e.meanUtilisationPct >= 85 ? "t-bad" : ""}">${pct(e.meanUtilisationPct, 0)}</td>
+        <td class="n ${e.peakUtilisationPct > 100 ? "t-warn" : ""}">${pct(e.peakUtilisationPct, 0)}</td>
+        ${up ? `
+          <td class="n ${e.throttledDays ? "t-bad" : ""}">${e.throttledDays
+            ? `${e.throttledDays}/${e.windowDays}d` : "—"}</td>
+          <td>${stageCell(e.worstStage, e.worstStageLabel)}</td>
+          <td class="n ${rejected ? "t-bad" : ""}">${rejected ? num(rejected) : "—"}</td>` : ""}
+        <td class="act"><span class="pill ${up ? (e.isThrottling ? "bad" : "wash") : ""}">
+          ${up ? `Scale to ${esc(e.scaleTo)}` : `Scale down to ${esc(e.scaleTo)}`}</span>
+          <span class="t3">${num(e.capacityUnits)} → ${num(e.scaleToUnits)} CU${
+            up ? " · takes effect immediately" : " · saves the unused half"}${
+            e.crossesSlowBoundary ? " · crosses the F256/F512 boundary" : ""}${
+            e.losesFreeViewers ? " · drops below F64, viewers would need Pro" : ""}</span></td>
       </tr>`;
     }).join("")}</tbody></table></div>
   <div class="why-notes">
-    ${[...classes.values()].map((e) => `
-      <p><b>${esc(e.skuClass)}</b> — ${e.leadTimeDays} days to provision${
-        e.supplier ? ` from ${esc(e.supplier)}` : ""}.
-      ${e.leadTimeDrifted
-        ? `That has gone from <b>${num(e.leadTimeWasDays)} to ${num(e.leadTimeDays)} days</b>
-           (${e.leadTimeChangePct > 0 ? "+" : ""}${e.leadTimeChangePct}%), so the raise-at figure
-           is several points lower than it used to be and waiting for the old one now lands the
-           order about ${num(Math.round(e.leadTimeDays - e.leadTimeWasDays))} days late.`
-        : `That has not moved materially, so the raise-at figure is simply the line less
-           whatever the region grows in ${e.leadTimeDays} days.`}</p>`).join("")}
-    <p class="t3">"Raise at" is the utilisation at which the order must go in: the line, less
-      whatever the region grows while the hardware is in transit. A row below its line with an
-      order already overdue is the case a threshold alone cannot make.</p>
+    ${up ? `<p>Fabric absorbs <b>ten minutes</b> of future capacity without throttling. Past
+      that it delays interactive jobs by 20 seconds, rejects them at an hour, and rejects
+      everything at 24 hours. Scaling an F SKU takes effect immediately.</p>
+      <p class="t3">Peaks above 100% are bursting, which Fabric smooths over future
+      timepoints. A peak alone is not a problem; days spent throttling are.</p>`
+      : `<p>F SKUs bill per second whether or not anything runs on them, so a capacity using
+      a fraction of its CUs is a standing cost. Nothing that throttled in the window appears
+      here, however idle its average looks — a capacity quiet six days a week and overloaded
+      on the seventh is sized for the seventh.</p>`}
   </div>`;
 }
 
@@ -1169,37 +1115,30 @@ function moveTable(list) {
   return `
   <div class="tablewrap"><table class="grid caps">
     <thead><tr>
-      <th>Capacity</th><th>Data centre</th><th>SKU</th><th>On</th>
-      <th class="n">Used</th><th class="n">Incidents</th><th class="n">Sev1/2</th>
-      <th class="n">Lost</th><th class="n">Per node<br><span class="t3">vs fleet</span></th>
-      <th>Move to</th><th class="n">Fewer<br><span class="t3">incidents</span></th>
+      <th>Capacity</th><th>SKU</th><th class="n">CU</th><th class="n">Throttled</th>
+      <th>Worst stage</th><th>Workspace to move</th><th class="n">Its share</th><th>Move to</th>
     </tr></thead>
     <tbody>${list.map((r) => {
       const e = r.evidence || {};
-      const to = e.moveTo || {};
-      return `<tr>
+      return `<tr class="row-danger">
         <td><a href="/capacity/${encodeURIComponent(r.target)}">${esc(r.target)}</a></td>
-        <td>${esc(e.datacentre || "")}</td>
-        <td><b>${esc(e.fabricSku || "")}</b></td>
-        <td>${esc(e.skuClass || "")}</td>
-        <td class="n">${pct(e.utilisationPct, 0)}</td>
-        <td class="n">${num(e.incidents)}</td>
-        <td class="n">${num(e.seriousIncidents)}</td>
-        <td class="n">${e.downtimeHours}h</td>
-        <td class="n t-bad" title="fleet runs ${e.fleetIncidentsPerNode}">
-          ${Number(e.incidentsPerNode).toFixed(1)}<span class="t3">${e.rateVsFleet}×</span></td>
-        <td>${esc(to.sku_class || "")}
-          <span class="t3">${esc(to.vendor || "")} ${esc(to.model || "")} · ${num(to.memoryGB)}GB</span></td>
-        <td class="n">${to.expectedReductionPct != null ? `${to.expectedReductionPct}%` : "—"}</td>
+        <td><b>${esc(e.fabricSku)}</b></td>
+        <td class="n">${num(e.capacityUnits)}</td>
+        <td class="n t-bad">${e.throttledDays}/${e.windowDays}d</td>
+        <td>${stageCell(e.worstStage, e.worstStageLabel)}</td>
+        <td><b>${esc(e.workspace)}</b><span class="t3">${esc(e.workspaceWorkload)}</span></td>
+        <td class="n t-bad">${pct(e.workspaceSharePct, 0)}</td>
+        <td><a href="/capacity/${encodeURIComponent(e.moveTo)}">${esc(e.moveTo)}</a>
+          <span class="t3">${esc(e.moveToSku)} · at ${pct(e.moveToUtilisationPct, 0)}</span></td>
       </tr>`;
     }).join("")}</tbody></table></div>
   <div class="why-notes">
-    <p>Every row here has <b>room to spare</b> — none is near its line. What is wrong is the
-      hardware under it, so adding more of the same would not fix it. "Per node" divides incidents
-      by the machines underneath and is shrunk toward the fleet average, so a one-node capacity
-      having a bad month cannot outrank an estate.</p>
-    <p class="t3">The replacement is never smaller on memory: trading an incident problem for a
-      capability problem is not a fix.</p>
+    <p>Where one workspace is most of what a capacity consumes, moving it is the cheaper
+      answer: it costs nothing per second, where the next SKU up bills continuously. Every
+      destination here is in the same region, is not throttling, and has room for what
+      arrives.</p>
+    <p class="t3">Capacities hosting a single workspace are excluded — moving it would empty
+      the capacity, which is a consolidation decision, not a rebalancing one.</p>
   </div>`;
 }
 
@@ -1209,36 +1148,32 @@ function licenceTable(list) {
   <div class="tablewrap"><table class="grid caps">
     <thead><tr>
       <th>Capacity</th><th>Data centre</th><th>SKU</th><th class="n">CU now</th>
-      <th>Step to</th><th class="n">CU after</th><th>What it changes</th>
+      <th>Step to</th><th class="n">CU after</th><th class="n">Power BI workspaces</th>
     </tr></thead>
     <tbody>${list.map((r) => {
       const e = r.evidence || {};
       return `<tr>
         <td><a href="/capacity/${encodeURIComponent(r.target)}">${esc(r.target)}</a></td>
         <td>${esc(e.datacentre || "")}</td>
-        <td><b>${esc(e.fabricSku || "")}</b></td>
+        <td><b>${esc(e.fabricSku)}</b></td>
         <td class="n">${num(e.capacityUnits)}</td>
-        <td><b>${esc(e.stepTo || "")}</b></td>
+        <td><b>${esc(e.stepTo)}</b></td>
         <td class="n">${num(e.stepToUnits)}</td>
-        <td>Power BI viewers stop needing a paid licence</td>
+        <td class="n">${num(e.powerBiWorkspaces)} of ${num(e.workspaces)}</td>
       </tr>`;
     }).join("")}</tbody></table></div>
   <div class="why-notes">
-    <p>${esc(e0.rule || "")}
-      ${e0.subscriptionsInRegion
-        ? ` ${num(e0.subscriptionsInRegion)} subscriptions have raised capacity requests in this
-            region, so the viewer population is not nil.`
-        : ""}</p>
+    <p>${esc(e0.rule || "")}</p>
     <p class="t3">Real and documented — <a href="${esc(e0.source || "")}">Microsoft Fabric
-      licensing</a>. This is a commercial decision, not a capacity one: none of these capacities
-      is short of compute.</p>
+      licensing</a>. A commercial decision, not a capacity one: none of these is short of CU.</p>
   </div>`;
 }
 
 function changeBlock(d) {
   const kinds = [
-    ["workload_change", "Move the workload", moveTable],
-    ["procurement", "Buy capacity", buyTable],
+    ["scale_up", "Scale up", (l) => scaleTable(l, true)],
+    ["load_balance", "Move a workspace", moveTable],
+    ["scale_down", "Scale down", (l) => scaleTable(l, false)],
     ["licensing", "Change the licence", licenceTable],
   ];
   const present = kinds.filter(([k]) => (d.recommendations || {})[k]?.length);
@@ -1246,8 +1181,6 @@ function changeBlock(d) {
 
   return present.map(([k, label, render]) => {
     const list = d.recommendations[k];
-    // Twenty rows is a table; sixty is a report. The rest are one click away
-    // and are, by construction, the least urgent.
     const show = list.slice(0, 20);
     return `
     <div class="change-group">
@@ -1263,60 +1196,43 @@ function changeBlock(d) {
 }
 
 function sitesBlock(d) {
-  const fleet = d.fleetIncidentsPerNode || 0;
   return `
   <div class="tablewrap"><table class="grid caps">
     <thead><tr>
-      <th>Data centre</th><th>Hardware</th><th class="n">Lead time</th>
-      <th class="n">Capacities</th><th>SKUs</th>
-      <th class="n">Units</th><th class="n">Used</th><th class="n">Free</th>
-      <th class="n">Incidents<br><span class="t3">per node</span></th>
+      <th>Data centre</th><th class="n">Capacities</th><th>SKUs</th>
+      <th class="n">CU</th><th class="n">Workspaces</th>
+      <th class="n">Mean used</th><th class="n">Peak</th>
+      <th class="n">Throttling</th><th>Worst stage</th><th class="n">Rejected</th>
     </tr></thead>
-    <tbody>${d.sites.map((s) => `
-      <tr class="${s.pastThreshold ? "row-danger" : ""}">
+    <tbody>${d.sites.map((s) => {
+      const rejected = s.interactiveRejected + s.backgroundRejected;
+      return `<tr class="${s.throttlingCapacities ? "row-danger" : ""}">
         <td><a href="/datacentre/${encodeURIComponent(s.datacentre)}">${esc(s.datacentre)}</a></td>
-        <td class="hw">${esc(s.vendor)} ${esc(s.model)}
-          <span class="t3">${esc(s.skuClass)} · ${esc(s.cpu)} · ${num(s.memoryGB)}GB</span></td>
-        <td class="n">${s.leadTimeDays}d</td>
         <td class="n">${s.capacities}</td>
         <td><span class="sku-mix tight">${Object.entries(s.skuMix).map(([sku, n]) =>
-          `<span class="sku-chip${["F64", "F128", "F256", "F512", "F1024", "F2048"].includes(sku)
+          `<span class="sku-chip${["F64","F128","F256","F512","F1024","F2048"].includes(sku)
             ? " free-ok" : ""}">${esc(sku)}${n > 1 ? `<b>×${n}</b>` : ""}</span>`).join("")}</span></td>
-        <td class="n">${num(s.units)}</td>
-        <td class="n ${s.pastThreshold ? "t-bad" : ""}"
-            title="${s.pastThreshold ? "past" : "inside"} this site's own ${s.thresholdPct}% line">
-          ${pct(s.utilisationPct, 1)}
-          <span class="t3">line ${s.thresholdPct}%</span></td>
-        <td class="n">${num(Math.round(s.freeUnits))}</td>
-        <td class="n ${fleet && s.incidentsPerNode >= fleet * 1.4 ? "t-bad" : ""}"
-            title="${s.incidents} incident(s), ${s.seriousIncidents} Sev1/Sev2, over ${s.nodes} node(s)">
-          ${s.incidents}
-          <span class="t3">${s.incidentsPerNode.toFixed(1)} vs ${fleet.toFixed(1)}</span></td>
-      </tr>`).join("")}</tbody></table></div>
+        <td class="n">${num(s.capacityUnits)}</td>
+        <td class="n">${num(s.workspaces)}</td>
+        <td class="n ${s.meanUtilisationPct >= 85 ? "t-bad" : ""}">${pct(s.meanUtilisationPct, 0)}</td>
+        <td class="n ${s.peakUtilisationPct > 100 ? "t-warn" : ""}">${pct(s.peakUtilisationPct, 0)}</td>
+        <td class="n ${s.throttlingCapacities ? "t-bad" : ""}">${s.throttlingCapacities
+          ? `${s.throttlingCapacities} of ${s.capacities}` : "—"}</td>
+        <td>${stageCell(s.worstStage, s.worstStageLabel)}</td>
+        <td class="n ${rejected ? "t-bad" : ""}">${rejected ? num(rejected) : "—"}</td>
+      </tr>`;
+    }).join("")}</tbody></table></div>
   <p class="sites-note">
-    Every site here runs its own safety line — ${
-      [...new Set(d.sites.map((s) => s.thresholdPct))].sort((a, b) => a - b).map((t) => `${t}%`).join(", ")
-    } — derived from the thresholds those facilities actually hold, which is why
-    two sites at the same fullness are not equally urgent.
-    ${d.totals.hardwareClasses.length > 1
-      ? `This region runs <b>${d.totals.hardwareClasses.length} hardware classes</b>
-         (${d.totals.hardwareClasses.map(esc).join(", ")}), so a lead time quoted
-         at region level would be wrong for some of these buildings.`
-      : ""}
+    Capacity Units are what a Fabric SKU provides — an F64 gives 64 CUs, and a day of it is
+    64 × 86,400 CU seconds. <b>Peak above 100% is bursting</b>, which Fabric smooths across
+    future timepoints and is not by itself a fault. What matters is the throttling columns:
+    Fabric absorbs ten minutes of future capacity, then delays interactive jobs, then
+    rejects them, then rejects everything.
   </p>`;
 }
 
-/* What Fabric actually runs here.
-
-   This showed only the gaps, which answered half the question: a planner
-   deciding where to put a workload needs to know what the region *does* run.
-   Microsoft publishes only the exceptions, so the available side is derived --
-   the nine workloads they name, less any the exceptions sit inside.
-
-   The distinction that matters and was previously invisible: a region can
-   support "all Fabric workloads" and still be missing named features within two
-   of them. Affected is not the same as absent, and the block says so rather
-   than letting a reader infer the worse reading. */
+/* What Fabric actually runs here. Only the gaps: review asked for the available
+   list removed once it was six of nine chips saying nothing was wrong. */
 function workloadBlock(d) {
   const part = d.workloadsPartlyAffected || [];
   const gaps = d.unavailableFeatures || [];
@@ -1326,16 +1242,10 @@ function workloadBlock(d) {
     return `<p class="wl-lede bad"><b>Power BI only.</b> Fabric workloads do not run in
       this region at all.</p>`;
   }
-  // Nothing missing is worth one green line, not a panel listing all nine.
   if (!gaps.length) {
     return `<p class="wl-lede ok"><b>All ${total} Fabric workloads run here with nothing
       missing.</b> <span class="t3">Microsoft's published availability.</span></p>`;
   }
-
-  /* Only the gaps. Review asked for the available list two turns ago and then
-     asked for it removed: with six of nine listed green it was half the width
-     saying nothing was wrong, and the three that matter had to compete with it.
-     The count still says nine so a reader can infer the rest. */
   return `
   <div class="wl part standalone">
     <h5>${num(part.length)} of ${total} workloads are missing a feature</h5>
@@ -1428,7 +1338,7 @@ PAGES["/map"] = async (view) => {
           <span><i class="dot bad"></i>Past its safety line</span>
           <span><i class="dot warn"></i>Order due or overdue</span>
           <span><i class="dot good"></i>Inside its line</span>
-          <span class="t3">Marker area = deployed units</span>
+          <span class="t3">Marker area = Capacity Units</span>
         </div>
       </div>
       <aside id="map-side" class="map-side">
@@ -2126,8 +2036,9 @@ PAGES["/actions"] = async (view) => {
    nothing else would have surfaced. */
 
 const REC_KIND = {
-  procurement: { label: "Buy", tone: "" },
-  workload_change: { label: "Move", tone: "warn" },
+  scale_up: { label: "Scale up", tone: "bad" },
+  load_balance: { label: "Move a workspace", tone: "warn" },
+  scale_down: { label: "Scale down", tone: "" },
   licensing: { label: "Licence", tone: "" },
 };
 
@@ -2145,17 +2056,13 @@ function recCard(r) {
       ${e.region ? `<a href="/region/${encodeURIComponent(e.region)}">${esc(e.region)}</a>` : ""}
       ${e.datacentre ? `· <a href="/datacentre/${encodeURIComponent(e.datacentre)}">${esc(e.datacentre)}</a>` : ""}
       ${e.fabricSku ? `· <b>${esc(e.fabricSku)}</b>` : ""}
-      ${e.skuClass ? `· ${esc(e.skuClass)}` : ""}
-      ${e.utilisationPct != null ? `· ${pct(e.utilisationPct, 1)} used` : ""}
-      ${r.kind === "procurement" && e.orderByDate
-        ? `· order by <b>${esc(e.orderByDate)}</b> (${e.daysUntilOrder < 0
-            ? `${Math.abs(e.daysUntilOrder)}d overdue` : `in ${e.daysUntilOrder}d`})` : ""}
-      ${r.kind === "procurement" && e.unitsToAdd ? `· add ${num(e.unitsToAdd)} units` : ""}
-      ${r.kind === "workload_change" && e.moveTo
-        ? `· move to <b>${esc(e.moveTo.sku_class)}</b> (${esc(e.moveTo.vendor)} ${esc(e.moveTo.model)})` : ""}
-      ${r.kind === "workload_change" && e.downtimeHours != null
-        ? `· ${e.downtimeHours}h lost` : ""}
-      ${r.kind === "licensing" && e.stepTo ? `· step to <b>${esc(e.stepTo)}</b>` : ""}
+      ${e.capacityUnits != null ? `· ${num(e.capacityUnits)} CU` : ""}
+      ${e.meanUtilisationPct != null ? `· ${pct(e.meanUtilisationPct, 0)} used` : ""}
+      ${e.throttledDays ? `· throttled ${e.throttledDays}/${e.windowDays}d` : ""}
+      ${e.worstStageLabel && e.worstStage !== "none" ? `· ${esc(e.worstStageLabel)}` : ""}
+      ${e.scaleTo ? `· to <b>${esc(e.scaleTo)}</b> (${num(e.scaleToUnits)} CU)` : ""}
+      ${e.workspace ? `· move <b>${esc(e.workspace)}</b> (${pct(e.workspaceSharePct, 0)}) to ${esc(e.moveTo)}` : ""}
+      ${e.stepTo ? `· step to <b>${esc(e.stepTo)}</b>` : ""}
     </p>
   </article>`;
 }
@@ -2174,18 +2081,19 @@ PAGES["/recommendations"] = async (view, _unused, query) => {
   view.innerHTML = howto({
     answers: `<b>What to do next${scope}</b>, most urgent first — with the reasoning under each one rather than a score.`,
     steps: [
-      { what: "Buy", is: "capacity is running out. An order is raised when the time left before the trigger falls below the time the hardware takes to arrive, so a capacity can need buying while still under its threshold." },
-      { what: "Move", is: "capacity is <i>not</i> the problem. These have room to spare but fail more than the fleet does, measured per node. Adding more of the same hardware would not fix them." },
-      { what: "Licence", is: "a commercial step, not a capacity one. Below F64 every Power BI viewer needs a paid licence; at F64 a free licence and a viewer role are enough." },
-      { what: "Ordering", is: "kinds are interleaved rather than grouped, because the most pressing thing is the most pressing thing regardless of which engine produced it." },
+      { what: "Scale up", is: "the capacity is throttling, or has no headroom left for the next surge. Fabric absorbs ten minutes of overage, then delays interactive jobs by 20 seconds, then rejects them at an hour, then rejects everything at 24 hours. Scaling an F SKU takes effect immediately \u2014 there is nothing to order." },
+      { what: "Move a workspace", is: "one workspace is most of what a throttling capacity consumes. Moving it costs nothing per second, where the next SKU up bills continuously." },
+      { what: "Scale down", is: "the capacity is idle. F SKUs bill per second whether or not anything runs on them, so unused CUs are a standing cost. Nothing that throttled in the window appears here." },
+      { what: "Licence", is: "a commercial step, not a capacity one. Below F64 every Power BI viewer needs Pro or PPU; at F64 a Free licence and a viewer role are enough." },
     ],
     words: [
-      { term: "Raised early", means: "The order is going in before the capacity reaches its usual trigger. That happens when the lead time is long enough that waiting would land the order after the capacity was needed — and it is the case a threshold alone can never make." },
-      { term: "Incidents per node", means: "Operational incidents divided by physical nodes, then shrunk toward the fleet average in proportion to how many nodes stand behind the record. Raw counts would just rank capacities by size; unshrunk rates would let a one-node capacity with a bad month outrank an estate." },
-      { term: "Why these are separate", means: "A single blended risk score would let a buying case and a hardware case average each other into something calm. A site at 40% with a dozen outages is not calm; it is two different problems, one of which is invisible to utilisation." },
+      { term: "Capacity Units (CU)", means: "What a Fabric SKU provides. An F64 gives 64 CUs, so a day of it is 64 \u00d7 86,400 CU seconds. Consumption is measured against that." },
+      { term: "Bursting and smoothing", means: "Fabric lets an operation use more compute than the SKU provides, then spreads the cost over future 30-second timepoints \u2014 interactive over 5 to 64 minutes, background over 24 hours. So <b>utilisation above 100% is normal</b> and is not by itself a fault." },
+      { term: "Throttling stages", means: "Only when smoothed consumption eats into future capacity does throttling begin. Ten minutes is free (overage protection); past that, interactive delay at 20 seconds, interactive rejection at an hour, background rejection at 24 hours." },
+      { term: "Why these are separate", means: "A throttling capacity and an idle one are opposite problems, and an average of them describes neither. Blending them into one score is how a capacity refusing user queries reads as calm." },
     ],
-    next: "Work the moves and the early raises first — everything else is already visible on the Regions and Forecast tabs.",
-    sources: "Capacities, hardware, per-capacity utilisation, operational incidents and lead-time history are generated. The Fabric SKU ladder and the F64 licensing rule are real and cited on each licensing recommendation.",
+    next: "Work the throttling capacities first — those are refusing user operations now. Scale-downs are money rather than risk and can wait.",
+    sources: "Capacities, their CU consumption and their throttling history are generated. The Fabric SKU ladder, the CU arithmetic, the published throttling thresholds and the F64 licensing rule are real.",
   }) + title(`Recommendations${scope}`,
              `${num(d.total)} outstanding${kind ? ` · ${kind.replace("_", " ")}` : ""}`) + `
 
@@ -2197,8 +2105,8 @@ PAGES["/recommendations"] = async (view, _unused, query) => {
         ${meta.label} ${num(counts[k] || 0)}</a>`).join("")}
     ${region ? `<a class="chip" href="/recommendations?kind=${encodeURIComponent(kind)}">All regions</a>` : ""}
     <span class="t3" style="margin-left:auto">
-      <b class="t-warn">${d.earlyRaises}</b> purchase(s) raised earlier than the usual trigger ·
-      <b class="t-warn">${num(counts.workload_change || 0)}</b> hardware move(s)</span>
+      <b class="t-bad">${num(counts.scale_up || 0)}</b> capacit(y/ies) to scale up ·
+      <b class="t-warn">${num(counts.load_balance || 0)}</b> workspace move(s)</span>
   </div></section>
 
   ${d.recommendations.length
@@ -2219,61 +2127,71 @@ PAGES["/recommendations"] = async (view, _unused, query) => {
    week is not capacity you keep either. Utilisation cannot tell those apart. */
 PAGES["/capacity"] = async (view, id) => {
   const d = await get(`/api/capacity/${encodeURIComponent(id)}`);
-  const h = d.health, hw = d.hardware;
-  const sick = h.rateVsFleet >= 1.4;
-  const last = d.utilisation.length ? d.utilisation[d.utilisation.length - 1] : null;
+  const h = d.health;
+  const bad = h.throttledDays > 0;
 
   view.innerHTML = title(d.capacityId,
-    `${d.fabricSku} · ${d.capacityUnits} CU · ${hw.vendor} ${hw.model} · in ` +
-    `${d.datacentre}, ${d.region}`) + `
+    `${d.fabricSku} · ${num(d.capacityUnits)} Capacity Units · in ${d.datacentre}, ${d.region}`) + `
 
   <div class="kpis">
-    <div class="kpi"><div class="label">How full</div>
-      <div class="value${last && last.UtilisationPct >= 90 ? " bad" : ""}">${last ? pct(last.UtilisationPct, 1) : "—"}</div>
-      <div class="sub">${num(d.deployedUnits)} units across ${d.nodes} node(s)</div></div>
-    <div class="kpi"><div class="label">Incidents</div>
-      <div class="value${sick ? " bad" : ""}">${h.incidents}</div>
-      <div class="sub">${h.seriousIncidents} Sev1/Sev2 · ${h.downtimeHours}h lost</div></div>
-    <div class="kpi"><div class="label">Per node</div>
-      <div class="value${sick ? " bad" : ""}">${h.incidentsPerNode.toFixed(1)}</div>
-      <div class="sub">fleet runs ${h.fleetIncidentsPerNode.toFixed(1)} · this is ${h.rateVsFleet}\u00d7</div></div>
-    <div class="kpi"><div class="label">Free viewers</div>
-      <div class="value${d.supportsFreeViewers ? " good" : ""}">${d.supportsFreeViewers ? "Yes" : "No"}</div>
-      <div class="sub">${d.supportsFreeViewers
-        ? "F64 or larger — a free licence can read Power BI here"
-        : "below F64 — every viewer needs Pro or PPU"}</div></div>
+    <div class="kpi"><div class="label">Mean CU used</div>
+      <div class="value${h.meanUtilisationPct >= 85 ? " bad" : ""}">${pct(h.meanUtilisationPct, 0)}</div>
+      <div class="sub">peak ${pct(h.peakUtilisationPct, 0)} over ${h.windowDays} days</div></div>
+    <div class="kpi"><div class="label">Throttled</div>
+      <div class="value${bad ? " bad" : ""}">${h.throttledDays}</div>
+      <div class="sub">of the last ${h.windowDays} days</div></div>
+    <div class="kpi"><div class="label">Worst stage</div>
+      <div class="value${bad ? " bad" : " good"}" style="font-size:1.5rem;line-height:1.5">
+        ${esc(h.worstStageLabel)}</div>
+      <div class="sub">peaked ${num(Math.round(h.peakFutureMinutes))} min into future capacity</div></div>
+    <div class="kpi"><div class="label">Operations refused</div>
+      <div class="value${(h.interactiveRejected + h.backgroundRejected) ? " bad" : ""}">
+        ${num(h.interactiveRejected + h.backgroundRejected)}</div>
+      <div class="sub">${num(h.interactiveRejected)} interactive · ${num(h.backgroundRejected)} background</div></div>
   </div>
 
   ${d.recommendations.length ? panel("What to do about it",
-    d.recommendations.map(recCard).join(""), { flush: true }) : ""}
+    changeBlock({ region: d.region, recommendations: d.recommendations.reduce((a, r) => {
+      (a[r.kind] = a[r.kind] || []).push(r); return a; }, {}) }), { flush: true }) : ""}
 
-  ${panel("Hardware", `
+  ${panel("How it consumes capacity", `
     <div class="tablewrap"><table class="grid"><tbody>
-      <tr><th>Class</th><td>${esc(hw.skuClass)}</td></tr>
-      <tr><th>Vendor / model</th><td>${esc(hw.vendor)} ${esc(hw.model)}</td></tr>
-      <tr><th>CPU</th><td>${esc(hw.cpu)}</td></tr>
-      <tr><th>Per node</th><td>${num(hw.coresPerNode)} cores · ${num(hw.memoryGB)}GB · ${hw.storageTB}TB</td></tr>
-      <tr><th>Nodes</th><td>${d.nodes}</td></tr>
+      <tr><th>SKU</th><td><b>${esc(d.fabricSku)}</b> — ${num(d.capacityUnits)} Capacity Units</td></tr>
+      <tr><th>A day of it</th><td>${num(d.cuSecondsPerDay)} CU seconds
+        <span class="t3">(${num(d.capacityUnits)} CU × 86,400 seconds)</span></td></tr>
+      <tr><th>Free viewers</th><td>${d.supportsFreeViewers
+        ? `<span class="pill good">F64+</span> a Free licence can read Power BI here`
+        : `<span class="pill wash">Pro needed</span> below F64, every Power BI viewer needs Pro or PPU`}</td></tr>
     </tbody></table></div>
-    <p style="color:var(--ink-3);font-size:.78rem;margin:.6rem 0 0">
-      Server models are real products; which model sits in which facility is generated.</p>`)}
+    <p style="color:var(--ink-3);font-size:.78rem;margin:.6rem 0 0">${esc(h.policy)}</p>`)}
 
-  ${panel(`Incidents — ${h.incidents} in the window`, d.incidents.length ? `
+  ${panel(`Workspaces — ${d.workspaces.length}`, d.workspaces.length ? `
     <div class="tablewrap"><table class="grid">
-      <thead><tr><th>Opened</th><th>Severity</th><th>Type</th>
-        <th class="n">Downtime</th><th class="n">Customers</th></tr></thead>
-      <tbody>${d.incidents.map((i) => `<tr>
-        <td>${esc(i.OpenedDate)}</td>
-        <td><span class="pill ${i.Severity === "Sev1" ? "bad" : i.Severity === "Sev2" ? "wash" : ""}">${esc(i.Severity)}</span></td>
-        <td>${esc(i.IncidentType)}</td>
-        <td class="n">${i.DowntimeMinutes} min</td>
-        <td class="n">${i.ImpactedCustomers}</td></tr>`).join("")}</tbody></table></div>
-    <p style="color:var(--ink-3);font-size:.78rem;margin:.6rem 0 0">${esc(h.shrunkTowardFleet)}</p>`
-    : `<p class="empty">No incidents recorded on this capacity.</p>`)}
+      <thead><tr><th>Workspace</th><th>Primary workload</th><th class="n">Share of this capacity</th></tr></thead>
+      <tbody>${d.workspaces.map((w) => `<tr>
+        <td><b>${esc(w.WorkspaceName)}</b><span class="t3">${esc(w.WorkspaceId)}</span></td>
+        <td>${esc(w.PrimaryWorkload)}</td>
+        <td class="n ${w.ShareOfCapacityPct >= 55 ? "t-warn" : ""}">${pct(w.ShareOfCapacityPct, 0)}</td>
+      </tr>`).join("")}</tbody></table></div>`
+    : `<p class="empty">No workspaces assigned.</p>`)}
+
+  ${panel(`Throttling events — ${d.throttlingEvents.length}`, d.throttlingEvents.length ? `
+    <div class="tablewrap"><table class="grid">
+      <thead><tr><th>Date</th><th>Stage</th><th class="n">Into future capacity</th>
+        <th class="n">Interactive refused</th><th class="n">Background refused</th><th>Effect</th></tr></thead>
+      <tbody>${d.throttlingEvents.map((e) => `<tr>
+        <td>${esc(e.Date)}</td>
+        <td>${stageCell(e.Stage, (e.Stage || "").replace(/_/g, " "))}</td>
+        <td class="n">${num(Math.round(e.FutureCapacityMinutes))} min</td>
+        <td class="n">${num(e.InteractiveRejected)}</td>
+        <td class="n">${num(e.BackgroundRejected)}</td>
+        <td class="t3">${esc(e.Effect)}</td>
+      </tr>`).join("")}</tbody></table></div>`
+    : `<p class="empty">This capacity has never throttled.</p>`)}
 
   <p style="margin:1.5rem 0 0">
-    <a href="/datacentre/${encodeURIComponent(d.datacentre)}">\u2190 ${esc(d.datacentre)}</a>
-    &nbsp;\u00b7&nbsp; <a href="/region/${encodeURIComponent(d.region)}">${esc(d.region)}</a>
+    <a href="/datacentre/${encodeURIComponent(d.datacentre)}">← ${esc(d.datacentre)}</a>
+    &nbsp;·&nbsp; <a href="/region/${encodeURIComponent(d.region)}">${esc(d.region)}</a>
   </p>`;
 };
 

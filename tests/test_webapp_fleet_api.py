@@ -39,14 +39,13 @@ def test_map_carries_what_the_marker_card_prints():
     """The card exists so a planner does not open four tabs. If a key it reads
     disappears the card renders blanks and the point is lost."""
     needed = {"region", "displayName", "city", "utilisation", "thresholdPct",
-              "status", "crossingDate", "capacities", "sites", "units",
-              "skuClass", "leadTimeDays", "unavailableFeatures",
-              "allFabricWorkloads", "recommendations"}
+              "status", "crossingDate", "capacities", "sites", "capacityUnits",
+              "unavailableFeatures", "allFabricWorkloads", "recommendations"}
     for p in api.capacity_map()["points"]:
         missing = needed - set(p)
         assert not missing, f"{p['region']} is missing {sorted(missing)}"
-        assert set(p["recommendations"]) == {"procurement", "workload_change",
-                                             "licensing"}
+        assert set(p["recommendations"]) == {"scale_up", "load_balance",
+                                             "scale_down", "licensing"}
 
 
 def test_map_says_which_of_its_numbers_are_real():
@@ -84,11 +83,11 @@ def test_map_region_answers_the_four_questions_the_marker_raises():
     # How many, and what is in each.
     assert d["totals"]["sites"] == len(d["sites"]) > 1
     for s in d["sites"]:
-        assert s["vendor"] and s["model"] and s["cpu"], f"{s['datacentre']} has no hardware"
         assert s["skuMix"], f"{s['datacentre']} lists no SKUs"
-        assert s["units"] > 0 and s["leadTimeDays"] > 0
-        assert 0 <= s["utilisationPct"] <= 100
-        assert s["thresholdPct"] > 0, "a site with no line of its own cannot be judged"
+        assert s["capacityUnits"] > 0 and s["capacities"] > 0
+        assert s["meanUtilisationPct"] >= 0
+        assert s["worstStage"] in ("none", "interactive_delay",
+                                   "interactive_rejection", "background_rejection")
 
     # When it crosses, and when it is actually full -- different questions.
     t = d["threshold"]
@@ -99,13 +98,14 @@ def test_map_region_answers_the_four_questions_the_marker_raises():
             "margin below full")
 
     # What to change.
-    assert d["recommendations"], "no advice for a region flagged overdue"
-    assert set(d["recommendationCounts"]) <= {"procurement", "workload_change", "licensing"}
+    assert d["recommendations"], "no advice for a region under pressure"
+    assert set(d["recommendationCounts"]) <= {"scale_up", "load_balance",
+                                              "scale_down", "licensing"}
 
 
 def test_map_region_sites_reconcile_with_the_region_total():
     d = api.map_region("centralindia")
-    assert sum(s["units"] for s in d["sites"]) == d["totals"]["units"]
+    assert sum(s["capacityUnits"] for s in d["sites"]) == d["totals"]["capacityUnits"]
     assert sum(s["capacities"] for s in d["sites"]) == d["totals"]["capacities"]
 
 
@@ -113,8 +113,8 @@ def test_map_region_shows_that_sites_differ():
     """The drill-down exists because buildings are not interchangeable. If they
     all held the same units on the same hardware there would be nothing to open."""
     d = api.map_region("centralindia")
-    assert len({s["units"] for s in d["sites"]}) > 1, "every site holds identical units"
-    assert len({s["thresholdPct"] for s in d["sites"]}) > 1, "every site runs one line"
+    assert len({s["capacityUnits"] for s in d["sites"]}) > 1, "identical units"
+    assert len({s["capacities"] for s in d["sites"]}) > 1, "identical capacity counts"
 
 
 def test_unknown_region_on_the_map_is_a_404():
@@ -195,31 +195,6 @@ def test_a_workload_missing_a_feature_is_not_reported_as_absent():
     assert d["workloadsPartlyAffected"], "expected workloads with feature gaps"
 
 
-def test_early_raises_are_distinguishable_from_out_of_room():
-    """The colour on a purchase row has to carry a real distinction.
-
-    Every purchase in this fleet is overdue, so colouring by lateness alone
-    paints all of them the same and says nothing. What differs is whether the
-    capacity is actually out of room: eleven are still under their own line and
-    are late only because the hardware takes longer to arrive than the room
-    they have left. If that population ever empties, the colour is decoration.
-    """
-    recs = api.recommendations(kind="procurement", limit=500)["recommendations"]
-    late = [r for r in recs if (r["evidence"]["daysUntilOrder"] or 0) < 0]
-    assert late, "expected overdue purchases"
-
-    early = [r for r in late if r["evidence"]["raisedEarly"]]
-    out_of_room = [r for r in late if not r["evidence"]["raisedEarly"]]
-    assert early and out_of_room, (
-        "every overdue purchase falls in one bucket -- the row colour is "
-        "carrying no information")
-    for r in early:
-        e = r["evidence"]
-        assert e["utilisationPct"] < e["standardTriggerPct"], (
-            f"{r['target']} is flagged as under its line at "
-            f"{e['utilisationPct']}% against {e['standardTriggerPct']}%")
-
-
 def test_the_map_marker_carries_both_sides_too():
     by = {p["region"]: p for p in api.capacity_map()["points"]}
     for region in ("southcentralus", "westus2"):
@@ -236,46 +211,24 @@ def test_capacities_scope_to_a_datacentre():
     d = api.capacities(datacentre="southcentralus-dc01")
     assert d["count"] > 0
     assert {c["datacentre"] for c in d["capacities"]} == {"southcentralus-dc01"}
-    assert d["totalUnits"] == sum(c["deployedUnits"] for c in d["capacities"])
+    assert d["totalCapacityUnits"] == sum(c["capacityUnits"] for c in d["capacities"])
 
 
 def test_capacities_scope_to_a_region_and_sum_to_the_site_totals():
     region = api.capacities(region="southcentralus")
-    sites = api.get_ontology()["dim_datacentre"]
-    want = sites[sites["Region"] == "southcentralus"]["DeployedUnits"].sum()
-    assert region["totalUnits"] == pytest.approx(want, abs=1.0)
+    caps = api.get_ontology()["dim_capacity"]
+    want = caps[caps["Region"] == "southcentralus"]["CapacityUnits"].sum()
+    assert region["totalCapacityUnits"] == want
 
 
-def test_capacity_rows_carry_the_hardware_the_table_prints():
+def test_capacity_rows_carry_what_the_table_prints():
     d = api.capacities(datacentre="southcentralus-dc01")
     for c in d["capacities"]:
-        assert c["vendor"] and c["model"] and c["cpu"]
-        assert c["memoryGB"] and c["nodes"] >= 1
         assert c["fabricSku"].startswith("F")
-
-
-def test_the_fleet_baseline_is_the_whole_estate_not_the_filter():
-    """"Fleet" must mean everything, whatever the page is scoped to.
-
-    If the baseline narrowed with the filter, a region running uniformly poor
-    hardware would be compared against itself and report that every capacity in
-    it was perfectly normal -- which is exactly the comparison that makes the
-    hardware case visible in the first place.
-    """
-    whole = api.capacities()
-    one_site = api.capacities(datacentre="southcentralus-dc01")
-    one_region = api.capacities(region="centralindia")
-
-    assert one_site["count"] < whole["count"]
-    for scope in (whole, one_site, one_region):
-        assert scope["fleet"]["capacities"] == whole["count"], (
-            "the fleet baseline changed with the filter")
-        assert scope["fleet"]["incidentsPerNode"] == whole["fleet"]["incidentsPerNode"]
-        assert scope["fleet"]["regions"] > 1, "a fleet of one region is not a fleet"
-
-    # And the per-row comparison uses that same baseline.
-    for c in one_site["capacities"]:
-        assert c["fleetIncidentsPerNode"] == whole["fleet"]["incidentsPerNode"]
+        assert c["capacityUnits"] > 0
+        assert c["worstStage"] in ("none", "interactive_delay",
+                                   "interactive_rejection", "background_rejection")
+        assert c["windowDays"] > 1, "a single day is not evidence to size on"
 
 
 def test_free_viewer_count_matches_the_rows():
@@ -293,12 +246,14 @@ def test_unknown_capacity_is_a_404_not_an_empty_page():
 
 
 def test_capacity_detail_has_a_history_and_its_own_advice():
-    d = api.capacity_detail("centralindia-dc10-cap01")
-    assert len(d["utilisation"]) > 100, "expected the full daily window"
-    assert d["hardware"]["vendor"] and d["hardware"]["memoryGB"]
-    assert d["health"]["fleetIncidentsPerNode"] > 0
-    # This is the capacity the workload-change case is built on.
-    assert any(r["kind"] == "workload_change" for r in d["recommendations"])
+    """westeurope-dc04-cap01 is the F8 that reaches background rejection."""
+    d = api.capacity_detail("westeurope-dc04-cap01")
+    assert len(d["consumption"]) > 100, "expected the full daily window"
+    assert d["cuSecondsPerDay"] == d["capacityUnits"] * 86_400
+    assert d["health"]["worstStage"] == "background_rejection"
+    assert d["throttlingEvents"], "a throttling capacity with no events"
+    assert d["workspaces"], "a capacity with no workspaces cannot be balanced"
+    assert any(r["kind"] == "scale_up" for r in d["recommendations"])
 
 
 # --------------------------------------------------------------------------
@@ -308,9 +263,9 @@ def test_capacity_detail_has_a_history_and_its_own_advice():
 
 def test_recommendations_filter_by_kind_and_region():
     all_of = api.recommendations(limit=500)
-    moves = api.recommendations(kind="workload_change", limit=500)
+    moves = api.recommendations(kind="load_balance", limit=500)
     assert moves["total"] < all_of["total"]
-    assert {r["kind"] for r in moves["recommendations"]} == {"workload_change"}
+    assert {r["kind"] for r in moves["recommendations"]} == {"load_balance"}
 
     one = api.recommendations(region="centralindia", limit=500)
     assert {r["evidence"]["region"] for r in one["recommendations"]} == {"centralindia"}
@@ -320,28 +275,16 @@ def test_counts_by_kind_describe_the_whole_set_not_the_filter():
     """The filter chips print these counts; scoping them to the current filter
     would make every chip read as its own total."""
     filtered = api.recommendations(kind="licensing", limit=5)
-    assert filtered["countsByKind"]["procurement"] > 0
+    assert filtered["countsByKind"]["scale_up"] > 0
     assert filtered["shown"] <= 5
 
 
-def test_early_raises_are_surfaced_separately():
-    """They are the finding. Buried among a hundred routine overdue purchases
-    nobody would ever see them."""
+def test_capacities_actually_throttling_are_counted_separately():
+    """Those are refusing user operations now, as opposed to merely being short
+    of headroom. Buried in one total nobody would tell them apart."""
     d = api.recommendations(limit=1)
-    assert d["earlyRaises"] > 0
-
-
-def test_lead_times_show_movement_with_a_supplier():
-    d = api.lead_times()
-    assert d["classes"], "no lead-time history"
-    for cls, drift in d["classes"].items():
-        assert drift["supplier"], f"{cls} has no supplier"
-        assert drift["was"] > 0 and drift["now"] > 0
-
-
-# --------------------------------------------------------------------------
-# the third outcome
-# --------------------------------------------------------------------------
+    assert d["throttling"] > 0
+    assert d["throttling"] <= d["countsByKind"].get("scale_up", 0)
 
 
 def test_partial_grants_are_reported_without_moving_the_counts():

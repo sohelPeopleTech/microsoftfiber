@@ -1042,8 +1042,8 @@ def _capacity_health():
 
     onto = get_ontology()
     return capacity_health(onto["dim_capacity"],
-                           onto["fact_operational_incident"],
-                           onto["fact_capacity_usage_daily"])
+                           onto["fact_capacity_cu_daily"],
+                           onto["fact_throttling_event"])
 
 
 def _availability(region: str) -> dict:
@@ -1112,7 +1112,7 @@ def capacity_map():
 
     cap_counts = caps.groupby("Region").agg(
         capacities=("CapacityId", "count"),
-        units=("DeployedUnits", "sum"),
+        cu=("CapacityUnits", "sum"),
         sites=("DatacentreId", "nunique"),
     )
 
@@ -1139,7 +1139,7 @@ def capacity_map():
             "skuClass": f.get("sku_class"),
             "capacities": int(c["capacities"]) if c is not None else 0,
             "sites": int(c["sites"]) if c is not None else 0,
-            "units": int(c["units"]) if c is not None else 0,
+            "capacityUnits": int(c["cu"]) if c is not None else 0,
             "coresPending": e.get("CoresPending", 0),
             "failed": e.get("TicketsFlagged", 0),
             "exposure": e.get("RevenueExposureUSD", 0),
@@ -1152,7 +1152,7 @@ def capacity_map():
             "platformAffected": av["platformAffected"],
             "recommendations": {
                 kind: by_region_kind.get((region, kind), 0)
-                for kind in ("procurement", "workload_change", "licensing")
+                for kind in ("scale_up", "load_balance", "scale_down", "licensing")
             },
         })
     return {
@@ -1180,53 +1180,50 @@ def map_region(region: str):
     if region not in set(onto["dim_region"]["Region"]):
         raise HTTPException(404, f"unknown region {region!r}")
 
+    from planning import STAGE_LABEL
+
     health = _capacity_health()
     mine = health[health["Region"] == region]
-    hw = onto["dim_hardware"].set_index("SKUClass")
     sites_dim = onto["dim_datacentre"]
     sites_dim = sites_dim[sites_dim["Region"] == region]
 
-    flags = {f["region"]: f for f in _records(
+    flags = {x["region"]: x for x in _records(
         module1.project_all(onto, crossing_for=_forecast_crossing))}
     f = flags.get(region, {})
     fc = _trim_for_plotting(_clean(
         _forecast(region, _region_threshold(region)).to_dict()), trim=True)
 
-    # One row per building, with what is actually in it.
+    ws = onto["dim_workspace"]
+    ws_count = ws.groupby("DatacentreId").size().to_dict() if "DatacentreId" in ws.columns \
+        else ws.merge(onto["dim_capacity"][["CapacityId", "DatacentreId"]],
+                      on="CapacityId").groupby("DatacentreId").size().to_dict()
+
     sites = []
-    for s in sites_dim.itertuples():
-        here = mine[mine["DatacentreId"] == s.DatacentreId]
-        spec = hw.loc[s.SKUClass] if s.SKUClass in hw.index else None
-        used_pct = (float(s.UsedUnits) / float(s.DeployedUnits) * 100
-                    if float(s.DeployedUnits) else 0.0)
+    for s_ in sites_dim.itertuples():
+        here = mine[mine["DatacentreId"] == s_.DatacentreId]
+        cu_total = int(here["CapacityUnits"].sum()) if len(here) else 0
+        mean_util = float(here["MeanUtilisationPct"].mean()) if len(here) else 0.0
+        worst = (max(here["WorstStage"], key=lambda x: {"none": 0, "interactive_delay": 1,
+                 "interactive_rejection": 2, "background_rejection": 3}.get(x, 0))
+                 if len(here) else "none")
         sites.append({
-            "datacentre": s.DatacentreId,
-            "skuClass": s.SKUClass,
-            "vendor": str(spec["Vendor"]) if spec is not None else "",
-            "model": str(spec["Model"]) if spec is not None else "",
-            "cpu": str(spec["Cpu"]) if spec is not None else "",
-            "memoryGB": int(spec["MemoryGB"]) if spec is not None else None,
-            "coresPerNode": int(spec["CoresPerNode"]) if spec is not None else None,
-            "leadTimeDays": int(s.LeadTimeDays),
+            "datacentre": s_.DatacentreId,
             "capacities": int(len(here)),
+            "workspaces": int(ws_count.get(s_.DatacentreId, 0)),
+            "capacityUnits": cu_total,
             "skuMix": {sku: int(n) for sku, n in
-                       sorted(here["FabricSku"].value_counts().items())},
-            "units": int(s.DeployedUnits),
-            "usedUnits": round(float(s.UsedUnits), 1),
-            "freeUnits": round(float(s.FreeUnits), 1),
-            "utilisationPct": round(used_pct, 1),
-            "thresholdPct": round(float(s.ThresholdPct), 1),
-            "headroomToThreshold": round(float(s.HeadroomToThreshold), 1),
-            "pastThreshold": bool(used_pct >= float(s.ThresholdPct)),
-            "nodes": int(here["Nodes"].sum()) if len(here) else 0,
-            "incidents": int(here["Incidents"].sum()) if len(here) else 0,
-            "seriousIncidents": int(here["SeriousIncidents"].sum()) if len(here) else 0,
-            "incidentsPerNode": (round(float(here["Incidents"].sum())
-                                       / float(here["Nodes"].sum()), 2)
-                                 if len(here) and here["Nodes"].sum() else 0.0),
+                       sorted(here["FabricSku"].value_counts().items())} if len(here) else {},
+            "meanUtilisationPct": round(mean_util, 1),
+            "peakUtilisationPct": round(float(here["PeakUtilisationPct"].max()), 1) if len(here) else 0.0,
+            "throttledDays": int(here["ThrottledDays"].max()) if len(here) else 0,
+            "throttlingCapacities": int((here["ThrottledDays"] > 0).sum()) if len(here) else 0,
+            "worstStage": worst,
+            "worstStageLabel": STAGE_LABEL.get(worst, worst),
+            "interactiveRejected": int(here["InteractiveRejected"].sum()) if len(here) else 0,
+            "backgroundRejected": int(here["BackgroundRejected"].sum()) if len(here) else 0,
             "freeViewerCapable": int(here["SupportsFreeViewers"].sum()) if len(here) else 0,
         })
-    sites.sort(key=lambda s: -s["units"])
+    sites.sort(key=lambda s: -s["capacityUnits"])
 
     recs = [r for r in _recommendations() if r["evidence"].get("region") == region]
     by_kind: dict[str, list] = {}
@@ -1236,17 +1233,12 @@ def map_region(region: str):
     av = _availability(region)
     gaps = av["unavailableFeatures"]
 
-    fleet_rate = float(health["FleetRate"].iloc[0]) if len(health) else 0.0
     return {
         "region": region,
         "status": f.get("status"),
         "utilisation": f.get("current_utilisation_pct"),
         "thresholdPct": f.get("threshold_pct"),
         "reason": f.get("reason"),
-        "skuClass": f.get("sku_class"),
-        "leadTimeDays": f.get("lead_time_days"),
-        "daysUntilOrder": f.get("days_until_order"),
-        "orderByDate": f.get("order_by_date"),
         "threshold": {
             "crossingDate": fc.get("crossingDate"),
             "crossingEarliest": fc.get("crossingEarliest"),
@@ -1262,16 +1254,16 @@ def map_region(region: str):
         "totals": {
             "sites": len(sites),
             "capacities": int(len(mine)),
-            "units": int(mine["DeployedUnits"].sum()) if len(mine) else 0,
-            "nodes": int(mine["Nodes"].sum()) if len(mine) else 0,
-            "incidents": int(mine["Incidents"].sum()) if len(mine) else 0,
-            "hardwareClasses": sorted(mine["SKUClass"].unique().tolist()) if len(mine) else [],
+            "capacityUnits": int(mine["CapacityUnits"].sum()) if len(mine) else 0,
+            "workspaces": int(len(onto["dim_workspace"][
+                onto["dim_workspace"]["Region"] == region])),
             "skuMix": {sku: int(n) for sku, n in
                        sorted(mine["FabricSku"].value_counts().items())} if len(mine) else {},
-            "sitesPastThreshold": sum(1 for s in sites if s["pastThreshold"]),
+            "throttlingCapacities": int((mine["ThrottledDays"] > 0).sum()) if len(mine) else 0,
+            "interactiveRejected": int(mine["InteractiveRejected"].sum()) if len(mine) else 0,
+            "backgroundRejected": int(mine["BackgroundRejected"].sum()) if len(mine) else 0,
             "freeViewerCapable": int(mine["SupportsFreeViewers"].sum()) if len(mine) else 0,
         },
-        "fleetIncidentsPerNode": round(fleet_rate, 3),
         "recommendations": by_kind,
         "recommendationCounts": {k: len(v) for k, v in by_kind.items()},
         "unavailableFeatures": gaps,
@@ -1309,12 +1301,11 @@ def recommendations(kind: Annotated[str | None, Query()] = None,
         "total": len(recs),
         "shown": min(len(recs), limit),
         "countsByKind": counts,
-        # Early raises and workload changes are the two the utilisation number
-        # cannot produce, so they are counted separately rather than left for a
-        # reader to find among a hundred routine overdue purchases.
-        "earlyRaises": sum(1 for r in _recommendations()
-                           if r["kind"] == "procurement"
-                           and r["evidence"].get("raisedEarly")),
+        # Capacities actually throttling are the ones refusing user operations
+        # now, as opposed to those merely short of headroom, so they are counted
+        # separately rather than left to be found among the rest.
+        "throttling": sum(1 for r in _recommendations()
+                          if r["evidence"].get("isThrottling")),
     }
 
 
@@ -1333,36 +1324,33 @@ def capacities(region: Annotated[str | None, Query()] = None,
     if datacentre:
         health = health[health["DatacentreId"] == datacentre]
 
-    hw = get_ontology()["dim_hardware"].set_index("SKUClass")
+    from planning import STAGE_LABEL
+
+    ws = get_ontology()["dim_workspace"]
+    ws_count = ws.groupby("CapacityId").size().to_dict()
     rows = []
     for c in health.itertuples():
-        spec = hw.loc[c.SKUClass] if c.SKUClass in hw.index else None
         rows.append({
             "capacityId": c.CapacityId,
             "datacentre": c.DatacentreId,
             "region": c.Region,
             "fabricSku": c.FabricSku,
             "capacityUnits": int(c.CapacityUnits),
-            "deployedUnits": int(c.DeployedUnits),
-            "utilisationPct": round(float(c.UtilisationPct), 1),
-            "skuClass": c.SKUClass,
-            "vendor": c.Vendor,
-            "model": c.Model,
-            "nodes": int(c.Nodes),
-            "cpu": str(spec["Cpu"]) if spec is not None else "",
-            "memoryGB": int(spec["MemoryGB"]) if spec is not None else None,
-            "storageTB": float(spec["StorageTB"]) if spec is not None else None,
-            "incidents": int(c.Incidents),
-            "seriousIncidents": int(c.SeriousIncidents),
-            "downtimeHours": round(c.DowntimeMinutes / 60.0, 1),
-            "incidentsPerNode": float(c.IncidentRate),
-            "fleetIncidentsPerNode": float(c.FleetRate),
-            "rateVsFleet": float(c.RateVsFleet),
+            "workspaces": int(ws_count.get(c.CapacityId, 0)),
+            "meanUtilisationPct": round(float(c.MeanUtilisationPct), 1),
+            "peakUtilisationPct": round(float(c.PeakUtilisationPct), 1),
+            "throttledDays": int(c.ThrottledDays),
+            "windowDays": int(c.WindowDays),
+            "worstStage": c.WorstStage,
+            "worstStageLabel": STAGE_LABEL.get(c.WorstStage, c.WorstStage),
+            "peakFutureMinutes": round(float(c.PeakFutureMinutes), 1),
+            "interactiveRejected": int(c.InteractiveRejected),
+            "backgroundRejected": int(c.BackgroundRejected),
             "supportsFreeViewers": bool(c.SupportsFreeViewers),
         })
     rows.sort(key=lambda r: (-r["capacityUnits"], r["capacityId"]))
-    total_units = sum(r["deployedUnits"] for r in rows)
-    used = sum(r["deployedUnits"] * r["utilisationPct"] / 100.0 for r in rows)
+    total_cu = sum(r["capacityUnits"] for r in rows)
+    weighted = sum(r["capacityUnits"] * r["meanUtilisationPct"] / 100.0 for r in rows)
 
     # What "the fleet" is, stated rather than assumed. The baseline every rate
     # on this page is measured against is the whole estate, and it stays the
@@ -1377,32 +1365,29 @@ def capacities(region: Annotated[str | None, Query()] = None,
             "capacities": int(len(everything)),
             "sites": int(everything["DatacentreId"].nunique()),
             "regions": int(everything["Region"].nunique()),
-            "nodes": int(everything["Nodes"].sum()),
-            "incidents": int(everything["Incidents"].sum()),
-            # Not re-rounded. `capacity_health` already rounds this, and
-            # rounding it again here produced 1.88 in the summary against 1.875
-            # on every row -- the same quantity printed two ways, which is the
-            # split this project keeps removing.
-            "incidentsPerNode": float(everything["FleetRate"].iloc[0])
-            if len(everything) else 0.0,
+            "capacityUnits": int(everything["CapacityUnits"].sum()),
+            "throttling": int((everything["ThrottledDays"] > 0).sum()),
+            "meanUtilisationPct": round(float(everything["MeanUtilisationPct"].mean()), 1),
             "means": ("every capacity in the estate, across all regions — not "
                       "just the ones listed here"),
         },
         "skuMix": {sku: sum(1 for r in rows if r["fabricSku"] == sku)
                    for sku in sorted({r["fabricSku"] for r in rows})},
-        "totalUnits": total_units,
-        "usedUnits": round(used, 1),
-        "freeUnits": round(total_units - used, 1),
+        "totalCapacityUnits": total_cu,
+        "meanUtilisationPct": round(weighted / total_cu * 100, 1) if total_cu else 0.0,
+        "throttling": sum(1 for r in rows if r["throttledDays"] > 0),
         "freeViewerCapable": sum(1 for r in rows if r["supportsFreeViewers"]),
-        "note": ("Capacities, their hardware and their per-capacity utilisation "
-                 "are generated. The Fabric SKU ladder and the F64 licensing "
-                 "rule are real."),
+        "note": ("Capacities, their CU consumption and their throttling history "
+                 "are generated. The Fabric SKU ladder, the CU arithmetic, the "
+                 "throttling thresholds and the F64 licensing rule are real."),
     }
 
 
 @app.get("/api/capacity/{capacity_id}")
 def capacity_detail(capacity_id: str):
-    """One capacity, with its own history, incidents and any advice about it."""
+    """One capacity: how it consumed CU, and every time it throttled."""
+    from planning import STAGE_LABEL
+
     onto = get_ontology()
     health = _capacity_health()
     row = health[health["CapacityId"] == capacity_id]
@@ -1410,12 +1395,14 @@ def capacity_detail(capacity_id: str):
         raise HTTPException(404, f"unknown capacity {capacity_id!r}")
     c = row.iloc[0]
 
-    usage = onto["fact_capacity_usage_daily"]
-    series = usage[usage["CapacityId"] == capacity_id].sort_values("Date")
-    ops = onto["fact_operational_incident"]
-    mine = ops[ops["CapacityId"] == capacity_id].sort_values("OpenedDate", ascending=False)
-    hw = onto["dim_hardware"].set_index("SKUClass")
-    spec = hw.loc[c["SKUClass"]] if c["SKUClass"] in hw.index else None
+    cu = onto["fact_capacity_cu_daily"]
+    series = cu[cu["CapacityId"] == capacity_id].sort_values("Date")
+    ev = onto["fact_throttling_event"]
+    mine = (ev[ev["CapacityId"] == capacity_id].sort_values("Date", ascending=False)
+            if len(ev) else ev)
+    ws = onto["dim_workspace"]
+    here = ws[ws["CapacityId"] == capacity_id].sort_values(
+        "ShareOfCapacityPct", ascending=False)
 
     return {
         "capacityId": capacity_id,
@@ -1423,53 +1410,30 @@ def capacity_detail(capacity_id: str):
         "region": c["Region"],
         "fabricSku": c["FabricSku"],
         "capacityUnits": int(c["CapacityUnits"]),
-        "deployedUnits": int(c["DeployedUnits"]),
-        "nodes": int(c["Nodes"]),
+        "cuSecondsPerDay": int(c["CapacityUnits"]) * 86_400,
         "supportsFreeViewers": bool(c["SupportsFreeViewers"]),
-        "hardware": {
-            "skuClass": c["SKUClass"], "vendor": c["Vendor"], "model": c["Model"],
-            "cpu": str(spec["Cpu"]) if spec is not None else "",
-            "coresPerNode": int(spec["CoresPerNode"]) if spec is not None else None,
-            "memoryGB": int(spec["MemoryGB"]) if spec is not None else None,
-            "storageTB": float(spec["StorageTB"]) if spec is not None else None,
-        },
-        "utilisation": _records(series[["Date", "UtilisationPct", "UsedUnits", "TotalUnits"]]),
+        "consumption": _records(series[[
+            "Date", "UtilisationPct", "CuSecondsConsumed", "CuSecondsAvailable",
+            "FutureCapacityMinutes", "ThrottleStage"]]),
         "health": {
-            "incidents": int(c["Incidents"]),
-            "seriousIncidents": int(c["SeriousIncidents"]),
-            "downtimeHours": round(float(c["DowntimeMinutes"]) / 60.0, 1),
-            "incidentsPerNode": float(c["IncidentRate"]),
-            "rawIncidentsPerNode": float(c["RawRate"]),
-            "fleetIncidentsPerNode": float(c["FleetRate"]),
-            "rateVsFleet": float(c["RateVsFleet"]),
-            "shrunkTowardFleet": (
-                "Rate is shrunk toward the fleet average in proportion to how "
-                "many nodes stand behind it, so a one-node capacity with a bad "
-                "month does not outrank a fleet."),
+            "meanUtilisationPct": round(float(c["MeanUtilisationPct"]), 1),
+            "peakUtilisationPct": round(float(c["PeakUtilisationPct"]), 1),
+            "throttledDays": int(c["ThrottledDays"]),
+            "windowDays": int(c["WindowDays"]),
+            "worstStage": c["WorstStage"],
+            "worstStageLabel": STAGE_LABEL.get(c["WorstStage"], c["WorstStage"]),
+            "peakFutureMinutes": round(float(c["PeakFutureMinutes"]), 1),
+            "interactiveRejected": int(c["InteractiveRejected"]),
+            "backgroundRejected": int(c["BackgroundRejected"]),
+            "policy": ("Fabric absorbs ten minutes of future capacity without "
+                       "throttling. Past that it delays interactive jobs by 20 "
+                       "seconds, then rejects them at an hour, then rejects "
+                       "everything at 24 hours."),
         },
-        "incidents": _records(mine[["OperationalIncidentId", "OpenedDate", "Severity",
-                                    "IncidentType", "DowntimeMinutes",
-                                    "ImpactedCustomers"]].head(50)),
+        "throttlingEvents": _records(mine.head(50)) if len(mine) else [],
+        "workspaces": _records(here[[
+            "WorkspaceId", "WorkspaceName", "PrimaryWorkload", "ShareOfCapacityPct"]]),
         "recommendations": [r for r in _recommendations() if r["target"] == capacity_id],
-    }
-
-
-@app.get("/api/lead-times")
-def lead_times():
-    """Lead time per hardware class, and how it has moved.
-
-    The table that makes "do not wait for the usual trigger" arguable rather
-    than assertable.
-    """
-    from planning import lead_time_drift
-
-    onto = get_ontology()
-    drift = lead_time_drift(onto["dim_lead_time_history"])
-    return {
-        "classes": drift,
-        "history": _records(onto["dim_lead_time_history"]),
-        "note": ("Lead-time history is generated. Present-day values match the "
-                 "lead times already used across the product."),
     }
 
 

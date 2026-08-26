@@ -35,10 +35,9 @@ ENTITIES = {
     # region holding one hardware class and ten identical buildings, which is
     # enough to say a region is filling and not enough to say what to buy.
     "dim_capacity": ("one row per Fabric capacity", SYNTH),
-    "dim_hardware": ("one row per hardware class", SYNTH),
-    "dim_lead_time_history": ("one row per hardware class per effective date", SYNTH),
-    "fact_capacity_usage_daily": ("one row per capacity per day", SYNTH),
-    "fact_operational_incident": ("one row per operational incident", SYNTH),
+    "dim_workspace": ("one row per workspace, assigned to a capacity", SYNTH),
+    "fact_capacity_cu_daily": ("one row per capacity per day, in CU seconds", SYNTH),
+    "fact_throttling_event": ("one row per throttling event", SYNTH),
     "fact_partial_grant": ("one row per partially-fulfilled request", SYNTH),
     # Real, and marked so. Everything else here is invented; these two are not.
     "dim_region_geography": ("one row per region, with coordinates", REAL),
@@ -218,9 +217,9 @@ def build_dim_datacentre(dim_region, usage=None, capacities=None,
         units = by_site["DeployedUnits"].sum()
         # A site runs one hardware class in this model, but take the dominant
         # one rather than assuming it, so a mixed site would report honestly.
-        cls = by_site["SKUClass"].agg(lambda s: s.mode().iat[0])
         dim["DeployedUnits"] = dim["DatacentreId"].map(units).fillna(0.0).round(1)
-        dim["SKUClass"] = dim["DatacentreId"].map(cls).fillna(dim["SKUClass"])
+        dim["CapacityUnits"] = dim["DatacentreId"].map(
+            by_site["CapacityUnits"].sum()).fillna(0).astype(int)
         dim["CapacityCount"] = dim["DatacentreId"].map(by_site.size()).fillna(0).astype(int)
         dim["Provenance"] = (
             "GENERATED - units and hardware read from the capacities in this "
@@ -230,8 +229,13 @@ def build_dim_datacentre(dim_region, usage=None, capacities=None,
     if capacity_usage is not None and len(capacity_usage):
         latest_day = capacity_usage["Date"].max()
         latest = capacity_usage[capacity_usage["Date"] == latest_day]
-        used = latest.groupby("DatacentreId")["UsedUnits"].sum()
-        dim["UsedUnits"] = dim["DatacentreId"].map(used).fillna(0.0).round(1)
+        # CU seconds consumed against CU seconds available, applied to the
+        # site's own units so the column keeps the meaning the rest of the
+        # product gives it.
+        by = latest.groupby("DatacentreId")[["CuSecondsConsumed", "CuSecondsAvailable"]].sum()
+        rate = (by["CuSecondsConsumed"] / by["CuSecondsAvailable"].replace(0, pd.NA)).clip(upper=1.0)
+        dim["UsedUnits"] = (dim["DeployedUnits"]
+                            * dim["DatacentreId"].map(rate).fillna(0.0)).round(1)
     else:
         # Utilisation is measured per region, so a site's used share is the
         # region rate applied to its own units. An apportionment, not a reading.
@@ -372,49 +376,40 @@ def build_dim_capacity(synthetic_dir) -> pd.DataFrame:
     return _synth(synthetic_dir, "capacity_inventory")
 
 
-def build_dim_hardware(synthetic_dir) -> pd.DataFrame:
-    """Grain: one hardware class, with what a unit physically is.
+def build_dim_workspace(synthetic_dir) -> pd.DataFrame:
+    """Grain: one workspace, assigned to one capacity.
 
-    `dim_sku` carries relative cost and performance per class. This carries the
-    vendor, CPU, cores and memory, so "move this off Intel-highmem" names two
-    machines that differ rather than two labels.
+    Fabric bills and sizes by capacity; workspaces are what you move between
+    them. Without this, "load balance across capacities" names no object.
     """
-    return _synth(synthetic_dir, "hardware_models")
+    return _synth(synthetic_dir, "dim_workspace")
 
 
-def build_dim_lead_time_history(synthetic_dir) -> pd.DataFrame:
-    """Grain: one hardware class at one effective date.
+def build_fact_capacity_cu_daily(synthetic_dir) -> pd.DataFrame:
+    """Grain: one capacity, one day, in CU seconds.
 
-    `dim_sku.LeadTimeDays` answers *how long*. This answers *is it getting
-    worse*, which is the question that decides whether to raise a purchase now
-    or at the usual trigger.
+    The Fabric-native measure. An F64 provides 64 CUs, so a day of it is
+    64 x 86,400 CU seconds, and consumption is measured against that.
+    Utilisation over 100% is bursting and is not by itself a fault -- what
+    matters is `FutureCapacityMinutes`, the smoothed overage that decides
+    which throttling stage the capacity is in.
     """
-    lt = _synth(synthetic_dir, "lead_time_history")
-    lt["EffectiveFrom"] = pd.to_datetime(lt["EffectiveFrom"]).dt.date.astype(str)
-    return lt.sort_values(["SKUClass", "EffectiveFrom"]).reset_index(drop=True)
+    cu = _synth(synthetic_dir, "capacity_cu_daily")
+    cu["Date"] = pd.to_datetime(cu["Date"]).dt.date.astype(str)
+    return cu
 
 
-def build_fact_capacity_usage_daily(synthetic_dir) -> pd.DataFrame:
-    """Grain: one capacity, one day.
+def build_fact_throttling_event(synthetic_dir) -> pd.DataFrame:
+    """Grain: one throttling event -- a capacity, a day, a stage.
 
-    Sums to `fact_usage_daily` per region per day by construction, so the
-    drill-down and the region screen cannot disagree.
+    Replaces the node-failure incidents an earlier model carried. Fabric
+    capacities do not fail; they delay interactive jobs, then reject them, then
+    reject everything, on thresholds Microsoft publishes.
     """
-    use = _synth(synthetic_dir, "capacity_usage_daily")
-    use["Date"] = pd.to_datetime(use["Date"]).dt.date.astype(str)
-    return use
-
-
-def build_fact_operational_incident(synthetic_dir) -> pd.DataFrame:
-    """Grain: one operational incident on one capacity.
-
-    Distinct from `fact_capacity_request`, which records someone asking for
-    more capacity. This records capacity misbehaving. Conflating them would
-    make a busy region look like a broken one.
-    """
-    ops = _synth(synthetic_dir, "operational_incidents")
-    ops["OpenedDate"] = pd.to_datetime(ops["OpenedDate"]).dt.date.astype(str)
-    return ops
+    ev = _synth(synthetic_dir, "throttling_events")
+    if len(ev):
+        ev["Date"] = pd.to_datetime(ev["Date"]).dt.date.astype(str)
+    return ev
 
 
 def build_fact_partial_grant(synthetic_dir) -> pd.DataFrame:
@@ -461,7 +456,7 @@ def build(
     dim_region = build_dim_region(tickets, synthetic_dir)
     usage = build_fact_usage_daily(synthetic_dir)
     capacities = build_dim_capacity(synthetic_dir)
-    cap_usage = build_fact_capacity_usage_daily(synthetic_dir)
+    cap_usage = build_fact_capacity_cu_daily(synthetic_dir)
     tables = {
         "dim_sku": build_dim_sku(synthetic_dir),
         "dim_region": dim_region,
@@ -474,10 +469,9 @@ def build(
         "fact_event": build_fact_event(synthetic_dir),
         "bridge_feature_region": build_bridge_feature_region(synthetic_dir),
         "dim_capacity": capacities,
-        "dim_hardware": build_dim_hardware(synthetic_dir),
-        "dim_lead_time_history": build_dim_lead_time_history(synthetic_dir),
-        "fact_capacity_usage_daily": cap_usage,
-        "fact_operational_incident": build_fact_operational_incident(synthetic_dir),
+        "dim_workspace": build_dim_workspace(synthetic_dir),
+        "fact_capacity_cu_daily": cap_usage,
+        "fact_throttling_event": build_fact_throttling_event(synthetic_dir),
         "fact_partial_grant": build_fact_partial_grant(synthetic_dir),
         "dim_region_geography": build_dim_region_geography(reference_dir),
         "bridge_region_fabric_availability":

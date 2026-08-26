@@ -1,10 +1,14 @@
-"""The three recommendations: do they make the case they claim to?
+"""The four Fabric recommendations: do they make the case they claim to?
 
-Each engine exists because a utilisation figure cannot produce its answer. So
-what is asserted here is mostly that the answer is not a utilisation ranking in
-disguise -- that an early purchase is genuinely below its trigger, that a
-hardware move is genuinely on a capacity with room, and that the licensing case
-is genuinely about the SKU and not about how full it is.
+Each exists because the utilisation figure cannot produce its answer on its own.
+So most of what is asserted here is that the answer is not a utilisation ranking
+in disguise -- that a scale-up is genuinely throttling or genuinely out of
+headroom, that a scale-down is genuinely idle and never something that
+throttled, and that the licensing case is about the SKU rather than the load.
+
+The throttling thresholds are Microsoft's, not this project's, so they are
+asserted against the published policy rather than against whatever the code
+currently does.
 """
 
 from __future__ import annotations
@@ -19,13 +23,17 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
 from planning import (  # noqa: E402
-    CROWDED_PCT,
+    DOMINANT_WORKSPACE_PCT,
     FREE_VIEWER_CU,
-    UNHEALTHY_MULTIPLE,
-    adjusted_trigger,
-    better_hardware,
+    IDLE_PCT,
+    STAGE_RANK,
+    SUSTAINED_HIGH_PCT,
+    THROTTLED_DAYS_FOR_SCALE,
     capacity_health,
+    crosses_slow_boundary,
     next_sku,
+    previous_sku,
+    throttle_stage,
 )
 from planning import recommend  # noqa: E402
 
@@ -38,176 +46,149 @@ def onto():
 
 
 # --------------------------------------------------------------------------
-# the trigger
+# the published policy
 # --------------------------------------------------------------------------
 
 
-def test_the_order_window_is_the_whole_lead_time_not_just_the_drift():
-    """An order goes in when time-to-trigger falls below the *whole* wait.
+@pytest.mark.parametrize("minutes,expected", [
+    (0, "none"), (10, "none"),
+    (10.5, "interactive_delay"), (60, "interactive_delay"),
+    (61, "interactive_rejection"), (24 * 60, "interactive_rejection"),
+    (24 * 60 + 1, "background_rejection"), (99_999, "background_rejection"),
+])
+def test_throttling_stages_match_microsofts_thresholds(minutes, expected):
+    """Ten minutes free, then delay, then interactive rejection, then all of it.
 
-    The first draft subtracted only the days a lead time had drifted, which
-    understated the window by however long the lead time already was and left
-    the recommendation firing for almost nothing. At 0.2 points a day and a
-    45-day wait the window is nine points, not the two that 25 days of drift
-    would give.
+    https://learn.microsoft.com/en-us/fabric/enterprise/throttling
+    These boundaries are policy, not a choice this project gets to make, so they
+    are pinned at the exact minute rather than approximately.
     """
-    raise_at, why = adjusted_trigger(85.0, lead_days=45, drift=None,
-                                     growth_pct_per_day=0.2)
-    assert raise_at == pytest.approx(85.0 - 45 * 0.2, abs=0.05)
-    assert "45 days to arrive" in why
+    stage, effect = throttle_stage(minutes)
+    assert stage == expected, f"{minutes} min should be {expected}, got {stage}"
+    assert effect, "every stage has to say what a user actually experiences"
 
 
-def test_a_flat_region_needs_no_early_order():
-    """Nothing is approaching a trigger it is not moving toward."""
-    raise_at, why = adjusted_trigger(85.0, lead_days=45, drift=None,
-                                     growth_pct_per_day=0.0)
-    assert raise_at == 85.0 and why == ""
+def test_the_stages_are_ordered_worst_last():
+    assert (STAGE_RANK["none"] < STAGE_RANK["interactive_delay"]
+            < STAGE_RANK["interactive_rejection"] < STAGE_RANK["background_rejection"])
 
 
-def test_the_trigger_is_never_argued_below_half():
-    """Past that "buy sooner" becomes "buy constantly", which is not advice."""
-    raise_at, _ = adjusted_trigger(80.0, lead_days=900, growth_pct_per_day=0.5,
-                                   drift=None)
-    assert raise_at == 40.0
+def test_the_sku_ladder_steps_both_ways():
+    assert next_sku("F64") == "F128"
+    assert previous_sku("F64") == "F32"
+    assert next_sku("F2048") is None, "nothing above the top of the ladder"
+    assert previous_sku("F2") is None, "nothing below the bottom"
 
 
-def test_drift_is_explained_only_when_it_qualifies():
-    """A headline that claims the wait grew must be backed by the detail.
+def test_the_slow_scaling_boundary_is_flagged():
+    """Microsoft notes scaling across F256/F512 can be slower, which is worth
+    saying on a recommendation that does it."""
+    assert crosses_slow_boundary("F256", "F512")
+    assert not crosses_slow_boundary("F64", "F128")
+    assert not crosses_slow_boundary("F512", "F1024")
 
-    An earlier version said "the wait has grown" for a class that had drifted
-    fifteen per cent, below the threshold, so no drift sentence was generated
-    and the claim stood on nothing.
+
+# --------------------------------------------------------------------------
+# scale up
+# --------------------------------------------------------------------------
+
+
+def test_scale_up_covers_throttling_and_no_headroom(onto):
+    """Two different cases, and the copy has to tell them apart.
+
+    A capacity at interactive rejection is refusing users now. One at ninety per
+    cent that has never throttled is not hurting anyone yet but has nothing left
+    to absorb a surge -- and Fabric's overage protection is only ten minutes.
     """
-    small = {"was": 26.0, "now": 30.0, "changePct": 15.0, "changeDays": 4.0,
-             "since": "2025-03-01", "supplier": "Dell"}
-    big = {"was": 20.0, "now": 45.0, "changePct": 125.0, "changeDays": 25.0,
-           "since": "2025-03-01", "supplier": "HPE"}
-    _, quiet = adjusted_trigger(85.0, 30, small, 0.2)
-    _, loud = adjusted_trigger(85.0, 45, big, 0.2)
-    assert "used to be" not in quiet
-    assert "used to be" in loud and "125" in loud
+    recs = recommend.scale_up(onto)
+    assert recs, "nothing to scale in an estate that throttles somewhere"
+    throttling = [r for r in recs if r.evidence["isThrottling"]]
+    airless = [r for r in recs if not r.evidence["isThrottling"]]
+    assert throttling, "no throttling capacity surfaced"
+    for r in throttling:
+        assert r.evidence["throttledDays"] >= THROTTLED_DAYS_FOR_SCALE
+        assert r.evidence["worstStage"] != "none"
+    for r in airless:
+        assert r.evidence["meanUtilisationPct"] >= SUSTAINED_HIGH_PCT
 
 
-# --------------------------------------------------------------------------
-# procurement
-# --------------------------------------------------------------------------
+def test_scale_up_never_promises_an_order_date(onto):
+    """Scaling an F SKU is immediate. An earlier model raised purchase orders
+    against provisioning lead times, which Fabric does not have -- if an order
+    date ever reappears here, the Azure model has crept back in."""
+    for r in recommend.scale_up(onto):
+        assert r.evidence.get("immediate") is True
+        assert "orderByDate" not in r.evidence
+        assert "leadTime" not in str(r.evidence)
+        assert "order" not in r.headline.lower()
 
 
-def test_some_purchases_are_raised_below_their_trigger(onto):
-    """The case review asked for, and the one a threshold cannot make."""
-    early = [r for r in recommend.procurement(onto)
-             if r.evidence["raisedEarly"]]
-    assert early, "no purchase is raised before its trigger -- lead time is inert"
-    for r in early:
+def test_scale_up_always_names_a_real_next_sku(onto):
+    from planning import F_SKUS
+
+    for r in recommend.scale_up(onto):
         e = r.evidence
-        assert e["utilisationPct"] < e["standardTriggerPct"], (
-            f"{r.target} is flagged early at {e['utilisationPct']}% against a "
-            f"{e['standardTriggerPct']}% trigger")
-
-
-def test_at_least_one_early_raise_is_driven_by_drift(onto):
-    early = [r for r in recommend.procurement(onto)
-             if r.evidence["raisedEarly"] and r.evidence["leadTimeDrifted"]]
-    assert early, "no early raise cites a lead time that actually moved"
-    r = early[0]
-    assert r.evidence["leadTimeWasDays"] < r.evidence["leadTimeDays"]
-    assert "used to be" in r.detail
-
-
-def test_the_headline_never_claims_drift_the_evidence_lacks(onto):
-    for r in recommend.procurement(onto):
-        if "wait has grown" in r.headline:
-            assert r.evidence["leadTimeDrifted"], (
-                f"{r.target}: headline claims drift, evidence says none")
-
-
-def test_procurement_defaults_to_each_site_own_threshold(onto):
-    """A flat trigger flagged two capacities in three.
-
-    This fleet runs at eighty to ninety per cent, so 70% is not a trigger, it is
-    a description of the estate. Forcing one number must still be possible, and
-    must visibly differ from the per-site default.
-    """
-    per_site = recommend.procurement(onto)
-    forced = recommend.procurement(onto, trigger_pct=70.0)
-    assert len(forced) > len(per_site), (
-        "forcing a 70% trigger did not widen the net, so the per-site default "
-        "is probably not being used")
-
-
-def test_all_recommendations_agrees_with_the_engines(onto):
-    """Two entry points must not give two answers.
-
-    `all_recommendations` once passed a flat trigger of its own, quietly
-    overriding the per-site thresholds and inflating procurement by half.
-    """
-    combined = recommend.all_recommendations(onto)
-    counts = {}
-    for r in combined:
-        counts[r["kind"]] = counts.get(r["kind"], 0) + 1
-    assert counts.get("procurement", 0) == len(recommend.procurement(onto))
-    assert counts.get("workload_change", 0) == len(recommend.workload_change(onto))
-    assert counts.get("licensing", 0) == len(recommend.licensing(onto))
+        assert e["scaleTo"] in F_SKUS
+        assert e["scaleToUnits"] == F_SKUS[e["scaleTo"]]
+        assert e["scaleToUnits"] > e["capacityUnits"]
 
 
 # --------------------------------------------------------------------------
-# workload change
+# load balance
 # --------------------------------------------------------------------------
 
 
-def test_every_move_is_on_a_capacity_with_room(onto):
-    """The whole point: capacity is not the problem on these.
-
-    A crowded capacity that also has incidents is a buying case, and procurement
-    already covers it. If a move ever appears above the crowding line the two
-    recommendations are arguing with each other.
-    """
-    for r in recommend.workload_change(onto):
-        assert r.evidence["utilisationPct"] < CROWDED_PCT, (
-            f"{r.target} is {r.evidence['utilisationPct']}% full -- that is a "
-            f"purchase, not a move")
+def test_a_move_needs_a_dominant_workspace_and_somewhere_to_go(onto):
+    for r in recommend.load_balance(onto):
+        e = r.evidence
+        assert e["workspaceSharePct"] >= DOMINANT_WORKSPACE_PCT
+        assert e["workspacesOnCapacity"] > 1, (
+            "moving the only workspace empties the capacity -- that is "
+            "consolidation, not load balancing")
+        assert e["moveTo"] and e["moveTo"] != r.target
 
 
-def test_every_move_is_measurably_worse_than_the_fleet(onto):
-    for r in recommend.workload_change(onto):
-        assert r.evidence["rateVsFleet"] >= UNHEALTHY_MULTIPLE
-        assert r.evidence["incidents"] >= 3, "moving on one or two incidents is noise"
+def test_a_move_never_targets_a_throttling_capacity(onto):
+    """Rebalancing onto something already refusing operations moves the problem."""
+    health = recommend._health(onto)
+    throttling = set(health[health["ThrottledDays"] > 0]["CapacityId"])
+    for r in recommend.load_balance(onto):
+        assert r.evidence["moveTo"] not in throttling, (
+            f"{r.target} would move onto {r.evidence['moveTo']}, which throttles")
 
 
-def test_a_move_never_recommends_less_memory(onto):
-    """Trading an incident problem for a capability problem is not a fix."""
-    hw = onto["dim_hardware"].set_index("SKUClass")
-    for r in recommend.workload_change(onto):
-        now = hw.loc[r.evidence["skuClass"], "MemoryGB"]
-        assert r.evidence["moveTo"]["memoryGB"] >= now, (
-            f"{r.target}: moving from {now}GB to "
-            f"{r.evidence['moveTo']['memoryGB']}GB")
+def test_a_move_stays_inside_the_region(onto):
+    caps = onto["dim_capacity"].set_index("CapacityId")
+    for r in recommend.load_balance(onto):
+        assert caps.loc[r.evidence["moveTo"], "Region"] == r.evidence["region"]
 
 
-def test_the_best_hardware_has_nowhere_better_to_go():
-    """`better_hardware` returning None is an answer, not a gap."""
-    import pandas as pd
-    from src.synthdata.fleet import hardware_models
-
-    hw = hardware_models()
-    best = hw.sort_values("RelativeIncidentRate").iloc[0]["SKUClass"]
-    assert better_hardware(best, hw) is None, (
-        f"{best} is the most reliable class but something was recommended over it")
+# --------------------------------------------------------------------------
+# scale down
+# --------------------------------------------------------------------------
 
 
-def test_incident_rate_is_shrunk_toward_the_fleet(onto):
-    """Unshrunk, a one-node capacity with a bad month outranks an estate.
+def test_scale_down_never_touches_anything_that_throttled(onto):
+    """A capacity quiet six days a week and overloaded on the seventh is sized
+    for the seventh. Averages alone would recommend shrinking it."""
+    for r in recommend.scale_down(onto):
+        assert r.evidence["throttledDays"] == 0
+        assert r.evidence["meanUtilisationPct"] < IDLE_PCT
 
-    The same empirical-Bayes device already applied to site failure rates. A
-    small capacity's rate must sit closer to the fleet than its raw rate does.
-    """
-    h = capacity_health(onto["dim_capacity"], onto["fact_operational_incident"],
-                        onto["fact_capacity_usage_daily"])
-    small = h[(h["Nodes"] <= 1) & (h["Incidents"] >= 4)]
-    assert len(small), "no small, busy capacity to check shrinkage against"
-    for c in small.itertuples():
-        assert abs(c.IncidentRate - c.FleetRate) < abs(c.RawRate - c.FleetRate), (
-            f"{c.CapacityId}: shrinkage moved the rate away from the fleet")
+
+def test_scale_down_leaves_room_for_the_observed_peak(onto):
+    """Halving a capacity whose peak would then exceed its ceiling trades a
+    standing cost for a throttling incident."""
+    for r in recommend.scale_down(onto):
+        assert r.evidence["peakAfterScaleDownPct"] < SUSTAINED_HIGH_PCT
+
+
+def test_scale_down_warns_when_it_would_cross_below_f64(onto):
+    """Saving on compute while forcing every viewer onto a Pro licence can cost
+    more than it saves, so the recommendation has to say so."""
+    for r in recommend.scale_down(onto):
+        if r.evidence["losesFreeViewers"]:
+            assert "Pro" in r.detail or "PPU" in r.detail
 
 
 # --------------------------------------------------------------------------
@@ -216,14 +197,12 @@ def test_incident_rate_is_shrunk_toward_the_fleet(onto):
 
 
 def test_licensing_only_flags_the_rung_below_the_cliff(onto):
-    """Telling an F2 to become an F64 is arithmetic, not advice."""
     for r in recommend.licensing(onto):
         assert r.evidence["capacityUnits"] < FREE_VIEWER_CU
         assert next_sku(r.evidence["fabricSku"]) == "F64"
 
 
 def test_licensing_cites_the_rule_and_its_source(onto):
-    """A commercial recommendation that cannot be checked will not be believed."""
     recs = recommend.licensing(onto)
     assert recs
     for r in recs[:5]:
@@ -231,32 +210,60 @@ def test_licensing_cites_the_rule_and_its_source(onto):
         assert r.evidence["source"].startswith("https://learn.microsoft.com")
 
 
-def test_licensing_is_not_a_utilisation_ranking(onto):
-    """These capacities are flagged for their size, not their fullness.
-
-    If the licensing list were sorted by how full things are it would be a
-    worse copy of the procurement list.
-    """
-    caps = onto["dim_capacity"].set_index("CapacityId")
-    flagged = {r.target for r in recommend.licensing(onto)}
-    assert flagged
-    assert {caps.loc[t, "FabricSku"] for t in flagged} == {"F32"}
-
-
 # --------------------------------------------------------------------------
 # shape
 # --------------------------------------------------------------------------
 
 
+def test_capacity_health_reads_a_window_not_a_day(onto):
+    """A single throttled day is not evidence: capacities are self-healing and
+    burndown clears a surge."""
+    h = capacity_health(onto["dim_capacity"], onto["fact_capacity_cu_daily"],
+                        onto["fact_throttling_event"], window_days=30)
+    assert (h["WindowDays"] > 1).all()
+    assert (h["ThrottledDays"] <= h["WindowDays"]).all()
+
+
+def test_bursting_is_not_treated_as_a_fault(onto):
+    """Utilisation over 100% is normal in Fabric -- it is what smoothing exists
+    for. If every bursting capacity were flagged, the list would be noise."""
+    h = recommend._health(onto)
+    bursting = h[h["PeakUtilisationPct"] > 100]
+    assert len(bursting), "expected some capacities to burst"
+    quiet = bursting[bursting["ThrottledDays"] == 0]
+    assert len(quiet), "every bursting capacity is flagged -- bursting is not a fault"
+    flagged = {r.target for r in recommend.scale_up(onto)}
+    assert not (set(quiet[quiet["MeanUtilisationPct"] < SUSTAINED_HIGH_PCT]["CapacityId"])
+                & flagged)
+
+
 def test_every_recommendation_carries_its_evidence(onto):
-    """Review rejected advice that asserted without showing its working."""
     for r in recommend.all_recommendations(onto):
         assert r["headline"] and r["detail"]
         assert len(r["detail"]) > 60, f"{r['target']}: detail is a stub"
-        assert r["evidence"].get("region"), f"{r['target']}: no region"
-        assert r["kind"] in ("procurement", "workload_change", "licensing")
+        assert r["evidence"].get("region")
+        assert r["kind"] in ("scale_up", "load_balance", "scale_down", "licensing")
 
 
 def test_recommendations_are_ordered_by_urgency(onto):
     urg = [r["urgency"] for r in recommend.all_recommendations(onto)]
     assert urg == sorted(urg, reverse=True)
+
+
+def test_no_azure_hardware_vocabulary_survives(onto):
+    """Fabric exposes no hardware, no vendors and no lead times. If any of those
+    words reappear in what a user reads, the old model has crept back."""
+    import re
+
+    # Whole words only. A substring check flagged "Real-Time Intelligence" for
+    # containing "intel", which is a Fabric workload and exactly the vocabulary
+    # this is meant to protect.
+    banned = ["intel", "amd", "vendor", "lead time", "provisioning",
+              "node", "nodes", "poweredge", "proliant", "gpu"]
+    pattern = re.compile(r"\b(" + "|".join(re.escape(w) for w in banned) + r")\b")
+    for r in recommend.all_recommendations(onto):
+        text = f"{r['headline']} {r['detail']}".lower()
+        hit = pattern.search(text)
+        assert not hit, (
+            f"{r['target']} uses the Azure vocabulary {hit.group(0)!r}: "
+            f"...{text[max(0, hit.start() - 50):hit.end() + 50]}...")
