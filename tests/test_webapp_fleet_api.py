@@ -125,6 +125,52 @@ def test_unknown_region_on_the_map_is_a_404():
     assert e.value.status_code == 404
 
 
+def test_available_workloads_are_derived_not_invented():
+    """Microsoft publishes only the gaps, so the available side is computed.
+
+    Nine workloads are named in the Fabric overview; a region supports all of
+    them less any the published exceptions sit inside. Both sides have to be
+    present, because a planner choosing where to put a workload is asking what
+    the region *can* do and the gaps answer only half of that.
+    """
+    d = api.map_region("southcentralus")
+    ok, part, gaps = (d["workloadsAvailable"], d["workloadsPartlyAffected"],
+                      d["unavailableFeatures"])
+    assert ok, "no workloads reported as available"
+    assert gaps, "southcentralus has published gaps"
+    assert part, "gaps must be attributed to the areas they sit in"
+    # Nothing can be both fully available and missing a feature.
+    assert not (set(ok) & set(part)), f"{set(ok) & set(part)} is in both lists"
+
+
+def test_a_region_with_no_gaps_reports_all_nine():
+    """westus2 carries the full set in Microsoft's table."""
+    d = api.map_region("westus2")
+    assert len(d["workloadsAvailable"]) == 9, d["workloadsAvailable"]
+    assert not d["unavailableFeatures"] and not d["workloadsPartlyAffected"]
+
+
+def test_affected_is_not_the_same_as_absent():
+    """A region can have "all Fabric workloads" and still lack features in two.
+
+    Reading "Real-Time Intelligence unavailable" off southcentralus would be
+    wrong -- the workload runs, two named features inside it do not -- and that
+    is exactly the misreading the split exists to prevent.
+    """
+    d = api.map_region("southcentralus")
+    assert d["allFabricWorkloads"] is True
+    assert "Real-Time Intelligence" in d["workloadsPartlyAffected"]
+    assert len(d["workloadsAvailable"]) + len(
+        [w for w in d["workloadsPartlyAffected"] if w != "Fabric platform"]) == 9
+
+
+def test_the_map_marker_carries_both_sides_too():
+    by = {p["region"]: p for p in api.capacity_map()["points"]}
+    for region in ("southcentralus", "westus2"):
+        p = by[region]
+        assert "workloadsAvailable" in p and p["workloadsAvailable"]
+
+
 # --------------------------------------------------------------------------
 # capacities
 # --------------------------------------------------------------------------

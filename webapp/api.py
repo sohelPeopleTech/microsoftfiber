@@ -1046,6 +1046,34 @@ def _capacity_health():
                            onto["fact_capacity_usage_daily"])
 
 
+def _availability(region: str) -> dict:
+    """What Fabric runs in a region, and what does not.
+
+    The published table lists only the gaps, so the available side is derived:
+    the nine workloads Microsoft names, less any the gaps sit inside. That
+    distinction matters because a region can support "all Fabric workloads" and
+    still be missing pieces of two of them.
+    """
+    avail = get_ontology()["bridge_region_fabric_availability"].set_index("Region")
+    if region not in avail.index:
+        return {"allFabricWorkloads": None, "powerBIOnly": None,
+                "workloadsAvailable": [], "workloadsPartlyAffected": [],
+                "unavailableFeatures": []}
+    a = avail.loc[region]
+
+    def _split(col):
+        raw = a.get(col)
+        return [x for x in str(raw).split(";") if x] if isinstance(raw, str) else []
+
+    return {
+        "allFabricWorkloads": bool(a["AllFabricWorkloads"]),
+        "powerBIOnly": bool(a["PowerBIOnly"]),
+        "workloadsAvailable": _split("WorkloadsAvailable"),
+        "workloadsPartlyAffected": _split("WorkloadsPartlyAffected"),
+        "unavailableFeatures": _split("UnavailableFeatures"),
+    }
+
+
 @app.get("/api/map")
 def capacity_map():
     """Every region as a point, with enough to decide without opening it.
@@ -1086,9 +1114,8 @@ def capacity_map():
         f = flags.get(region, {})
         e = exposure.get(region, {})
         g = geo.loc[region] if region in geo.index else None
-        a = avail.loc[region] if region in avail.index else None
-        gaps = ([s for s in str(a["UnavailableFeatures"]).split(";") if s]
-                if a is not None and isinstance(a["UnavailableFeatures"], str) else [])
+        av = _availability(region)
+        gaps = av["unavailableFeatures"]
         c = cap_counts.loc[region] if region in cap_counts.index else None
         points.append({
             "region": region,
@@ -1109,9 +1136,11 @@ def capacity_map():
             "coresPending": e.get("CoresPending", 0),
             "failed": e.get("TicketsFlagged", 0),
             "exposure": e.get("RevenueExposureUSD", 0),
-            "allFabricWorkloads": bool(a["AllFabricWorkloads"]) if a is not None else None,
-            "powerBIOnly": bool(a["PowerBIOnly"]) if a is not None else None,
+            "allFabricWorkloads": av["allFabricWorkloads"],
+            "powerBIOnly": av["powerBIOnly"],
             "unavailableFeatures": gaps,
+            "workloadsAvailable": av["workloadsAvailable"],
+            "workloadsPartlyAffected": av["workloadsPartlyAffected"],
             "recommendations": {
                 kind: by_region_kind.get((region, kind), 0)
                 for kind in ("procurement", "workload_change", "licensing")
@@ -1195,10 +1224,8 @@ def map_region(region: str):
     for r in recs:
         by_kind.setdefault(r["kind"], []).append(r)
 
-    avail = onto["bridge_region_fabric_availability"].set_index("Region")
-    a = avail.loc[region] if region in avail.index else None
-    gaps = ([s for s in str(a["UnavailableFeatures"]).split(";") if s]
-            if a is not None and isinstance(a["UnavailableFeatures"], str) else [])
+    av = _availability(region)
+    gaps = av["unavailableFeatures"]
 
     fleet_rate = float(health["FleetRate"].iloc[0]) if len(health) else 0.0
     return {
@@ -1239,7 +1266,12 @@ def map_region(region: str):
         "recommendations": by_kind,
         "recommendationCounts": {k: len(v) for k, v in by_kind.items()},
         "unavailableFeatures": gaps,
-        "allFabricWorkloads": bool(a["AllFabricWorkloads"]) if a is not None else None,
+        "allFabricWorkloads": av["allFabricWorkloads"],
+        "workloadsAvailable": av["workloadsAvailable"],
+        "workloadsPartlyAffected": av["workloadsPartlyAffected"],
+        "workloadNote": (
+            "The nine workloads Microsoft names for Fabric. A workload listed as "
+            "affected still runs here -- named features inside it do not."),
     }
 
 

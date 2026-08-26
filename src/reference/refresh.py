@@ -86,6 +86,46 @@ def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", tail.lower())
 
 
+#: The nine workloads Microsoft names under "Components of Microsoft Fabric".
+#: https://learn.microsoft.com/en-us/fabric/fundamentals/microsoft-fabric-overview
+FABRIC_WORKLOADS = [
+    "Power BI",
+    "Databases",
+    "Data Factory",
+    "Industry Solutions",
+    "Real-Time Intelligence",
+    "Data Engineering",
+    "Data Science",
+    "Data Warehouse",
+    "Fabric IQ (preview)",
+]
+
+#: Docs path fragment -> the workload it belongs to. The availability table
+#: links every feature it names, and the link target says which workload the
+#: feature sits in -- so "which workload is affected" is read out of Microsoft's
+#: own URLs rather than guessed from the feature name.
+_AREA_BY_PATH = {
+    "real-time-intelligence": "Real-Time Intelligence",
+    "iq/": "Fabric IQ (preview)",
+    "industry": "Industry Solutions",
+    "data-factory": "Data Factory",
+    "data-engineering": "Data Engineering",
+    "data-science": "Data Science",
+    "data-warehouse": "Data Warehouse",
+    "database": "Databases",
+    "power-bi": "Power BI",
+    "powerbi": "Power BI",
+    "apps/": "Fabric platform",
+}
+
+
+def _area_for(path: str) -> str:
+    for fragment, workload in _AREA_BY_PATH.items():
+        if fragment in path:
+            return workload
+    return "Fabric platform"
+
+
 def availability(regions: list[str]) -> pd.DataFrame:
     # This Python build ships no CA store of its own; certifi is already a
     # declared dependency for exactly this reason.
@@ -105,20 +145,31 @@ def availability(regions: list[str]) -> pd.DataFrame:
         slug = _slug(name)
         if slug not in wanted:
             continue
-        # Cells carry markdown links; the link text is the feature name.
-        # Runs of whitespace are collapsed because the upstream table contains
-        # the odd double space, and a refresh should not rewrite the file with
-        # a diff that is purely cosmetic.
-        named = [re.sub(r"\s+", " ", n).strip()
-                 for n in re.findall(r"\[([^\]]+)\]\([^)]*\)", gaps)]
+        # Cells carry markdown links; the link text is the feature name and the
+        # link target says which workload it belongs to. Runs of whitespace are
+        # collapsed because the upstream table contains the odd double space,
+        # and a refresh should not rewrite the file with a purely cosmetic diff.
+        linked = [(re.sub(r"\s+", " ", text).strip(), href)
+                  for text, href in re.findall(r"\[([^\]]+)\]\(([^)]*)\)", gaps)]
+        named = [text for text, _ in linked]
         if not named and gaps and not gaps.lower().startswith("power bi only"):
             named = [re.sub(r"\s+", " ", gaps).strip()]
+        # Which of the nine workloads the missing features sit in. A region can
+        # have "all Fabric workloads" and still be missing pieces of two of
+        # them, which is the distinction the product needs to draw.
+        affected = sorted({_area_for(href) for _, href in linked})
+        full_workloads = "✅" in fabric
+        available = ([w for w in FABRIC_WORKLOADS if w not in affected]
+                     if full_workloads else ["Power BI"])
         rows.append({
             "Region": slug,
             "FabricRegionName": name,
             "PowerBI": "✅" in pbi,
-            "AllFabricWorkloads": "✅" in fabric,
-            "PowerBIOnly": "✅" in pbi and "✅" not in fabric,
+            "AllFabricWorkloads": full_workloads,
+            "PowerBIOnly": "✅" in pbi and not full_workloads,
+            "WorkloadsAvailable": ";".join(available),
+            "WorkloadsAvailableCount": len(available),
+            "WorkloadsPartlyAffected": ";".join(affected),
             "UnavailableFeatureCount": len(named),
             "UnavailableFeatures": ";".join(named),
             "IsSynthetic": False,

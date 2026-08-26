@@ -451,6 +451,29 @@ h3.sec:first-of-type { margin-top: .4rem; }
   background: var(--warn-wash); border-left: 3px solid var(--warn); border-radius: 2px;
 }
 
+/* What runs here, beside what does not. Available first: a planner choosing
+   where to place a workload is asking what the region can do, and the gaps
+   answer only half of that. */
+.workloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: .8rem; }
+.wl { padding: .6rem .8rem; border-radius: 3px; border-left: 3px solid var(--rule-strong); }
+.wl.ok { background: var(--good-wash); border-left-color: var(--good); }
+.wl.part { background: var(--warn-wash); border-left-color: var(--warn); }
+.wl h5 { margin: 0 0 .4rem; font-size: .82rem; font-weight: 600; }
+.wl.ok h5 { color: var(--good); }
+.wl.part h5 { color: var(--warn); }
+.wl p { margin: 0; display: flex; flex-wrap: wrap; gap: .25rem; }
+.wl-chip {
+  display: inline-block; padding: .1rem .4rem; border-radius: 3px;
+  font-size: .76rem; background: var(--card);
+}
+.wl-chip.ok { color: var(--good); }
+.wl-chip.part { color: var(--warn); }
+.wl .wl-detail {
+  display: block; margin: .45rem 0 0; font-size: .78rem;
+  color: var(--ink-2); line-height: 1.4;
+}
+.wl-src { margin: .5rem 0 0; font-size: .78rem; color: var(--ink-3); max-width: 100ch; }
+
 /* Four dates in a row, each with the sentence that makes it actionable. A
    crossing date with no lead time beside it is the thing this page exists to
    stop being read on its own. */

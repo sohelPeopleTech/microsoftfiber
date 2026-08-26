@@ -985,10 +985,12 @@ function mapCard(p) {
         <span class="t3">· ${num(p.failed)} failed requests</span></b></div>` : ""}
     </div>
 
-    ${gaps.length ? `<p class="gaps"><b>${gaps.length} Fabric feature(s) unavailable here</b>
+    ${gaps.length ? `<p class="gaps">
+      <b>${num((p.workloadsAvailable || []).length)} of 9 workloads fully available.</b>
+      ${gaps.length} feature(s) missing across ${(p.workloadsPartlyAffected || []).length} area(s)
       — ${gaps.map(esc).join(", ")}.
       <span class="t3">Microsoft's published availability, not a projection.</span></p>`
-      : `<p class="gaps ok">All Fabric workloads available here.
+      : `<p class="gaps ok">All 9 Fabric workloads available here, with nothing missing.
          <span class="t3">Microsoft's published availability.</span></p>`}
 
     ${(recs.procurement || recs.workload_change || recs.licensing) ? `
@@ -1255,6 +1257,46 @@ function sitesBlock(d) {
   </p>`;
 }
 
+/* What Fabric actually runs here.
+
+   This showed only the gaps, which answered half the question: a planner
+   deciding where to put a workload needs to know what the region *does* run.
+   Microsoft publishes only the exceptions, so the available side is derived --
+   the nine workloads they name, less any the exceptions sit inside.
+
+   The distinction that matters and was previously invisible: a region can
+   support "all Fabric workloads" and still be missing named features within two
+   of them. Affected is not the same as absent, and the block says so rather
+   than letting a reader infer the worse reading. */
+function workloadBlock(d) {
+  const ok = d.workloadsAvailable || [];
+  const part = d.workloadsPartlyAffected || [];
+  const gaps = d.unavailableFeatures || [];
+  if (!ok.length && !gaps.length) return "";
+
+  return `
+  <div class="workloads">
+    <div class="wl ok">
+      <h5>${num(ok.length)} workload(s) fully available</h5>
+      <p>${ok.map((w) => `<span class="wl-chip ok">${esc(w)}</span>`).join("")}</p>
+    </div>
+    ${part.length ? `
+    <div class="wl part">
+      <h5>${num(part.length)} area(s) with a feature missing</h5>
+      <p>${part.map((w) => `<span class="wl-chip part">${esc(w)}</span>`).join("")}</p>
+      <p class="wl-detail"><b>Not available:</b> ${gaps.map(esc).join(", ")}.
+        These areas still run here — the named features inside them do not.</p>
+    </div>` : `
+    <div class="wl ok">
+      <h5>Nothing missing</h5>
+      <p class="wl-detail">Every Fabric workload and feature Microsoft tracks is available in this region.</p>
+    </div>`}
+  </div>
+  <p class="wl-src">Microsoft's published regional availability, refreshed from Fabric
+    documentation — not a projection and not generated. A region with plenty of headroom is
+    still the wrong home for a workload it cannot run.</p>`;
+}
+
 function mapDetail(d) {
   const t = d.totals;
   return `
@@ -1268,11 +1310,7 @@ function mapDetail(d) {
       <a class="closer" href="#" id="detail-close" aria-label="Close">×</a>
     </header>
     <div class="body">
-      ${d.unavailableFeatures.length ? `<p class="gapline">
-        <b>${d.unavailableFeatures.length} Fabric workload(s) do not run here</b> —
-        ${d.unavailableFeatures.map(esc).join(", ")}.
-        <span class="t3">Microsoft's published availability. A region with headroom is
-        still the wrong home for a workload it cannot run.</span></p>` : ""}
+      ${workloadBlock(d)}
 
       <h3 class="sec">When does it hit the threshold?</h3>
       ${whenBlock(d)}
