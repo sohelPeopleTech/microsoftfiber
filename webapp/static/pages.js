@@ -55,7 +55,7 @@ PAGES["/"] = async (view) => {
       { term: "Manual review", means: "Denial causes with no automated remediation \u2014 quota policy, network faults and unrecorded causes require engineering or account-team engagement rather than a platform action." },
     ],
     next: "Review the denial reason analysis to identify the applicable remediation, then action any region showing a negative value in 'Days to order-by' \u2014 those procurement windows have elapsed.",
-    sources: "ICM capacity incident extract, subscription ARR reference, daily regional utilisation, and hardware provisioning lead times.",
+    sources: "ICM capacity-request extract, subscription ARR reference, and daily Fabric capacity consumption.",
   }) + title("Overview", `Everything across all regions — as of ${String(d.asOf).slice(0, 10)}`) + `
 
   <div class="kpis">
@@ -199,14 +199,14 @@ async function showRecommendation(region) {
 
     <div class="kpis" style="margin:0 0 1rem">
       ${kpi("Utilisation", pct(d.utilisationPct, 1),
-            `${num(Math.round(d.usedUnits))} of ${num(Math.round(d.deployedUnits))} cores`,
+            `${num(Math.round(d.usedUnits))} of ${num(Math.round(d.deployedUnits))} CU`,
             d.thresholdUsedPct > 0 ? "bad" : "")}
       ${kpi("Safety threshold", pct(d.thresholdPct, 0),
             d.thresholdUsedPct > 0
               ? `threshold utilised by ${d.thresholdUsedPct.toFixed(1)}%`
-              : `${num(Math.round(d.freeUnits))} cores free`,
+              : `${num(Math.round(d.freeUnits))} CU free`,
             d.thresholdUsedPct > 0 ? "bad" : "good")}
-      ${kpi("Cores pending", num(Math.round(d.coresPending)),
+      ${kpi("CU pending", num(Math.round(d.coresPending)),
             `owed to ${d.customersWaiting} customer(s)`, d.coresPending ? "bad" : "good")}
     </div>
 
@@ -252,7 +252,7 @@ const CHART_DATA = {};
 /* Hover that follows the cursor rather than waiting on the browser's own
    tooltip. `<title>` needed a second of stillness and could not show more than
    one line, which is no use on a chart whose whole point is "this month, this
-   many cores, because of this deal". */
+   many CU, because of this deal". */
 function wireCharts(root) {
   (root || document).querySelectorAll("svg[data-chart]").forEach((svg) => {
     const spec = CHART_DATA[svg.dataset.chart];
@@ -312,7 +312,7 @@ function demandChart(d) {
     W, H,
     points: all.map((m, i) => ({
       x: x(i), y: y(m.cores),
-      html: `<b>${esc(m.month)}</b><br>${num(Math.round(m.cores))} cores`
+      html: `<b>${esc(m.month)}</b><br>${num(Math.round(m.cores))} CU`
         + (m.isProjection
             ? `<br><span class="t-mute">forecast — ${esc(d.model || "")}</span>`
             : `<br><span class="${m.isReal === false ? "t-warn" : "t-mute"}">${
@@ -342,13 +342,13 @@ function demandChart(d) {
   return `<svg data-chart="${id}" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto"
       role="img" aria-label="Capacity requested per month">
     <text x="12" y="${(T + H - B) / 2}" font-size="10" fill="var(--ink-3)"
-      transform="rotate(-90 12 ${(T + H - B) / 2})" text-anchor="middle">cores requested</text>
+      transform="rotate(-90 12 ${(T + H - B) / 2})" text-anchor="middle">CU requested</text>
     <line x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}" stroke="var(--rule-strong)"/>
     ${d.baselineCores > 0 ? `
       <line x1="${L}" x2="${W - R}" y1="${y(d.baselineCores)}" y2="${y(d.baselineCores)}"
         stroke="var(--ink-3)" stroke-dasharray="4 3" opacity=".7"/>
       <text x="${W - R}" y="${y(d.baselineCores) - 4}" font-size="9.5" text-anchor="end"
-        fill="var(--ink-3)">ordinary month ≈ ${num(Math.round(d.baselineCores))} cores</text>` : ""}
+        fill="var(--ink-3)">ordinary month ≈ ${num(Math.round(d.baselineCores))} CU</text>` : ""}
     ${d.realMonths != null && d.realMonths < hist.length ? `
       <line x1="${x(hist.length - d.realMonths)}" x2="${x(hist.length - d.realMonths)}"
         y1="${T}" y2="${H - B}" stroke="var(--rule-strong)" stroke-dasharray="2 3"/>
@@ -452,7 +452,7 @@ function combinedRegionChart(d, f) {
   const coresLine = (month) => {
     const m = coresBy[month];
     if (!m) return `<span class="t-mute">no request record in ${esc(month)}</span>`;
-    return `${num(Math.round(m.cores))} cores requested in ${esc(month)}`
+    return `${num(Math.round(m.cores))} CU requested in ${esc(month)}`
       + (m.isProjection
           ? `<br><span class="t-mute">forecast — ${esc(d.model || "")}</span>`
           : `<br><span class="${m.isReal === false ? "t-warn" : "t-mute"}">${
@@ -519,7 +519,7 @@ function combinedRegionChart(d, f) {
     ${hasUtil && fProj.length ? `<span><i class="ln util-proj"></i>Projected utilisation${f.model ? ` — ${esc(f.model)}` : ""}</span>` : ""}
     ${band ? `<span><i class="ln util-band"></i>Range the forecast could be out by</span>` : ""}
     ${hasUtil ? `<span><i class="ln limit"></i>Safety threshold ${pct(f.thresholdPct, 1)}</span>` : ""}
-    ${d.baselineCores > 0 ? `<span><i class="ln baseline"></i>Ordinary month ≈ ${num(Math.round(d.baselineCores))} cores</span>` : ""}
+    ${d.baselineCores > 0 ? `<span><i class="ln baseline"></i>Ordinary month ≈ ${num(Math.round(d.baselineCores))} CU</span>` : ""}
     <span><i class="dot event"></i>Month containing a deal-sized request</span>
   </div>
   <svg data-chart="${id}" class="chart" viewBox="0 0 ${W} ${H}" role="img"
@@ -532,7 +532,7 @@ function combinedRegionChart(d, f) {
         text-anchor="start" fill="var(--ink-2)">${t.util.toFixed(0)}%</text>` : ""}`).join("")}
 
     <text x="14" y="${T + (H - T - B) / 2}" font-size="10" fill="var(--brand)"
-      transform="rotate(-90 14 ${T + (H - T - B) / 2})" text-anchor="middle">cores requested</text>
+      transform="rotate(-90 14 ${T + (H - T - B) / 2})" text-anchor="middle">CU requested</text>
     ${hasUtil ? `<text x="${W - 12}" y="${T + (H - T - B) / 2}" font-size="10" fill="var(--ink-2)"
       transform="rotate(90 ${W - 12} ${T + (H - T - B) / 2})" text-anchor="middle">how full (%)</text>` : ""}
 
@@ -621,13 +621,13 @@ async function customerDemandPanel(subscriptionId) {
     <div style="position:relative">${demandChart(d)}</div>
     ${proj.length ? `<p style="margin:.75rem 0 0;font-size:.88rem">
       <b>Next three months</b> on this series:
-      ${proj.map((x) => `${esc(x.month)} ≈ ${num(Math.round(x.cores))} cores`).join(" · ")}
+      ${proj.map((x) => `${esc(x.month)} ≈ ${num(Math.round(x.cores))} CU`).join(" · ")}
       <span style="color:var(--ink-3)"> — model: ${esc(d.model)}</span></p>` : ""}
     ${d.note ? `<p style="color:var(--ink-3);font-size:.8rem;margin:.4rem 0 0">${esc(d.note)}</p>` : ""}
     <p style="color:var(--ink-3);font-size:.78rem;margin:.5rem 0 0">
       An ordinary month for this account is about
-      ${num(Math.round(d.baselineCores))} cores. This series is held in its own
-      table and is never counted into exposure, failure counts or cores pending —
+      ${num(Math.round(d.baselineCores))} CU. This series is held in its own
+      table and is never counted into exposure, failure counts or CU pending —
       those come only from the recorded incidents.
     </p>`);
 }
@@ -782,7 +782,7 @@ async function demandPanels(scope, id) {
 
   return panel(showChart
       ? "Demand and utilisation — what was asked for, and how full it ran"
-      : "Demand — capacity requested per month", `
+      : "Demand — CU requested per month", `
     <div style="position:relative">${
       showChart ? combinedRegionChart(d, f) : demandChart(d)}</div>
     <p style="background:var(--page);border-left:3px solid var(--brand);
@@ -795,7 +795,7 @@ async function demandPanels(scope, id) {
       actually ran</b> — a percentage, one reading per day, read on the right.
       One is demand arriving, the other is the room left to absorb it.
       Dashed means projected, on either line. ` : ""}An ordinary month here is about
-      <b>${num(Math.round(d.baselineCores))} cores</b>.
+      <b>${num(Math.round(d.baselineCores))} CU</b>.
       ${spikes.length
         ? `${spikes.length} month(s) ran well above that.
            ${attributed.length
@@ -809,7 +809,7 @@ async function demandPanels(scope, id) {
                 marked deal-sized on size alone, not on a recorded event —
                 ${esc(flagged.map((m) => m.month).join(", "))}.`
              : ""}
-           ${peak ? `The largest was <b>${num(Math.round(peak.cores))} cores</b> in ${esc(peak.month)}.` : ""}
+           ${peak ? `The largest was <b>${num(Math.round(peak.cores))} CU</b> in ${esc(peak.month)}.` : ""}
            These months stay in the forecast: a signed deal is part of what this
            place asks for, and removing them would project somewhere that never
            signs anything.`
@@ -977,7 +977,7 @@ function mapCard(p) {
         <span class="t3">· ${num(p.capacityUnits)} CU</span></b></div>
       <div><span>Capacity</span><b>${num(p.capacityUnits || 0)} CU
         <span class="t3">across ${num(p.capacities)} Fabric capacities</span></b></div>
-      ${p.coresPending ? `<div><span>Owed</span><b>${num(p.coresPending)} cores pending
+      ${p.coresPending ? `<div><span>Owed</span><b>${num(p.coresPending)} CU pending
         <span class="t3">· ${num(p.failed)} failed requests</span></b></div>` : ""}
       ${/* One line here, the breakdown below the map. This card was carrying
             the whole availability block -- both lists and every missing feature
@@ -1346,7 +1346,7 @@ function mapDetail(d) {
         ${num(t.sitesPastThreshold)} of ${num(t.sites)} sites are past their own line.
         ${t.freeViewerCapable} of ${num(t.capacities)} capacities are F64 or larger, so Power BI
         content on the rest needs a Pro or PPU licence per viewer.
-        Capacities, hardware, per-capacity utilisation and incidents are generated;
+        Capacities, their CU consumption and their throttling history are generated;
         the Fabric SKU ladder, the F64 rule and the workload availability above are real.
       </p>
     </div>
@@ -1377,7 +1377,7 @@ PAGES["/map"] = async (view) => {
       { term: "To buy / to move", means: "Two different answers. <b>To buy</b> means capacity is running out. <b>To move</b> means the capacity is fine but the hardware under it is failing more than the fleet average — adding more of the same would not fix it." },
     ],
     next: "Start with the red markers, then the amber ones carrying a move recommendation — those are the ones no utilisation figure would have surfaced.",
-    sources: "Azure region coordinates and Microsoft Fabric regional availability are real. Capacities, hardware, per-capacity utilisation and operational incidents are generated — every generated row carries its provenance.",
+    sources: "Azure region coordinates and Microsoft Fabric regional availability are real. Capacities, their CU consumption and their throttling history are generated — every generated row carries its provenance.",
   }) + `
 
   <section class="panel"><div class="body map-summary">
@@ -1464,18 +1464,18 @@ PAGES["/regions"] = async (view) => {
     answers: "<b>Capacity position by region</b> \u2014 how full each region is against its own safety threshold, what it still owes its customers, and what to do about it.",
     steps: [
       { what: "Safety threshold control", is: "the utilisation ceiling. Adjusting it recomputes every region — this is a recalculation, not a filter. Each region's threshold is also shown as its own column." },
-      { what: "Region table", is: "every monitored region: capacity held, capacity used, how much of the safety threshold has been consumed, and how many cores are still owed. Any column is sortable." },
+      { what: "Region table", is: "every monitored region: capacity held, capacity used, how much of the safety threshold has been consumed, and how much CU is still owed. Any column is sortable." },
       { what: "Recommendation", is: "opens the region-level advice — what moving the safety threshold would release and whether it covers what is owed. Hardware decisions are per facility, so it links through to the data centres." },
       { what: "Region drill-down", is: "selecting a row opens that region: data centres in scope, denial causes, all incidents, feature availability and demand anomalies." },
     ],
     words: [
       { term: "Threshold status", means: "Whether the region is <b>in risk</b> — utilisation has moved past its safety threshold — or not. It is a state, not a fault: a region using the capacity it holds has done nothing wrong." },
       { term: "Threshold utilised by", means: "How far past the safety threshold utilisation has reached, in percentage points. At an 85% threshold and 97.2% utilisation, the threshold has been utilised by 12.2%." },
-      { term: "Cores pending", means: "Capacity requested by customers and not yet delivered. This is what the region owes, not how many tickets failed \u2014 one ticket can be worth hundreds of cores." },
-      { term: "Why hardware is not shown here", means: "A region holds ten data centres that may run Intel, AMD or GPU-class. Naming one hardware class at region level would be wrong, so hardware and provisioning lead time live on the facility \u2014 which is what you actually take offline." },
+      { term: "CU pending", means: "Capacity requested by customers and not yet delivered. This is what the region owes, not how many tickets failed \u2014 one ticket can be worth hundreds of cores." },
+      { term: "Why there is no hardware here", means: "Fabric is a SaaS platform \u2014 a customer never sees a server. What sits under a region is Fabric <b>capacities</b>, each with an F-SKU and a number of Capacity Units, and those are on the Fleet map and the data-centre pages. There is nothing to take offline and nothing to provision." },
     ],
     next: "Work the regions in risk first, largest cores-pending first. Open the recommendation to see whether moving the safety threshold covers what is owed, or whether the region needs capacity added.",
-    sources: "daily regional utilisation, hardware class and provisioning lead time per region, and the ICM incident history.",
+    sources: "daily regional utilisation, Fabric capacity consumption per region, and the ICM capacity-request history.",
   }) + title("Regions", "How full each region is, and what it still owes") + `
 
   <section class="panel"><div class="body" style="display:flex;gap:2rem;align-items:center;flex-wrap:wrap">
@@ -1532,12 +1532,12 @@ PAGES["/regions"] = async (view) => {
        owe". */
     const COLS = [
       { key: "region", label: "Region", get: (r) => r.region, numeric: false },
-      { key: "total", label: "Total cores", get: (r) => r.deployed_units, numeric: true },
-      { key: "used", label: "Utilised cores", get: (r) => r.used_units, numeric: true },
+      { key: "total", label: "Total CU", get: (r) => r.deployed_units, numeric: true },
+      { key: "used", label: "Utilised CU", get: (r) => r.used_units, numeric: true },
       { key: "util", label: "Utilisation", get: (r) => r.current_utilisation_pct, numeric: true },
       { key: "thr", label: "Threshold", get: (r) => r.threshold_pct, numeric: true },
       { key: "status", label: "Threshold status", get: (r) => (r.at_risk ? 1 : 0), numeric: true },
-      { key: "pending", label: "Cores pending", get: (r) => r.cores_pending, numeric: true },
+      { key: "pending", label: "CU pending", get: (r) => r.cores_pending, numeric: true },
       { key: "exposure", label: "Revenue loss",
         get: (r) => (exposureByRegion[r.region] || {}).exposure ?? 0, numeric: true },
       { key: "cust", label: "Customers waiting", get: (r) => r.customers_waiting, numeric: true },
@@ -1626,10 +1626,10 @@ PAGES["/region"] = async (view, name, showAll = false) => {
     view.innerHTML = title(`Region: ${name}`, `${r.siteCount} data centres`) + panel(`Region: ${name}`, `
       <p style="margin-top:0"><b>${atRisk ? "In risk." : "Not in risk."}</b> ${esc(t.reason)}</p>
       <div class="kpis" style="margin:1rem 0">
-        ${kpi("Total cores", num(Math.round(r.cores)),
+        ${kpi("Total CU", num(Math.round(r.cores)),
               `${num(Math.round(r.coresFree))} free across ${r.siteCount} sites`, "ink",
               "Compute deployed across every facility in this region.")}
-        ${kpi("Utilised cores", num(used),
+        ${kpi("Utilised CU", num(used),
               `of ${num(Math.round(r.cores))} deployed`, atRisk ? "bad" : "ink")}
         ${kpi("Utilisation", pct(t.current_utilisation_pct, 1),
               `against a ${pct(t.threshold_pct, 0)} safety threshold`,
@@ -1639,9 +1639,9 @@ PAGES["/region"] = async (view, name, showAll = false) => {
                 ? `threshold utilised by ${pct(t.current_utilisation_pct - t.threshold_pct, 1)}`
                 : `${pct(t.threshold_pct - t.current_utilisation_pct, 1)} still available`,
               atRisk ? "bad" : "good",
-              `The share of this region's ${num(Math.round(r.cores))} cores at which it is treated as at risk. `
+              `The share of this region's ${num(Math.round(r.cores))} CU at which it is treated as at risk. `
               + `${pct(t.threshold_pct, 0)} of ${num(Math.round(r.cores))} is `
-              + `${num(Math.round(r.cores * t.threshold_pct / 100))} cores. Utilisation past that point `
+              + `${num(Math.round(r.cores * t.threshold_pct / 100))} CU. Utilisation past that point `
               + `is consuming the margin the threshold exists to protect.`)}
       </div>
       <div class="kpis" style="margin:0 0 1rem">
@@ -1649,7 +1649,7 @@ PAGES["/region"] = async (view, name, showAll = false) => {
               atRisk ? `utilisation is past the ${pct(t.threshold_pct, 0)} threshold`
                      : `utilisation is inside the ${pct(t.threshold_pct, 0)} threshold`,
               atRisk ? "bad" : "good")}
-        ${kpi("Cores pending", num(Math.round(t.cores_pending || 0)),
+        ${kpi("CU pending", num(Math.round(t.cores_pending || 0)),
               `owed to ${t.customers_waiting || 0} customer(s)`,
               t.cores_pending ? "bad" : "good",
               "Capacity requested and not yet delivered. This is what the region owes, not how many tickets failed.")}
@@ -1922,7 +1922,7 @@ PAGES["/actions"] = async (view) => {
       { term: "Justification requirement", means: "Every decision is appended to a decision log with owner, timestamp and rationale. The next run suppresses a rejected region \u2014 without a justification it cannot determine whether to suppress or re-raise." },
     ],
     next: "Record an accept or reject decision against each recommendation. The decision is logged and governs what the next run reports.",
-    sources: "the classified incident history, and relative cost and performance indices per hardware class.",
+    sources: "the classified capacity-request history, and the Fabric capacities behind each region.",
   }) + title("Actions", `${a.recommendations.length} things to decide on — self-check ${a.gate.passed ? "passed" : "FAILED"}`) + `
 
   ${a.gate.passed ? "" : `<p class="error"><b>The self-check failed.</b> ${esc(a.gate.detail)}
@@ -2294,7 +2294,7 @@ PAGES["/methodology"] = async (view) => {
     <p class="mono" style="background:var(--page);padding:.7rem 1rem;border-radius:3px;margin:0 0 .5rem">
       order hardware by = the day the region is forecast to fill up
       − how long that hardware takes to arrive</p>
-    <p style="color:var(--ink-2);margin:0">A region at 71% can outrank one at 94% when its hardware takes
+    <p style="color:var(--ink-2);margin:0">A region at 71% can outrank one at 94% when its capacities are throttling and the other's are not. Fullness alone does not decide it, because Fabric throttles on borrowed future capacity rather than on how full a capacity looks, and that depends on
       45 days rather than 10. Getting that the right way round is the whole point of this page.</p>`)}
 
   ${panel("SLA by subscription tier", `<div class="scroll-x"><table>
@@ -2430,7 +2430,7 @@ PAGES["/datacentres"] = async (view) => {
       { term: "Primary denial reason", means: "The most frequent denial cause at that facility \u2014 the fastest indicator of whether the constraint is capacity, hardware or policy." },
     ],
     next: `Rank by score, but read the evidence line beneath it before acting: ${solid.length} of ${d.datacentres.length} sites here have three or more requests, so for most of them the ranking is driven by utilisation and lead time — which are measured continuously — rather than by a failure rate drawn from one or two tickets.`,
-    sources: "ICM incidents attributed to a facility, regional utilisation, and hardware provisioning lead times.",
+    sources: "ICM capacity requests attributed to a facility, and the Fabric capacities in it.",
   }) + title("Data centres", `${d.withActivity} sites with activity, of ${d.totalSites} across all regions`) + `
 
   ${panel("Data centres by risk score", `<div class="scroll-x"><table>
@@ -2473,14 +2473,14 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
       { what: "Incident register", is: "every request raised here, with the derivation behind each revenue-loss figure." },
     ],
     next: "Action the remediation for the highest-cost cause. Causes marked manual review require engineering or account-team engagement.",
-    sources: "ICM incidents attributed to this facility, regional utilisation, and hardware provisioning lead times.",
+    sources: "ICM capacity requests attributed to this facility, and the Fabric capacities in it.",
   }) + title(`Data centre: ${x.datacentre}`,
              `In ${x.region} · ${x.hardware} · ${x.leadTimeDays}-day provisioning lead time`) + `
 
   <div class="kpis">
     ${kpi("Risk score", x.risk.score.toFixed(1), `${x.risk.band} risk`,
           x.risk.band === "high" ? "bad" : x.risk.band === "medium" ? "" : "good")}
-    ${kpi("Capacity", `${num(Math.round(x.cores ?? 0))} cores`,
+    ${kpi("Capacity", `${num(Math.round(x.cores ?? 0))} CU`,
           `${num(Math.round(x.coresFree ?? 0))} free · threshold ${pct(x.thresholdPct ?? 0)}`,
           over ? "bad" : "ink")}
     ${kpi("Failed requests", num(x.failedCount ?? 0), `of ${num(x.requests)} raised here`,
