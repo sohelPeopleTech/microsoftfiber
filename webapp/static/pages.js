@@ -1066,48 +1066,100 @@ function whenBlock(d) {
    on -- for a purchase that is the hardware class, because the lead time is a
    property of the hardware and not of the capacity. */
 
+/* What is happening, in the words someone would use out loud.
+
+   The first version of this table led with "Mean used 110%", which cannot be
+   read aloud without first explaining bursting and smoothing -- and review said
+   so: "I can not explain what that number is." A percentage over 100 is the
+   mechanism, not the finding.
+
+   So the finding leads: this capacity is refusing queries, on this many days,
+   and this many were turned away. The CU figures stay, one column over, as the
+   evidence for it -- and expressed as "wants 8.8 of 8 CU" rather than "110%",
+   because the first is a sentence and the second needs a footnote. */
+const PROBLEM = {
+  background_rejection: { text: "Refusing everything", tone: "bad",
+    why: "past 24 hours of borrowed capacity — every request, interactive and background, is refused" },
+  interactive_rejection: { text: "Refusing queries", tone: "bad",
+    why: "past an hour of borrowed capacity — users' queries are turned away" },
+  interactive_delay: { text: "Delaying queries", tone: "warn",
+    why: "past ten minutes of borrowed capacity — every query waits an extra 20 seconds" },
+  none: { text: "No room left", tone: "warn",
+    why: "not throttling yet, but there is almost nothing spare to absorb a busy day" },
+};
+
 function scaleTable(list, up) {
+  if (!up) return scaleDownTable(list);
   return `
+  <p class="table-lede">Read a row as: <b>this capacity is trying to use more Capacity Units
+    than its SKU provides</b>, so Fabric has started delaying or refusing work on it.</p>
   <div class="tablewrap"><table class="grid caps">
     <thead><tr>
-      <th>Capacity</th><th>Data centre</th><th>SKU</th><th class="n">CU</th>
-      <th class="n">Mean used</th><th class="n">Peak</th>
-      ${up ? `<th class="n">Throttled</th><th>Worst stage</th><th class="n">Rejected</th>` : ""}
+      <th>Capacity</th><th>Size</th><th class="n">Wants</th>
+      <th>What is happening</th><th class="n">How often</th><th class="n">Queries refused</th>
       <th>What to do</th>
     </tr></thead>
     <tbody>${list.map((r) => {
       const e = r.evidence || {};
+      const p = PROBLEM[e.isThrottling ? e.worstStage : "none"] || PROBLEM.none;
+      const wants = e.capacityUnits * e.meanUtilisationPct / 100;
       const rejected = (e.interactiveRejected || 0) + (e.backgroundRejected || 0);
-      return `<tr class="${up && e.isThrottling ? "row-danger" : up ? "row-soon" : ""}">
-        <td><a href="/capacity/${encodeURIComponent(r.target)}">${esc(r.target)}</a></td>
-        <td>${esc(e.datacentre || "")}</td>
-        <td><b>${esc(e.fabricSku)}</b></td>
-        <td class="n">${num(e.capacityUnits)}</td>
-        <td class="n ${e.meanUtilisationPct >= 85 ? "t-bad" : ""}">${pct(e.meanUtilisationPct, 0)}</td>
-        <td class="n ${e.peakUtilisationPct > 100 ? "t-warn" : ""}">${pct(e.peakUtilisationPct, 0)}</td>
-        ${up ? `
-          <td class="n ${e.throttledDays ? "t-bad" : ""}">${e.throttledDays
-            ? `${e.throttledDays}/${e.windowDays}d` : "—"}</td>
-          <td>${stageCell(e.worstStage, e.worstStageLabel)}</td>
-          <td class="n ${rejected ? "t-bad" : ""}">${rejected ? num(rejected) : "—"}</td>` : ""}
-        <td class="act"><span class="pill ${up ? (e.isThrottling ? "bad" : "wash") : ""}">
-          ${up ? `Scale to ${esc(e.scaleTo)}` : `Scale down to ${esc(e.scaleTo)}`}</span>
-          <span class="t3">${num(e.capacityUnits)} → ${num(e.scaleToUnits)} CU${
-            up ? " · takes effect immediately" : " · saves the unused half"}${
-            e.crossesSlowBoundary ? " · crosses the F256/F512 boundary" : ""}${
+      return `<tr class="${p.tone === "bad" ? "row-danger" : "row-soon"}">
+        <td><a href="/capacity/${encodeURIComponent(r.target)}">${esc(r.target)}</a>
+          <span class="t3">${esc(e.datacentre || "")}</span></td>
+        <td><b>${esc(e.fabricSku)}</b><span class="t3">${num(e.capacityUnits)} CU</span></td>
+        <td class="n" title="averaged over the last ${e.windowDays} days; it peaked at ${Math.round(e.peakUtilisationPct)}%">
+          <b class="${p.tone === "bad" ? "t-bad" : "t-warn"}">${wants.toFixed(1)} CU</b>
+          <span class="t3">has ${num(e.capacityUnits)}</span></td>
+        <td title="${esc(p.why)}"><span class="pill ${p.tone}">${p.text}</span></td>
+        <td class="n">${e.throttledDays
+          ? `${e.throttledDays} of ${e.windowDays} days` : `<span class="t3">not yet</span>`}</td>
+        <td class="n ${rejected ? "t-bad" : ""}">${rejected ? num(rejected) : "—"}</td>
+        <td class="act"><span class="pill ${p.tone === "bad" ? "bad" : "wash"}">Scale to ${esc(e.scaleTo)}</span>
+          <span class="t3">${num(e.scaleToUnits)} CU · applies immediately${
+            e.crossesSlowBoundary ? " · crosses the F256/F512 boundary" : ""}</span></td>
+      </tr>`;
+    }).join("")}</tbody></table></div>
+  <div class="why-notes">
+    <p><b>Wants</b> is what the capacity actually consumed on an average day, in CU. Fabric
+      lets a job use more than the SKU provides and spreads the cost over the next few
+      hours — so briefly going over is normal. Doing it every day is not: the borrowed
+      capacity accumulates until Fabric starts pushing back.</p>
+    <p><b>What is happening</b> is Fabric's own ladder. Ten minutes of borrowed capacity is
+      free. Past that, queries are delayed 20 seconds; past an hour, queries are refused;
+      past 24 hours, everything is refused.</p>
+  </div>`;
+}
+
+function scaleDownTable(list) {
+  return `
+  <p class="table-lede">Read a row as: <b>this capacity is being paid for and barely used.</b>
+    F SKUs bill per second whether or not anything runs on them.</p>
+  <div class="tablewrap"><table class="grid caps">
+    <thead><tr>
+      <th>Capacity</th><th>Size</th><th class="n">Wants</th><th class="n">Busiest day</th>
+      <th class="n">Idle for</th><th>What to do</th>
+    </tr></thead>
+    <tbody>${list.map((r) => {
+      const e = r.evidence || {};
+      const wants = e.capacityUnits * e.meanUtilisationPct / 100;
+      return `<tr>
+        <td><a href="/capacity/${encodeURIComponent(r.target)}">${esc(r.target)}</a>
+          <span class="t3">${esc(e.datacentre || "")}</span></td>
+        <td><b>${esc(e.fabricSku)}</b><span class="t3">${num(e.capacityUnits)} CU</span></td>
+        <td class="n"><b>${wants.toFixed(1)} CU</b><span class="t3">has ${num(e.capacityUnits)}</span></td>
+        <td class="n">${pct(e.peakUtilisationPct, 0)}<span class="t3">of its CU</span></td>
+        <td class="n">${e.windowDays} days<span class="t3">never throttled</span></td>
+        <td class="act"><span class="pill">Scale down to ${esc(e.scaleTo)}</span>
+          <span class="t3">${num(e.scaleToUnits)} CU · busiest day would be
+            ${pct(e.peakAfterScaleDownPct, 0)}${
             e.losesFreeViewers ? " · drops below F64, viewers would need Pro" : ""}</span></td>
       </tr>`;
     }).join("")}</tbody></table></div>
   <div class="why-notes">
-    ${up ? `<p>Fabric absorbs <b>ten minutes</b> of future capacity without throttling. Past
-      that it delays interactive jobs by 20 seconds, rejects them at an hour, and rejects
-      everything at 24 hours. Scaling an F SKU takes effect immediately.</p>
-      <p class="t3">Peaks above 100% are bursting, which Fabric smooths over future
-      timepoints. A peak alone is not a problem; days spent throttling are.</p>`
-      : `<p>F SKUs bill per second whether or not anything runs on them, so a capacity using
-      a fraction of its CUs is a standing cost. Nothing that throttled in the window appears
-      here, however idle its average looks — a capacity quiet six days a week and overloaded
-      on the seventh is sized for the seventh.</p>`}
+    <p>Nothing that throttled in the window appears here, however idle its average looks —
+      a capacity quiet six days a week and overloaded on the seventh is sized for the
+      seventh.</p>
   </div>`;
 }
 

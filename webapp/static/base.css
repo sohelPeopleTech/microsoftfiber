@@ -540,6 +540,11 @@ td.act .t3 { display: block; margin-top: .15rem; color: var(--ink-3); font-size:
 /* The reasoning that applies to a whole table, said once beneath it. It used to
    be a paragraph repeated above each group of capacities, which made five
    near-identical blocks and hid the numbers that actually differed. */
+/* One sentence above a table saying how to read a row. Cheaper than a legend
+   and it survives being read aloud, which is the test that matters here. */
+.table-lede { margin: 0 0 .6rem; font-size: .84rem; color: var(--ink-2); max-width: 100ch; }
+table.caps td .t3 { display: block; color: var(--ink-3); font-size: .74rem; font-weight: 400; }
+
 .why-notes { margin: .6rem 0 0; }
 .why-notes p { margin: 0 0 .35rem; font-size: .81rem; color: var(--ink-2); max-width: 100ch; line-height: 1.45; }
 .why-notes p.t3 { color: var(--ink-3); }
