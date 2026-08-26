@@ -31,7 +31,12 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from src.synthdata.fabric import (  # noqa: F401  -- re-exported for callers
+# Imported as `synthdata.fabric`, not `src.synthdata.fabric`. The app puts
+# ROOT/src on sys.path and nothing else, so the `src.` prefix resolves only
+# where ROOT also happens to be on the path -- which is true of the tests and
+# of a dev server started from the repo root, and false in the container. That
+# difference shipped a 500 on every page the planning module touches.
+from synthdata.fabric import (  # noqa: F401  -- re-exported for callers
     FREE_VIEWER_SKU,
     F_SKUS,
     SLOW_SCALE_BOUNDARY,
