@@ -472,6 +472,13 @@ h3.sec:first-of-type { margin-top: .4rem; }
   font-size: .74rem; font-weight: 600;
 }
 .change-group .group-why { margin: 0 0 .55rem; font-size: .8rem; color: var(--ink-3); max-width: 82ch; }
+
+/* The reasoning that applies to a whole table, said once beneath it. It used to
+   be a paragraph repeated above each group of capacities, which made five
+   near-identical blocks and hid the numbers that actually differed. */
+.why-notes { margin: .6rem 0 0; }
+.why-notes p { margin: 0 0 .35rem; font-size: .81rem; color: var(--ink-2); max-width: 100ch; line-height: 1.45; }
+.why-notes p.t3 { color: var(--ink-3); }
 .change {
   border-left: 2px solid var(--rule-strong); padding: .1rem 0 .1rem .75rem; margin: 0 0 .6rem;
 }

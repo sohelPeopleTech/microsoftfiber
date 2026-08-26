@@ -1043,53 +1043,170 @@ function whenBlock(d) {
   </div>`;
 }
 
+/* What has to change, as three tables.
+
+   This was prose: a paragraph per group of capacities that shared a reason. It
+   read badly for a reason worth recording. The paragraphs differed only in a
+   trigger percentage, so five of them stacked up looking identical while the
+   numbers that actually varied -- which capacity, how full, by when -- were
+   buried mid-sentence and wrapped across lines. A reader could not compare two
+   rows without reading two paragraphs.
+
+   The variable part belongs in columns and the constant part belongs said once.
+   So each kind gets a table of its capacities, and the reasoning that applies
+   to all of them sits underneath it, grouped by the thing it actually depends
+   on -- for a purchase that is the hardware class, because the lead time is a
+   property of the hardware and not of the capacity. */
+
+function overdueCell(days) {
+  if (days == null) return "—";
+  if (days < 0) return `<b class="t-bad">${num(Math.abs(days))}d late</b>`;
+  if (days === 0) return `<b class="t-warn">today</b>`;
+  return `in ${num(days)}d`;
+}
+
+function buyTable(list) {
+  // The lead-time argument depends on the hardware, so it is stated per class
+  // rather than per capacity -- which is what made it repeat.
+  const classes = new Map();
+  for (const r of list) {
+    const e = r.evidence || {};
+    if (!classes.has(e.skuClass)) classes.set(e.skuClass, e);
+  }
+  return `
+  <div class="tablewrap"><table class="grid caps">
+    <thead><tr>
+      <th>Capacity</th><th>Data centre</th><th>SKU</th><th>Hardware</th>
+      <th class="n">Used</th><th class="n">Its line</th><th class="n">Raise at</th>
+      <th class="n">Order by</th><th class="n">Overdue</th><th class="n">Units</th>
+    </tr></thead>
+    <tbody>${list.map((r) => {
+      const e = r.evidence || {};
+      return `<tr>
+        <td><a href="/capacity/${encodeURIComponent(r.target)}">${esc(r.target)}</a></td>
+        <td>${esc(e.datacentre || "")}</td>
+        <td><b>${esc(e.fabricSku || "")}</b></td>
+        <td>${esc(e.skuClass || "")}<span class="t3"> · ${e.leadTimeDays}d</span></td>
+        <td class="n ${e.utilisationPct >= 90 ? "t-bad" : ""}">${pct(e.utilisationPct, 0)}</td>
+        <td class="n">${pct(e.standardTriggerPct, 0)}</td>
+        <td class="n ${e.raisedEarly ? "t-warn" : ""}"
+            title="${e.raisedEarly ? "below its line, but the wait is longer than the time left" : ""}">
+          ${pct(e.adjustedTriggerPct, 1)}</td>
+        <td class="n">${esc(e.orderByDate || "—")}</td>
+        <td class="n">${overdueCell(e.daysUntilOrder)}</td>
+        <td class="n">${num(e.unitsToAdd)}</td>
+      </tr>`;
+    }).join("")}</tbody></table></div>
+  <div class="why-notes">
+    ${[...classes.values()].map((e) => `
+      <p><b>${esc(e.skuClass)}</b> — ${e.leadTimeDays} days to provision${
+        e.supplier ? ` from ${esc(e.supplier)}` : ""}.
+      ${e.leadTimeDrifted
+        ? `That has gone from <b>${num(e.leadTimeWasDays)} to ${num(e.leadTimeDays)} days</b>
+           (${e.leadTimeChangePct > 0 ? "+" : ""}${e.leadTimeChangePct}%), so the raise-at figure
+           is several points lower than it used to be and waiting for the old one now lands the
+           order about ${num(Math.round(e.leadTimeDays - e.leadTimeWasDays))} days late.`
+        : `That has not moved materially, so the raise-at figure is simply the line less
+           whatever the region grows in ${e.leadTimeDays} days.`}</p>`).join("")}
+    <p class="t3">"Raise at" is the utilisation at which the order must go in: the line, less
+      whatever the region grows while the hardware is in transit. A row below its line with an
+      order already overdue is the case a threshold alone cannot make.</p>
+  </div>`;
+}
+
+function moveTable(list) {
+  return `
+  <div class="tablewrap"><table class="grid caps">
+    <thead><tr>
+      <th>Capacity</th><th>Data centre</th><th>SKU</th><th>On</th>
+      <th class="n">Used</th><th class="n">Incidents</th><th class="n">Sev1/2</th>
+      <th class="n">Lost</th><th class="n">Per node<br><span class="t3">vs fleet</span></th>
+      <th>Move to</th><th class="n">Fewer<br><span class="t3">incidents</span></th>
+    </tr></thead>
+    <tbody>${list.map((r) => {
+      const e = r.evidence || {};
+      const to = e.moveTo || {};
+      return `<tr>
+        <td><a href="/capacity/${encodeURIComponent(r.target)}">${esc(r.target)}</a></td>
+        <td>${esc(e.datacentre || "")}</td>
+        <td><b>${esc(e.fabricSku || "")}</b></td>
+        <td>${esc(e.skuClass || "")}</td>
+        <td class="n">${pct(e.utilisationPct, 0)}</td>
+        <td class="n">${num(e.incidents)}</td>
+        <td class="n">${num(e.seriousIncidents)}</td>
+        <td class="n">${e.downtimeHours}h</td>
+        <td class="n t-bad" title="fleet runs ${e.fleetIncidentsPerNode}">
+          ${Number(e.incidentsPerNode).toFixed(1)}<span class="t3">${e.rateVsFleet}×</span></td>
+        <td>${esc(to.sku_class || "")}
+          <span class="t3">${esc(to.vendor || "")} ${esc(to.model || "")} · ${num(to.memoryGB)}GB</span></td>
+        <td class="n">${to.expectedReductionPct != null ? `${to.expectedReductionPct}%` : "—"}</td>
+      </tr>`;
+    }).join("")}</tbody></table></div>
+  <div class="why-notes">
+    <p>Every row here has <b>room to spare</b> — none is near its line. What is wrong is the
+      hardware under it, so adding more of the same would not fix it. "Per node" divides incidents
+      by the machines underneath and is shrunk toward the fleet average, so a one-node capacity
+      having a bad month cannot outrank an estate.</p>
+    <p class="t3">The replacement is never smaller on memory: trading an incident problem for a
+      capability problem is not a fix.</p>
+  </div>`;
+}
+
+function licenceTable(list) {
+  const e0 = (list[0] || {}).evidence || {};
+  return `
+  <div class="tablewrap"><table class="grid caps">
+    <thead><tr>
+      <th>Capacity</th><th>Data centre</th><th>SKU</th><th class="n">CU now</th>
+      <th>Step to</th><th class="n">CU after</th><th>What it changes</th>
+    </tr></thead>
+    <tbody>${list.map((r) => {
+      const e = r.evidence || {};
+      return `<tr>
+        <td><a href="/capacity/${encodeURIComponent(r.target)}">${esc(r.target)}</a></td>
+        <td>${esc(e.datacentre || "")}</td>
+        <td><b>${esc(e.fabricSku || "")}</b></td>
+        <td class="n">${num(e.capacityUnits)}</td>
+        <td><b>${esc(e.stepTo || "")}</b></td>
+        <td class="n">${num(e.stepToUnits)}</td>
+        <td>Power BI viewers stop needing a paid licence</td>
+      </tr>`;
+    }).join("")}</tbody></table></div>
+  <div class="why-notes">
+    <p>${esc(e0.rule || "")}
+      ${e0.subscriptionsInRegion
+        ? ` ${num(e0.subscriptionsInRegion)} subscriptions have raised capacity requests in this
+            region, so the viewer population is not nil.`
+        : ""}</p>
+    <p class="t3">Real and documented — <a href="${esc(e0.source || "")}">Microsoft Fabric
+      licensing</a>. This is a commercial decision, not a capacity one: none of these capacities
+      is short of compute.</p>
+  </div>`;
+}
+
 function changeBlock(d) {
   const kinds = [
-    ["workload_change", "Move the workload", "These have room to spare and still fail more than the fleet. Buying more of the same hardware would not fix them."],
-    ["procurement", "Buy capacity", "Ordered when the time left before the trigger falls below the time the hardware takes to arrive — which is why some are raised while still under their line."],
-    ["licensing", "Change the licence", "A commercial step, not a capacity one. Below F64 every Power BI viewer needs Pro or PPU."],
+    ["workload_change", "Move the workload", moveTable],
+    ["procurement", "Buy capacity", buyTable],
+    ["licensing", "Change the licence", licenceTable],
   ];
   const present = kinds.filter(([k]) => (d.recommendations || {})[k]?.length);
   if (!present.length) return `<p class="empty">Nothing outstanding in this region.</p>`;
 
-  return present.map(([k, label, why]) => {
+  return present.map(([k, label, render]) => {
     const list = d.recommendations[k];
-
-    /* Grouped by the reason, not printed one card per capacity. Fifteen
-       purchases in a region share one explanation -- the lead time belongs to
-       the hardware class, so every capacity on that class gets the same
-       sentence -- and printing it fifteen times made the panel scroll for a
-       page and hid that they were one finding rather than fifteen. */
-    const groups = new Map();
-    for (const r of list) {
-      if (!groups.has(r.detail)) groups.set(r.detail, []);
-      groups.get(r.detail).push(r);
-    }
-
+    // Twenty rows is a table; sixty is a report. The rest are one click away
+    // and are, by construction, the least urgent.
+    const show = list.slice(0, 20);
     return `
     <div class="change-group">
       <h4>${label} <span class="count">${num(list.length)}</span></h4>
-      <p class="group-why">${why}</p>
-      ${[...groups.entries()].map(([detail, rs]) => `
-        <div class="change">
-          ${rs.length === 1
-            ? `<b>${esc(rs[0].headline)}</b>`
-            : `<b>${num(rs.length)} capacities, same reason</b>`}
-          <p>${esc(detail)}</p>
-          ${rs.length > 1 ? `<ul class="targets">${rs.slice(0, 12).map((r) => {
-            const e = r.evidence || {};
-            return `<li>
-              <a href="/capacity/${encodeURIComponent(r.target)}">${esc(r.target)}</a>
-              <span class="t3">${e.fabricSku ? `${esc(e.fabricSku)} · ` : ""}${
-                e.utilisationPct != null ? `${pct(e.utilisationPct, 0)} used` : ""}${
-                e.orderByDate ? ` · order by ${esc(e.orderByDate)}` : ""}${
-                e.moveTo ? ` · to ${esc(e.moveTo.sku_class)}` : ""}</span>
-            </li>`;
-          }).join("")}</ul>
-          ${rs.length > 12 ? `<p class="hint">and ${num(rs.length - 12)} more</p>` : ""}` : ""}
-        </div>`).join("")}
-      ${groups.size > 1 || list.length > 3 ? `<p class="hint">
-        <a href="/recommendations?kind=${k}&region=${encodeURIComponent(d.region)}">Open all ${num(list.length)} with their evidence</a></p>` : ""}
+      ${render(show)}
+      ${list.length > show.length ? `<p class="hint">
+        Showing the ${num(show.length)} most urgent of ${num(list.length)} —
+        <a href="/recommendations?kind=${k}&region=${encodeURIComponent(d.region)}">open the rest</a></p>`
+        : (list.length > 3 ? `<p class="hint">
+        <a href="/recommendations?kind=${k}&region=${encodeURIComponent(d.region)}">Open these with their full evidence</a></p>` : "")}
     </div>`;
   }).join("");
 }
