@@ -89,18 +89,6 @@ PAGES["/"] = async (view) => {
       were. The ${num(c.denied_then_approved_late || 0)} above is a <i>delay</i>
       that breached SLA, not a refusal.
     </p>
-    ${d.partial && d.partial.count ? `
-    <p style="background:var(--warn-wash);border-left:3px solid var(--warn);
-       padding:.6rem .9rem;margin:0 1.15rem 1.15rem;font-size:.82rem">
-      <b>A third outcome the extract cannot express.</b>
-      ${num(d.partial.count)} request(s) were met <b>in part</b> rather than
-      granted or refused — ${num(d.partial.units)} units given against
-      ${num(d.partial.units + d.partial.shortfallUnits)} asked for, a median of
-      ${pct(d.partial.medianGrantedPct, 0)} of the ask, across
-      ${esc(d.partial.regions.join(", "))}.
-      These are not in the five counts above and move no published figure.
-      <span style="color:var(--ink-3)">${esc(d.partial.note)}</span>
-    </p>` : ""}
   `, { flush: true })}
 
   ${panel("Demand distribution by region", `<div class="scroll-x"><table>
