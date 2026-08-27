@@ -49,7 +49,13 @@ WEIGHTS = {
     "failureRate": 0.40,
     "pressure": 0.25,
     "unresolved": 0.20,
-    "leadTime": 0.15,
+    # Was "leadTime" -- how long replacement hardware took to arrive, at the
+    # same 0.15. Fabric has no hardware and no wait: an F SKU is scaled in Azure
+    # and takes effect immediately, so that term scored every site against a
+    # delay none of them has. What it was reaching for -- how far past
+    # recoverable this site already is -- is now measured directly, as the share
+    # of its capacities that are actively throttling.
+    "throttling": 0.15,
 }
 
 
@@ -78,7 +84,6 @@ def resolve_weights(weights: dict | None = None) -> dict:
 
 #: Fleet-wide worst case, so "slow hardware" means slow relative to what exists
 #: rather than to an arbitrary constant.
-MAX_LEAD_TIME_DAYS = 45.0
 
 #: How much evidence a site must accumulate before its own failure rate outweighs
 #: the fleet average. Expressed as pseudo-observations: at 5, a site with 5
@@ -137,7 +142,7 @@ def score(
     unresolved: int,
     utilisation_pct: float,
     threshold_pct: float,
-    lead_time_days: float,
+    throttling_share: float,
     busiest_unresolved: int = 1,
     weights: dict | None = None,
     prior_rate: float | None = None,
@@ -174,13 +179,16 @@ def score(
     pressure = min(utilisation_pct / threshold_pct, 1.0) if threshold_pct else 0.0
 
     unresolved_ratio = min(unresolved / busiest_unresolved, 1.0) if busiest_unresolved else 0.0
-    lead = min(lead_time_days / MAX_LEAD_TIME_DAYS, 1.0)
+    # Already a share of this site's own capacities, so it needs no ceiling of
+    # its own -- unlike the lead time it replaces, which had to be divided by a
+    # longest-plausible wait to become a fraction at all.
+    throttling = min(max(float(throttling_share), 0.0), 1.0)
 
     parts = {
         "failureRate": failure_rate,
         "pressure": pressure,
         "unresolved": unresolved_ratio,
-        "leadTime": lead,
+        "throttling": throttling,
     }
     total = round(sum(parts[k] * w[k] for k in w) * 100, 1)
 
@@ -210,8 +218,8 @@ COMPONENT_LABELS = {
     "failureRate": "Share of requests here that were refused",
     "pressure": "How close the region is to its safety line",
     "unresolved": "Requests still unfulfilled, against the busiest in this view",
-    "leadTime": "How long replacement hardware takes to arrive",
+    "throttling": "Share of its capacities currently delaying or refusing work",
 }
 
 __all__ = ["score", "band", "Risk", "WEIGHTS", "resolve_weights",
-           "COMPONENT_LABELS", "MAX_LEAD_TIME_DAYS", "PRIOR_STRENGTH"]
+           "COMPONENT_LABELS", "PRIOR_STRENGTH"]

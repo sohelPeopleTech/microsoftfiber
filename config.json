@@ -21,14 +21,14 @@
     "failureRate": 0.4,
     "pressure": 0.25,
     "unresolved": 0.2,
-    "leadTime": 0.15
+    "throttling": 0.15
   },
   "notes": {
     "tier_delay_hours": "A bigger customer is owed a faster answer, so the allowance tightens as the tier rises. Each value sits inside its tier's safe band from the labelled sample (Enterprise 29-480h, Premium 22-145h, Standard 28-173h, Free 7-151h), so the classifier still scores 60/60. Replace when a real SLA table exists.",
     "meaningful_delay_hours": "FALLBACK ONLY. Applies to tiers absent from tier_delay_hours. Editing this alone will NOT change Enterprise/Premium/Standard/Free - edit those entries instead.",
     "region_owners": "region -> accountable team, shown on the card. Empty until an org mapping exists; falls back to default_owner plus the region name.",
     "arr_reference_is_placeholder": "Set to false once the real subscription tier / ARR reference replaces the synthetic sheet.",
-    "risk_weights": "How much each measured thing contributes to a region / datacentre / customer risk score. A STARTING POSITION, not a derived relationship -- there is nothing in a 60-ticket sample to fit them against, and the propensity model on the same data reports no signal (cross-validated AUC 0.52 vs 0.50 for chance). Must name exactly these four keys and sum to 1.0; anything else is rejected rather than silently renormalised. failureRate = share of requests refused; pressure = how close the region is to its safety line; unresolved = backlog against the busiest in the view; leadTime = how slow replacement hardware is.",
+    "risk_weights": "How much each measured thing contributes to a region / datacentre / customer risk score. A STARTING POSITION, not a derived relationship -- there is nothing in a 60-ticket sample to fit them against, and the propensity model on the same data reports no signal (cross-validated AUC 0.52 vs 0.50 for chance). Must name exactly these four keys and sum to 1.0; anything else is rejected rather than silently renormalised. failureRate = share of requests refused; pressure = how close the region is to its safety line; unresolved = backlog against the busiest in the view; throttling = share of its capacities currently delaying or refusing work. Was leadTime, how slow replacement hardware was to provision -- Fabric scales an F SKU immediately, so that term scored every site against a delay none of them has.",
     "forecast_force_model": "Imposes one model on every region instead of using the backtest winner. Set to null to restore evidence-based selection. Currently 'sarima' -- Seasonal ARIMA, the same ARIMA family with a weekly term, which the backtest independently picks in 9 of 11 regions. Plain 'arima' was tried and rejected: ARIMA(1,1,1) has no trend term, so its long-run forecast is flat and no region projected a crossing at all, which switched off the order-by dates procurement acts on."
   },
   "forecast_force_model": "sarima"

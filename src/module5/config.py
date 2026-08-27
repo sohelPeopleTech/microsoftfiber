@@ -90,7 +90,9 @@ class Config:
             "failureRate": 0.40,   # share of this entity's requests refused
             "pressure": 0.25,      # how close its region is to the safety line
             "unresolved": 0.20,    # backlog against the busiest in the view
-            "leadTime": 0.15,      # how slow its replacement hardware is
+            # Was leadTime, at the same weight: Fabric has nothing to
+            # provision and nothing to wait for.
+            "throttling": 0.15,    # share of its capacities refusing work
         }
     )
 

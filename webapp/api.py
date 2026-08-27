@@ -47,6 +47,10 @@ import forecast  # noqa: E402
 import anomaly  # noqa: E402
 import admission  # noqa: E402
 import ratecard  # noqa: E402
+
+
+import planning  # noqa: E402
+from planning import recommend, scale  # noqa: E402
 from module5 import pipeline, state  # noqa: E402
 from module5.config import Config  # noqa: E402
 from module5.env import load_dotenv  # noqa: E402
@@ -321,8 +325,6 @@ def overview():
             "region": name,
             "status": f["status"],
             "utilisation": f["current_utilisation_pct"],
-            "sku": f["sku_class"],
-            "leadTime": f["lead_time_days"],
             "daysUntilOrder": f["days_until_order"],
             "reason": f["reason"],
             "exposure": e.get("RevenueExposureUSD", 0),
@@ -451,9 +453,7 @@ def _region_context(onto):
         name: {
             "utilisation": float(f.get("current_utilisation_pct") or 0),
             "threshold": float(f.get("threshold_pct") or 85),
-            "leadTime": float(f.get("lead_time_days") or 0),
             "status": f.get("status", ""),
-            "sku": f.get("sku_class", ""),
         }
         for name, f in flags.items()
     }
@@ -514,7 +514,22 @@ def _fleet_failure_rate() -> float:
     return (len(_failed_rows(fact)) / len(fact)) if len(fact) else 0.0
 
 
-def _score_group(grp, ctx, busiest_unresolved) -> dict:
+def _throttling_share(onto, datacentre_id: str | None) -> float:
+    """How much of one building is actively delaying or refusing work.
+
+    A share of its own capacities rather than a count, so a four-capacity site
+    and a forty-capacity site are comparable. Regions and customers have no
+    building, so they score zero on this term rather than borrowing a figure
+    from somewhere they are not.
+    """
+    if not datacentre_id:
+        return 0.0
+    counts = _site_capacity_counts(onto, str(datacentre_id))
+    total = counts["capacityCount"]
+    return (counts["throttling"] / total) if total else 0.0
+
+
+def _score_group(grp, ctx, busiest_unresolved, throttling_share: float = 0.0) -> dict:
     """Risk for one region / datacentre / customer, from its own rows.
 
     Failure means `_failed_incident_ids()` here as it does everywhere else.
@@ -528,7 +543,7 @@ def _score_group(grp, ctx, busiest_unresolved) -> dict:
     return riskindex.score(
         requests=len(grp), denied=len(denied), unresolved=unresolved,
         utilisation_pct=ctx.get("utilisation", 0), threshold_pct=ctx.get("threshold", 85),
-        lead_time_days=ctx.get("leadTime", 0), busiest_unresolved=busiest_unresolved,
+        throttling_share=throttling_share, busiest_unresolved=busiest_unresolved,
         weights=get_risk_weights(),
         prior_rate=_fleet_failure_rate(),
     ).to_dict()
@@ -563,7 +578,10 @@ def datacentres():
         rows.append({
             "datacentre": str(dc),
             "region": region,
-            "hardware": str(ctx.get(region, {}).get("sku", "") or ""),
+            # What this building holds, in Fabric's terms. Was `hardware`, which
+            # served the region's vendor class ("Intel-highmem") and printed it
+            # beside a provisioning lead time on a page that lists F SKUs.
+            **_site_capacity_counts(onto, str(dc)),
             # This facility's own safety line and how full it actually is. The
             # region page prints both in its table, but neither reached the
             # assistant, so asked what the "80%" and "over" against
@@ -578,8 +596,8 @@ def datacentres():
             "revenueLoss": round(loss, 2),
             "topReason": (denied["DenialReason"].mode().iloc[0] if len(denied) else ""),
             "utilisation": ctx.get(region, {}).get("utilisation", 0),
-            "leadTime": ctx.get(region, {}).get("leadTime", 0),
-            "risk": _score_group(grp, ctx.get(region, {}), busiest),
+            "risk": _score_group(grp, ctx.get(region, {}), busiest,
+                                 _throttling_share(onto, str(dc))),
             # Flagged rather than smoothed away: a 100% failure rate over one
             # request is arithmetic, not evidence, and the reader should see
             # which it is before acting on the ranking.
@@ -598,44 +616,99 @@ def datacentres():
     }
 
 
-def _migration_options(onto, datacentre_id: str) -> list[dict]:
-    """Every alternative hardware class for one facility, costed.
+def _site_capacity_counts(onto, datacentre_id: str) -> dict:
+    """Just the counts, for a row in a list.
 
-    Sized to that facility's own cores, not the region's -- you convert a
-    building. Feasibility still asks the region, because the load has to go
-    somewhere while the site is down.
+    `_site_fabric_position` computes the same thing and more, but it prices
+    every rung of the ladder for every capacity, and the data-centre list has
+    eighty-nine rows. This is the cheap read.
     """
-    dim = onto["dim_datacentre"]
-    row = dim[dim["DatacentreId"].astype(str) == datacentre_id]
-    if row.empty:
-        return []
-    site = row.iloc[0]
-    current, region = str(site["SKUClass"]), str(site["Region"])
-    units = float(site["DeployedUnits"] or 0)
+    caps = onto["dim_capacity"]
+    here = caps[caps["DatacentreId"].astype(str) == datacentre_id]
+    if here.empty:
+        return {"capacityCount": 0, "capacityUnits": 0, "throttling": 0}
 
-    out = []
-    for target in sorted(onto["dim_sku"]["SKUClass"]):
-        if target == current:
+    health = recommend._health(onto).set_index("CapacityId")
+    ids = [c for c in here["CapacityId"].astype(str) if c in health.index]
+    throttling = int((health.loc[ids, "ThrottledDays"] > 0).sum()) if ids else 0
+    return {
+        "capacityCount": int(len(here)),
+        "capacityUnits": int(here["CapacityUnits"].sum()),
+        "throttling": throttling,
+    }
+
+
+def _site_fabric_position(onto, datacentre_id: str) -> dict:
+    """What one building actually holds, in the only terms Fabric has.
+
+    Replaces `_migration_options`, which listed every alternative hardware class
+    for the site with a cost delta and a provisioning lead time. That table
+    answered "what else could this building be made of", which is not a question
+    a Fabric customer can ask -- they never see the building, and the thing they
+    do control is the SKU on each capacity.
+
+    So: the capacities, what they are running at, how many are throttling, and
+    for each one that is short, the rung to move it to.
+    """
+    caps = onto["dim_capacity"]
+    here = caps[caps["DatacentreId"].astype(str) == datacentre_id]
+    if here.empty:
+        return {"capacities": [], "capacityCount": 0, "capacityUnits": 0,
+                "throttling": 0, "skuMix": {}, "freeViewerCapable": 0}
+
+    health = recommend._health(onto).set_index("CapacityId")
+
+    rows, throttling, free_viewers = [], 0, 0
+    for _, row in here.iterrows():
+        cid = str(row["CapacityId"])
+        if cid not in health.index:
             continue
-        try:
-            src = module2.calculator.sku_from_dim(onto["dim_sku"], current)
-            tgt = module2.calculator.sku_from_dim(onto["dim_sku"], target)
-            conv = module2.convert_same_footprint(src, tgt, units).to_dict()
-            plan = module2.plan_conversion(onto, region, target, convert_datacentres=1)
-        except (KeyError, ValueError):
-            continue
-        out.append({
-            "toSku": target,
-            "coresAfter": _clean(conv["to_units"]),
-            "capacityAfter": _clean(conv["capacity_after"]),
-            "capacityDelta": _clean(conv["capacity_delta"]),
-            "costDeltaPct": _clean(conv["cost_delta_pct"]),
-            "leadTimeDays": _clean(conv["lead_time_days"]),
-            "feasible": bool(plan.can_convert_a_whole_datacentre),
+        view = scale.capacity_scale_view(row, health.loc[cid])
+        cur = view["current"]
+        if cur["throttledDays"]:
+            throttling += 1
+        if cur["freeViewers"]:
+            free_viewers += 1
+        target = view["recommended"]
+        after = next((o for o in view["options"] if o["sku"] == target), None)
+        rows.append({
+            "capacityId": cid,
+            "sku": cur["sku"],
+            "capacityUnits": cur["capacityUnits"],
+            "meanPct": cur["meanPct"],
+            "peakPct": cur["peakPct"],
+            "throttledDays": cur["throttledDays"],
+            "windowDays": cur["windowDays"],
+            "worstStage": cur["worstStage"],
+            "worstStageLabel": planning.STAGE_LABEL.get(cur["worstStage"], "—"),
+            "interactiveRejected": cur["interactiveRejected"],
+            "freeViewers": cur["freeViewers"],
+            "recommended": target,
+            "recommendedUnits": after["capacityUnits"] if after else None,
+            "peakAfterPct": after["peakAfterPct"] if after else None,
+            "direction": after["direction"] if after else None,
         })
-    # Best capability gain first -- that is the question being asked.
-    out.sort(key=lambda o: -o["capacityDelta"])
-    return out
+
+    # Worst first. A building with one capacity refusing queries and nine idle
+    # ones is a building with a problem, and sorting by name would bury it.
+    rows.sort(key=lambda r: (-r["throttledDays"], -r["interactiveRejected"]))
+
+    mix: dict[str, int] = {}
+    for r in rows:
+        mix[r["sku"]] = mix.get(r["sku"], 0) + 1
+    return {
+        "capacities": rows,
+        "capacityCount": len(rows),
+        "capacityUnits": int(sum(r["capacityUnits"] for r in rows)),
+        "throttling": throttling,
+        "freeViewerCapable": free_viewers,
+        # Smallest SKU first, on the real ladder rather than alphabetically
+        # -- "F128, F16, F2" is what sorting these as strings gives you.
+        "skuMix": dict(sorted(mix.items(),
+                              key=lambda kv: admission.F_SKUS.get(kv[0], 0))),
+        "needingScale": sum(1 for r in rows
+                            if r["recommended"] and r["direction"] == "up"),
+    }
 
 
 def _threshold_remediation(onto, datacentre_id: str) -> dict:
@@ -707,10 +780,10 @@ def datacentre_detail(datacentre_id: str):
     denied = denied[denied["DenialReason"] != ""]
     priced_by_id = {r["incidentId"]: r for r in tickets}
 
-    # One remediation per cause, with the migration arithmetic attached where a
-    # hardware change is the fix. Review was blunt that a generic line "is what
-    # ChatGPT would say" -- so where module2 owns the cause, the options are
-    # computed for this facility's own core count rather than described.
+    # One remediation per cause, with the scale arithmetic attached where a
+    # larger SKU is the fix. Review was blunt that a generic line "is what
+    # ChatGPT would say" -- so where a cause is owned, the options are computed
+    # from this building's own capacities rather than described.
     # One source of truth for the recommendation text, shared with the region
     # view -- the two disagreeing about what to do would be worse than either
     # being wrong.
@@ -726,21 +799,23 @@ def datacentre_detail(datacentre_id: str):
         entry = rec.to_dict()
         entry["detail"] = attribution.REASONS.get(rec.reason, {}).get("detail", "")
         # Split the options by kind so the page can render each shape.
-        entry["migration"] = [o for o in rec.options if o.get("kind") == "conversion"]
+        entry["scale"] = [o for o in rec.options if o.get("kind") == "scale"]
         entry["threshold"] = [o for o in rec.options if o.get("kind") == "threshold"]
         reasons.append(entry)
 
     return {
         "datacentre": datacentre_id,
         "region": region,
-        "cores": _clean(site.get("DeployedUnits")),
-        "coresFree": _clean(site.get("FreeUnits")),
+        "capacityUnits": _clean(site.get("DeployedUnits")),
+        "capacityUnitsFree": _clean(site.get("FreeUnits")),
         "thresholdPct": _clean(site.get("ThresholdPct")),
         "headroom": _clean(site.get("HeadroomToThreshold")),
         "failedCount": len([x for x in tickets if x.get("isFlagged")]),
         "recommendations": reasons,
-        "hardware": str(row.iloc[0].get("SKUClass") or ""),
-        "leadTimeDays": _clean(row.iloc[0].get("LeadTimeDays")),
+        # Was `hardware` ("Intel-highmem") and `leadTimeDays` (45). Fabric
+        # exposes neither, and the page printed both above a table of F SKUs.
+        # What a building actually holds is capacities, so that is what it says.
+        "fabric": _site_fabric_position(onto, datacentre_id),
         "deployedUnits": _clean(row.iloc[0].get("DeployedUnits")),
         "utilisation": ctx.get("utilisation", 0),
         "threshold": ctx.get("threshold", 85),
@@ -748,7 +823,8 @@ def datacentre_detail(datacentre_id: str):
         "failedCount": len([x for x in tickets if x.get("isFlagged")]),
         "customers": int(here["SubscriptionId"].nunique()),
         "revenueLoss": round(sum(float(x["exposure"]) for x in tickets), 2),
-        "risk": _score_group(here, ctx, busiest),
+        "risk": _score_group(here, ctx, busiest,
+                             _throttling_share(onto, datacentre_id)),
         "lowEvidence": bool(len(here) < 3),
         "reasons": reasons,
         "tickets": tickets,
@@ -1007,7 +1083,10 @@ def capacity_policy(
             "actualFailures": sum(r["actualFailures"] for r in rows),
             "wouldHavePrevented": sum(r["wouldHavePrevented"] for r in rows),
         },
-        "pools": _records(onto["dim_capacity_pool"]),
+        # Without SKUClass: the pool table printed a vendor class in the
+        # column beside its own "Equivalent Fabric SKU".
+        "pools": [{k: v for k, v in r.items() if k != "SKUClass"}
+                  for r in _records(onto["dim_capacity_pool"])],
         "skuLadder": admission.F_SKUS,
         "unitsPerCu": admission.UNITS_PER_CU,
     }
@@ -1798,8 +1877,8 @@ def region_detail(name: str):
                 r.to_dict() for r in remediation.for_site(
                     onto, str(dc), denied, crossing_for=_forecast_crossing)
             ],
-            "cores": _clean(meta["DeployedUnits"]) if meta is not None else None,
-            "coresFree": _clean(meta["FreeUnits"]) if meta is not None else None,
+            "capacityUnits": _clean(meta["DeployedUnits"]) if meta is not None else None,
+            "capacityUnitsFree": _clean(meta["FreeUnits"]) if meta is not None else None,
             "thresholdPct": _clean(meta["ThresholdPct"]) if meta is not None else None,
             "headroom": _clean(meta["HeadroomToThreshold"]) if meta is not None else None,
         })
@@ -1816,9 +1895,8 @@ def region_detail(name: str):
         "siteCount": int(len(all_sites)),
         "sitesWithActivity": sum(1 for d in datacentres if d["requests"] > 0),
         "sitesOverThreshold": sum(1 for d in datacentres if d["overThreshold"]),
-        "cores": _clean(all_sites["DeployedUnits"].sum()),
-        "coresFree": _clean(all_sites["FreeUnits"].sum()),
-        "hardware": str(all_sites["SKUClass"].iloc[0]) if len(all_sites) else "",
+        "capacityUnits": _clean(all_sites["DeployedUnits"].sum()),
+        "capacityUnitsFree": _clean(all_sites["FreeUnits"].sum()),
         "failedCount": len([r for r in rows if r["isFlagged"]]),
         "revenueLoss": round(sum(float(r["exposure"]) for r in rows), 2),
         "reasons": _reason_breakdown(onto, name),
@@ -1891,89 +1969,87 @@ def convert(region: str, to_sku: str, mode: str = "same_footprint"):
         raise HTTPException(404, str(exc)) from exc
 
 
-@app.get("/api/swap-options")
-def swap_options():
-    """Which sites can be swapped, and to what.
+@app.get("/api/scale-options")
+def scale_options_index():
+    """Which capacities can be scaled, and what each is running now.
 
-    The calculator used to work at region level, which is not where the work
-    happens -- you take a building offline, not a country. This lists every
-    site with the hardware it runs, so the target list can exclude what it
-    already has.
+    Replaces `/api/swap-options`, which listed every data centre with the
+    hardware class it ran so a target class could be picked. The thing a Fabric
+    admin actually changes is one capacity's SKU, so that is the unit here.
+
+    Ordered worst first: the list exists to be acted on, and a capacity refusing
+    queries should not be somewhere on page two.
     """
     onto = get_ontology()
-    dim = onto["dim_datacentre"]
-    fact = onto["fact_capacity_request"]
-    active = set(fact["DatacentreId"].astype(str))
+    caps = onto["dim_capacity"]
+    health = recommend._health(onto).set_index("CapacityId")
 
-    sites = []
-    for r in dim.itertuples():
-        sites.append({
-            "datacentre": str(r.DatacentreId),
-            "region": str(r.Region),
-            "currentHardware": str(r.SKUClass),
-            "units": _clean(r.DeployedUnits),
-            "hasActivity": str(r.DatacentreId) in active,
+    rows = []
+    for _, row in caps.iterrows():
+        cid = str(row["CapacityId"])
+        if cid not in health.index:
+            continue
+        h = health.loc[cid]
+        rows.append({
+            "capacityId": cid,
+            "datacentre": str(row["DatacentreId"]),
+            "region": str(row["Region"]),
+            "sku": str(row["FabricSku"]),
+            "capacityUnits": int(row["CapacityUnits"]),
+            "meanPct": round(float(h.get("MeanUtilisationPct", 0) or 0), 1),
+            "peakPct": round(float(h.get("PeakUtilisationPct", 0) or 0), 1),
+            "throttledDays": int(h.get("ThrottledDays", 0) or 0),
+            "worstStage": str(h.get("WorstStage", "none")),
         })
-    sites.sort(key=lambda s: (s["region"], s["datacentre"]))
+    rows.sort(key=lambda r: (-r["throttledDays"], -r["meanPct"]))
     return {
-        "sites": sites,
-        "hardware": sorted(onto["dim_sku"]["SKUClass"]),
-        "regions": sorted(dim["Region"].unique()),
+        "capacities": rows,
+        "regions": sorted({r["region"] for r in rows}),
+        "skuLadder": admission.F_SKUS,
+        "freeViewerSku": planning.FREE_VIEWER_SKU,
     }
 
 
-@app.get("/api/swap")
-def swap(datacentre: str, to_sku: str, mode: str = "same_footprint"):
-    """Model swapping one site onto different hardware.
+@app.get("/api/scale")
+def scale_capacity(capacity: str, to_sku: str | None = None):
+    """Model moving one capacity to another SKU.
 
-    Two questions, deliberately kept apart: what the site would look like
-    afterwards, and whether the work can be scheduled at all given what
-    customers are running right now. A conversion that leaves the region unable
-    to serve its load during the window is not a plan.
+    Two questions, deliberately kept apart, exactly as the hardware calculator
+    this replaces kept them apart: what the capacity would be running at
+    afterwards, and what else changes when you cross a line on the ladder.
+
+    The second is the one that catches people. Scaling down below F64 stops
+    Power BI content being readable on a Free licence, so every viewer needs Pro
+    or PPU -- a saving on compute that can cost more than it saves. And
+    Microsoft notes scaling across F256/F512 can be slower, which is worth
+    knowing before an incident rather than during one.
+
+    There is no third question. The old calculator had one -- whether the region
+    could spare the site while the work ran -- and Fabric has no answer to give
+    because there is no outage: the scale applies immediately.
     """
     onto = get_ontology()
-    dim = onto["dim_datacentre"]
-    row = dim[dim["DatacentreId"].astype(str) == datacentre]
+    caps = onto["dim_capacity"]
+    row = caps[caps["CapacityId"].astype(str) == capacity]
     if row.empty:
-        raise HTTPException(404, f"unknown datacentre {datacentre!r}")
+        raise HTTPException(404, f"unknown capacity {capacity!r}")
 
-    site = row.iloc[0]
-    current = str(site["SKUClass"])
-    region = str(site["Region"])
+    health = recommend._health(onto).set_index("CapacityId")
+    if capacity not in health.index:
+        raise HTTPException(404, f"no consumption recorded for {capacity!r}")
 
-    # Swapping a site onto the hardware it already runs is not a migration.
-    # Rejected rather than quietly returning a no-op result that looks like an
-    # answer.
-    if to_sku == current:
-        raise HTTPException(
-            400,
-            f"{datacentre} already runs {current}. Choose different hardware.",
-        )
+    view = scale.capacity_scale_view(row.iloc[0], health.loc[capacity])
 
-    try:
-        source = module2.calculator.sku_from_dim(onto["dim_sku"], current)
-        target = module2.calculator.sku_from_dim(onto["dim_sku"], to_sku)
-    except KeyError as exc:
-        raise HTTPException(404, str(exc)) from exc
-
-    units = float(site["DeployedUnits"] or 0)
-    convert = (module2.convert_same_footprint if mode == "same_footprint"
-               else module2.convert_like_for_like)
-    result = convert(source, target, units)
-
-    # Feasibility is a region-level question: taking this site offline draws on
-    # headroom the whole region shares.
-    plan = module2.plan_conversion(onto, region, to_sku, convert_datacentres=1)
-
-    return {
-        "datacentre": datacentre,
-        "region": region,
-        "currentHardware": current,
-        "targetHardware": to_sku,
-        "units": round(units, 1),
-        "conversion": _clean(result.to_dict()),
-        "feasibility": _clean(plan.to_dict()),
-    }
+    if to_sku is not None:
+        if to_sku not in admission.F_SKUS:
+            raise HTTPException(400, f"{to_sku!r} is not on the F-SKU ladder")
+        # Scaling a capacity to the SKU it already runs is not a change.
+        # Rejected rather than returning a no-op that looks like a result.
+        if to_sku == view["current"]["sku"]:
+            raise HTTPException(400, f"{capacity} is already {to_sku}")
+        chosen = next(o for o in view["options"] if o["sku"] == to_sku)
+        view["selected"] = chosen
+    return view
 
 
 @app.get("/api/region-recommendation/{region}")
@@ -2637,8 +2713,8 @@ def _snapshot_datacentres() -> list:
             "thresholdPct": round(thr, 1),
             "utilisationPct": round(util, 1),
             "thresholdStatus": "In risk" if util > thr else "Not in risk",
-            "coresDeployed": round(dep, 1),
-            "coresFree": round(dep - used, 1),
+            "capacityUnitsDeployed": round(dep, 1),
+            "capacityUnitsFree": round(dep - used, 1),
         }
         # 65 of the 110 sites have never had a request. Carrying nulls for
         # their failure counts and risk scores added 19KB to a snapshot that
@@ -2654,7 +2730,12 @@ def _snapshot_datacentres() -> list:
                 "topReason": s.get("topReason", ""),
                 "riskScore": (s.get("risk") or {}).get("score"),
                 "riskBand": (s.get("risk") or {}).get("band"),
-                "leadTimeDays": s.get("leadTime"),
+                # What the building holds, not how long hardware takes to
+                # arrive. The assistant was being handed a lead time for a
+                # platform that has none, and answered questions with it.
+                "capacities": s.get("capacityCount"),
+                "capacityUnits": s.get("capacityUnits"),
+                "throttlingCapacities": s.get("throttling"),
             })
         else:
             entry["note"] = "no requests recorded here"

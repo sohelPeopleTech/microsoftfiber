@@ -143,7 +143,7 @@ PAGES["/"] = async (view) => {
       <th class="n">Days to order-by</th><th class="n">Revenue loss</th><th class="n">Failed</th>
     </tr></thead>
     <tbody>${attention.map((r) => `<tr class="clickable" data-region="${esc(r.region)}">
-      <td><b>${esc(r.region)}</b><br><span class="pill mute">${esc(r.sku)} · ${r.leadTime}d lead</span></td>
+      <td><b>${esc(r.region)}</b></td>
       <td>${statusPill(r.status)}</td>
       <td class="why">${esc(r.reason)}</td>
       <td class="n">${r.daysUntilOrder == null ? "—" :
@@ -1633,12 +1633,12 @@ PAGES["/region"] = async (view, name, showAll = false) => {
        one here is wrong -- and the incident count went with it because the
        figure that matters is capacity owed, not tickets raised. */
     const atRisk = t.current_utilisation_pct > t.threshold_pct;
-    const used = Math.round(r.cores - r.coresFree);
+    const used = Math.round(r.capacityUnits - r.capacityUnitsFree);
     view.innerHTML = title(`Region: ${name}`, `${r.siteCount} data centres`) + panel(`Region: ${name}`, `
       <p style="margin-top:0"><b>${atRisk ? "In risk." : "Not in risk."}</b> ${esc(t.reason)}</p>
       <div class="kpis" style="margin:1rem 0">
         ${kpi("Total CU", num(Math.round(r.cores)),
-              `${num(Math.round(r.coresFree))} free across ${r.siteCount} sites`, "ink",
+              `${num(Math.round(r.capacityUnitsFree))} free across ${r.siteCount} sites`, "ink",
               "Compute deployed across every facility in this region.")}
         ${kpi("Utilised CU", num(used),
               `of ${num(Math.round(r.cores))} deployed`, atRisk ? "bad" : "ink")}
@@ -1681,8 +1681,8 @@ PAGES["/region"] = async (view, name, showAll = false) => {
           <th>Denial cause and recommended action</th></tr></thead>
         <tbody>${(r.datacentres || []).map((x) => `<tr class="clickable" data-dc="${esc(x.datacentre)}">
           <td class="mono"><b>${esc(x.datacentre)}</b></td>
-          <td class="n">${num(Math.round(x.cores))}</td>
-          <td class="n">${x.coresFree <= 0 ? `<b style="color:var(--bad)">0</b>` : num(Math.round(x.coresFree))}</td>
+          <td class="n">${num(Math.round(x.capacityUnits))}</td>
+          <td class="n">${x.capacityUnitsFree <= 0 ? `<b style="color:var(--bad)">0</b>` : num(Math.round(x.capacityUnitsFree))}</td>
           <td class="n">${pct(x.thresholdPct)}</td>
           <td class="n"><b style="color:${x.overThreshold ? "var(--bad)" : "inherit"}">${pct(x.utilisationPct, 1)}</b></td>
           <td>${x.overThreshold
@@ -1814,9 +1814,12 @@ PAGES["/customers"] = async (view) => {
       <th class="n">ARR</th><th class="n">Revenue loss</th>
       <th class="n">Failed / total</th><th>Worst region</th>
       <th>Regions</th><th>Risk score</th></tr></thead>
-    <tbody>${d.customers.map((c) => `<tr class="clickable${
+    <tbody>${d.customers.map((c, i) => `<tr class="clickable${
       c.risk && c.risk.band === "high" ? " at-risk" : ""}" data-sub="${esc(c.subscriptionId)}">
-      <td class="n">${c.rank}</td>
+      <!-- The position in this list, which is what the "#" column means. This
+           read a rank field that /api/customers has never sent, so every row
+           in the table printed the word "undefined" in its first cell. -->
+      <td class="n">${i + 1}</td>
       <td><b>${esc(c.customerName)}</b>${c.risk && c.risk.band === "high"
         ? ` <span class="pill bad">at risk</span>` : ""}
         <br><span class="mono" style="font-size:.72rem;color:var(--ink-3)">${esc(c.customerShort)}</span></td>
@@ -1922,11 +1925,11 @@ PAGES["/actions"] = async (view) => {
   const [a, d] = await Promise.all([get("/api/actions"), get("/api/overview")]);
 
   view.innerHTML = howto({
-    answers: "<b>Recommended remediation per ranked region</b>, with a migration calculator for modelling a hardware change before committing to it.",
+    answers: "<b>Recommended remediation per ranked region</b>, with a scale calculator for modelling an F-SKU change before committing to it.",
     steps: [
       { what: "Each card", is: "one region \u2014 problem, cause, impact and expected effect, followed by the incidents the recommendation was derived from." },
       { what: "Accept / Reject", is: "at the bottom of each recommendation. Nothing is actioned automatically \u2014 a named person decides. A rejection requires a justification, which is what tells the next run whether to suppress the region or re-raise it." },
-      { what: "SKU migration calculator", is: "select a region, the specific facility to take offline, and the target hardware class. Returns the post-migration position and whether the remaining region capacity can absorb the load during the work." },
+      { what: "Capacity scale calculator", is: "select a region, the capacity to change, and the rung to move it to. Returns what it would be running at afterwards, and whether the move crosses the F64 licensing line or the F256/F512 boundary. There is no feasibility question: scaling an F SKU applies immediately and takes nothing offline." },
     ],
     words: [
       { term: "Failure mode", means: "Whether the constraint is approval latency or genuine capacity shortage. The two require opposite remediations, so each card states which applies." },
@@ -1963,99 +1966,130 @@ PAGES["/actions"] = async (view) => {
       <span id="decision-${esc(r.region)}" style="font-size:.8rem">${decided(a, r.region)}</span>
     </div>`, { hint: `owner: ${r.owner}` })).join("")}
 
-  ${panel("SKU migration calculator", `
+  ${panel("Capacity scale calculator", `
     <p style="margin:0 0 1rem;color:var(--ink-2)">
-      Work happens in a building, not a country — so pick the site you would
-      actually take offline. The target list leaves out the hardware it already
-      runs, because that is not a migration.
+      Pick a capacity and a rung on the F-SKU ladder. The change applies
+      immediately — there is nothing to order and nothing goes offline, so the
+      only questions are what it would be running at afterwards and whether the
+      move crosses a line that costs you something else.
     </p>
     <div style="display:flex;gap:1.5rem;flex-wrap:wrap;align-items:center;margin-bottom:1rem">
-      <label class="ctl">Region <select id="sw-region"></select></label>
-      <label class="ctl">Data centre <select id="sw-dc"></select></label>
-      <label class="ctl">Swap to <select id="sw-sku"></select></label>
-      <label class="ctl">Mode <select id="sw-mode">
-        <option value="same_footprint">Same number of units</option>
-        <option value="like_for_like">Same amount of work</option>
-      </select></label>
+      <label class="ctl">Region <select id="sc-region"></select></label>
+      <label class="ctl">Capacity <select id="sc-cap"></select></label>
+      <label class="ctl">Scale to <select id="sc-sku"></select></label>
     </div>
-    <div id="sw-out"></div>`)}`;
+    <div id="sc-out"></div>`)}`;
 
-  /* --- swap calculator ------------------------------------------------- */
-  const opt = await get("/api/swap-options");
+  /* --- capacity scale calculator ---------------------------------------
+     Replaces a calculator that asked which building to take offline and what to
+     convert it into. Fabric has no building to empty and nothing to convert; it
+     has a ladder, and one capacity at a time moves along it. */
+  const opt = await get("/api/scale-options");
+  const LADDER = Object.keys(opt.skuLadder);
 
   function fillRegions() {
-    $("sw-region").innerHTML = opt.regions
+    $("sc-region").innerHTML = opt.regions
       .map((r) => `<option>${esc(r)}</option>`).join("");
   }
-  function fillSites() {
-    const inRegion = opt.sites.filter((s) => s.region === $("sw-region").value);
-    $("sw-dc").innerHTML = inRegion.map((s) =>
-      `<option value="${esc(s.datacentre)}">${esc(s.datacentre)} — ${esc(s.currentHardware)}${
-        s.hasActivity ? "" : " (no requests yet)"}</option>`).join("");
+  function fillCapacities() {
+    const inRegion = opt.capacities.filter((c) => c.region === $("sc-region").value);
+    $("sc-cap").innerHTML = inRegion.map((c) =>
+      `<option value="${esc(c.capacityId)}">${esc(c.capacityId)} — ${esc(c.sku)}${
+        c.throttledDays ? ` · throttling ${c.throttledDays}d` : ""}</option>`).join("");
   }
   function fillTargets() {
-    // Never offer the hardware the site already runs.
-    const site = opt.sites.find((s) => s.datacentre === $("sw-dc").value);
-    const current = site ? site.currentHardware : "";
-    $("sw-sku").innerHTML = opt.hardware
-      .filter((h) => h !== current)
-      .map((h) => `<option>${esc(h)}</option>`).join("");
+    // Never offer the SKU it already runs: that is not a change.
+    const cap = opt.capacities.find((c) => c.capacityId === $("sc-cap").value);
+    const current = cap ? cap.sku : "";
+    $("sc-sku").innerHTML = LADDER.filter((k) => k !== current)
+      .map((k) => `<option value="${esc(k)}">${esc(k)} — ${num(opt.skuLadder[k])} CU</option>`)
+      .join("");
+    if (cap) {
+      // Default to the rung the product would recommend, so the first thing
+      // shown is the answer rather than an arbitrary SKU.
+      const up = LADDER.find((k) => opt.skuLadder[k] > cap.capacityUnits);
+      if (up) $("sc-sku").value = up;
+    }
   }
 
-  async function runSwap() {
-    const out = $("sw-out");
-    if (!$("sw-dc").value || !$("sw-sku").value) { out.innerHTML = ""; return; }
+  async function runScale() {
+    const out = $("sc-out");
+    if (!$("sc-cap").value || !$("sc-sku").value) { out.innerHTML = ""; return; }
     out.innerHTML = `<p class="loading" style="padding:0">Calculating\u2026</p>`;
     try {
       const q = new URLSearchParams({
-        datacentre: $("sw-dc").value, to_sku: $("sw-sku").value, mode: $("sw-mode").value,
+        capacity: $("sc-cap").value, to_sku: $("sc-sku").value,
       });
-      const s = await get(`/api/swap?${q}`);
-      const c = s.conversion, f = s.feasibility;
-      const up = c.capacity_delta >= 0;
+      const v = await get(`/api/scale?${q}`);
+      const c = v.current, t = v.selected;
+      const relief = t.peakAfterPct < c.peakPct;
+
+      const notes = [];
+      if (t.gainsFreeViewers) {
+        notes.push(["good", `At ${esc(t.sku)} this capacity reaches F64, so Power BI
+          content on it becomes readable on a Free licence. Viewers who need Pro
+          or PPU today would not.`]);
+      }
+      if (t.losesFreeViewers) {
+        notes.push(["bad", `This drops below F64. Power BI content here stops being
+          readable on a Free licence, so every viewer needs Pro or PPU — which can
+          cost more than the smaller SKU saves.`]);
+      }
+      if (t.crossesSlowBoundary) {
+        notes.push(["warn", `This crosses the F256/F512 boundary, which Microsoft
+          notes can scale more slowly than moves within either side of it.`]);
+      }
+      if (t.stillBursts) {
+        notes.push(["warn", `At ${esc(t.sku)} the measured peak is still
+          ${pct(t.peakAfterPct)} — above the ceiling. Bursting is not a fault on its
+          own, but this capacity would keep generating overage.`]);
+      }
 
       out.innerHTML = `
         <p style="margin:0 0 1rem">
-          <b>${esc(s.datacentre)}</b> currently runs <b>${esc(s.currentHardware)}</b>
-          across ${num(s.units)} units. Swapping it to <b>${esc(s.targetHardware)}</b>:
+          <b>${esc(v.capacityId)}</b> runs <b>${esc(c.sku)}</b> on
+          ${num(c.capacityUnits)} CU, averaging ${pct(c.meanPct)} and peaking at
+          ${pct(c.peakPct)} over ${num(c.windowDays)} days. Moving it to
+          <b>${esc(t.sku)}</b>:
         </p>
         <div class="kpis">
-          ${kpi("Work it could handle", num(Math.round(c.capacity_after)),
-                `from ${num(Math.round(c.capacity_before))} (${up ? "+" : ""}${num(Math.round(c.capacity_delta))})`,
-                up ? "good" : "bad")}
-          ${kpi("Cost change", `${c.cost_delta_pct > 0 ? "+" : ""}${c.cost_delta_pct.toFixed(0)}%`,
-                "against what this site costs now", c.cost_delta_pct > 0 ? "bad" : "good")}
-          ${kpi("Units after the swap", num(Math.round(c.to_units)),
-                `from ${num(Math.round(c.from_units))}`, "ink")}
-          ${kpi("Wait for the hardware", `${c.lead_time_days} days`,
-                `before ${esc(s.targetHardware)} arrives`, "ink")}
+          ${kpi("Capacity Units", num(t.capacityUnits),
+                `from ${num(c.capacityUnits)} (${t.cuDeltaPct > 0 ? "+" : ""}${t.cuDeltaPct.toFixed(0)}%)`,
+                t.direction === "up" ? "good" : "ink")}
+          ${kpi("Peak after the move", pct(t.peakAfterPct),
+                `from ${pct(c.peakPct)}`, relief ? "good" : "bad")}
+          ${kpi("Headroom against peak", pct(t.headroomPct),
+                t.stillBursts ? "still bursting past the ceiling" : "below the ceiling",
+                t.stillBursts ? "bad" : "good")}
+          ${kpi("When it takes effect", "Immediately",
+                "an F SKU is scaled in Azure", "good")}
         </div>
 
-        <h4 style="margin:1.25rem 0 .4rem;font-size:.9rem">Migration feasibility</h4>
-        <p style="background:${f.can_convert_a_whole_datacentre ? "var(--good-wash)" : "var(--bad-wash)"};
+        <h4 style="margin:1.25rem 0 .4rem;font-size:.9rem">Is this the right rung?</h4>
+        <p style="background:${t.comfortable ? "var(--good-wash)" : "var(--bad-wash)"};
            padding:.8rem 1rem;border-radius:3px;margin:0 0 .75rem">
-          <b>${f.can_convert_a_whole_datacentre ? "Yes." : "No."}</b>
-          ${f.can_convert_a_whole_datacentre
-            ? `${esc(s.region)} has ${num(Math.round(f.max_offline_units))} units of spare capacity
-               after a safety margin, and this site holds ${num(Math.round(f.units_per_datacentre))}.`
-            : esc(f.blocker || "Not enough spare capacity in the region during the work.")}
+          <b>${t.comfortable ? "Yes." : "Not on its own."}</b>
+          ${t.comfortable
+            ? `It leaves the mean at ${pct(t.meanAfterPct)} and the peak at
+               ${pct(t.peakAfterPct)}, both inside the ceiling.`
+            : `It leaves the mean at ${pct(t.meanAfterPct)} and the peak at
+               ${pct(t.peakAfterPct)}.${v.recommended
+                 ? ` ${esc(v.recommended)} is the smallest rung that clears both.`
+                 : ""}`}
         </p>
-        <p style="color:var(--ink-2);font-size:.82rem;margin:0">
-          Feasibility is a region question, not a site one: while this building is
-          down, the rest of ${esc(s.region)} has to carry what customers are
-          running. Region has ${num(Math.round(f.deployed_units))} units deployed,
-          ${num(Math.round(f.used_units))} in use.
-        </p>`;
+        ${notes.map(([tone, text]) => `
+          <p style="background:var(--${tone}-wash);padding:.7rem 1rem;border-radius:3px;
+             margin:0 0 .55rem;font-size:.86rem">${text}</p>`).join("")}
+        <p class="t3" style="font-size:.82rem;margin:.4rem 0 0">${esc(v.why)}</p>`;
     } catch (e) {
       out.innerHTML = `<p class="empty" style="padding:0">${esc(e.message)}</p>`;
     }
   }
 
-  $("sw-region").onchange = () => { fillSites(); fillTargets(); runSwap(); };
-  $("sw-dc").onchange = () => { fillTargets(); runSwap(); };
-  $("sw-sku").onchange = runSwap;
-  $("sw-mode").onchange = runSwap;
-  fillRegions(); fillSites(); fillTargets(); runSwap();
+  $("sc-region").onchange = () => { fillCapacities(); fillTargets(); runScale(); };
+  $("sc-cap").onchange = () => { fillTargets(); runScale(); };
+  $("sc-sku").onchange = runScale;
+  fillRegions(); fillCapacities(); fillTargets(); runScale();
 
   view.querySelectorAll("button[data-decision]").forEach((b) => (b.onclick = async () => {
     const { region, decision } = b.dataset;
@@ -2446,13 +2480,15 @@ PAGES["/datacentres"] = async (view) => {
   }) + title("Data centres", `${d.withActivity} sites with activity, of ${d.totalSites} across all regions`) + `
 
   ${panel("Data centres by risk score", `<div class="scroll-x"><table>
-    <thead><tr><th>Data centre</th><th>Region</th><th>Hardware</th>
+    <thead><tr><th>Data centre</th><th>Region</th><th class="n">Capacities</th>
       <th class="n">Requests</th><th class="n">Failed</th><th class="n">Customers</th>
       <th class="n">Revenue loss</th><th>Primary denial reason</th><th>Risk score</th></tr></thead>
     <tbody>${d.datacentres.map((x) => `<tr class="clickable" data-dc="${esc(x.datacentre)}">
       <td class="mono"><b>${esc(x.datacentre)}</b></td>
       <td>${esc(x.region)}</td>
-      <td>${esc(x.hardware)} <span class="pill mute">${x.leadTime}d</span></td>
+      <td class="n">${x.capacityCount == null ? "—"
+        : `${num(x.capacityCount)}<br><span class="t3">${num(x.capacityUnits)} CU${
+             x.throttling ? ` · <b class="t-bad">${num(x.throttling)} throttling</b>` : ""}</span>`}</td>
       <td class="n">${num(x.requests)}</td>
       <td class="n">${x.failed ? `<b style="color:var(--bad)">${num(x.failed)}</b>` : "—"}</td>
       <td class="n">${num(x.customers)}</td>
@@ -2479,21 +2515,22 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
   view.innerHTML = howto({
     answers: `<b>Everything recorded at ${esc(x.datacentre)}</b> — capacity position, denial causes, recommended remediation and the full incident list.`,
     steps: [
-      { what: "Capacity position", is: "CU deployed, CU free, and this facility's own safety threshold." },
-      { what: "Recommended remediation", is: "one entry per denial cause at this site, with the migration arithmetic where a hardware change is the fix." },
+      { what: "Capacity position", is: "CU deployed, CU free, and this site's own safety threshold. Below it, every Fabric capacity in the building with what it is running at." },
+      { what: "Recommended remediation", is: "one entry per denial cause at this site, with the capacities to scale where a larger F SKU is the fix." },
       { what: "Risk index breakdown", is: "each component of the score, with its measured value and contribution." },
       { what: "Incident register", is: "every request raised here, with the derivation behind each revenue-loss figure." },
     ],
     next: "Action the remediation for the highest-cost cause. Causes marked manual review require engineering or account-team engagement.",
     sources: "ICM capacity requests attributed to this facility, and the Fabric capacities in it.",
   }) + title(`Data centre: ${x.datacentre}`,
-             `In ${x.region} · ${x.hardware} · ${x.leadTimeDays}-day provisioning lead time`) + `
+             `In ${x.region} · ${num(x.fabric.capacityCount)} Fabric capacities · ${num(x.fabric.capacityUnits)} CU`
+             + (x.fabric.throttling ? ` · ${num(x.fabric.throttling)} throttling` : "")) + `
 
   <div class="kpis">
     ${kpi("Risk score", x.risk.score.toFixed(1), `${x.risk.band} risk`,
           x.risk.band === "high" ? "bad" : x.risk.band === "medium" ? "" : "good")}
-    ${kpi("Capacity", `${num(Math.round(x.cores ?? 0))} CU`,
-          `${num(Math.round(x.coresFree ?? 0))} free · threshold ${pct(x.thresholdPct ?? 0)}`,
+    ${kpi("Capacity", `${num(Math.round(x.capacityUnits ?? 0))} CU`,
+          `${num(Math.round(x.capacityUnitsFree ?? 0))} free · threshold ${pct(x.thresholdPct ?? 0)}`,
           over ? "bad" : "ink")}
     ${kpi("Failed requests", num(x.failedCount ?? 0), `of ${num(x.requests)} raised here`,
           x.failedCount ? "bad" : "good",
@@ -2508,8 +2545,50 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
     observations to stand on its own, so it is pulled toward the
     ${Math.round(x.risk.evidence.priorRate * 100)}% fleet average and scored as
     <b>${Math.round(x.risk.evidence.usedFailureRate * 100)}%</b>. The score is
-    therefore driven mainly by utilisation and lead time, which are measured
+    therefore driven mainly by utilisation and throttling, which are measured
     continuously, until this facility has more history behind it.</p>` : ""}
+
+  ${panel(`What is in this data centre — ${num(x.fabric.capacityCount)} Fabric capacities`,
+    x.fabric.capacityCount ? `
+    <p style="margin:0 0 .9rem;color:var(--ink-2);font-size:.88rem">
+      There is no hardware to list. Fabric is a SaaS platform, so what a building
+      holds is capacities, each with an F SKU and a number of Capacity Units.
+      <b>CU does not pool</b> — a capacity throttles on its own consumption, so a
+      site can hold plenty of CU and still be refusing queries.
+    </p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capacity</th><th class="n">SKU</th><th class="n">CU</th>
+        <th class="n">Mean</th><th class="n">Peak</th><th>What is happening</th>
+        <th class="n">Queries refused</th><th>Free viewers</th><th>What to do</th></tr></thead>
+      <tbody>${x.fabric.capacities.map((c) => `<tr class="${c.throttledDays ? "row-danger" : ""}">
+        <td><a href="/capacity/${encodeURIComponent(c.capacityId)}">${esc(c.capacityId)}</a></td>
+        <td class="n"><b>${esc(c.sku)}</b></td>
+        <td class="n">${num(c.capacityUnits)}</td>
+        <td class="n">${pct(c.meanPct)}</td>
+        <td class="n ${c.peakPct > 100 ? "t-bad" : ""}">${pct(c.peakPct)}</td>
+        <td>${c.throttledDays
+              ? `<span class="pill ${(PROBLEM[c.worstStage] || PROBLEM.none).tone}">${
+                   esc((PROBLEM[c.worstStage] || PROBLEM.none).text)}</span>
+                 <span class="t3">${num(c.throttledDays)} of ${num(c.windowDays)} days</span>`
+              : `<span class="t3">Not throttling</span>`}</td>
+        <td class="n">${c.interactiveRejected ? `<b class="t-bad">${num(c.interactiveRejected)}</b>` : "—"}</td>
+        <td>${c.freeViewers
+              ? `<span class="t-good">Free</span>`
+              : `<span class="t3">Pro / PPU</span>`}</td>
+        <td>${c.recommended && c.direction === "up"
+              ? `<b class="t-warn">Scale to ${esc(c.recommended)}</b>
+                 <span class="t3">${num(c.recommendedUnits)} CU · immediately</span>`
+              : c.recommended
+                ? `<span class="t3">Could shrink to ${esc(c.recommended)}</span>`
+                : `<span class="t3">Nothing</span>`}</td>
+      </tr>`).join("")}</tbody></table></div>
+    <p class="prov">
+      ${num(x.fabric.needingScale)} of ${num(x.fabric.capacityCount)} need a larger SKU ·
+      ${num(x.fabric.freeViewerCapable)} are F64 or larger, so Power BI content on the
+      rest needs a Pro or PPU licence per viewer. Scaling an F SKU applies immediately;
+      there is nothing to order and nothing goes offline.
+    </p>`
+    : `<p class="empty" style="padding:0">No Fabric capacities are recorded in this data centre.</p>`)}
 
   ${panel("Recommended remediation", (x.recommendations || []).length
     ? x.recommendations.map((rec) => `
@@ -2532,23 +2611,25 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
                 ${num(Math.round(o.headroomAfter))}</td>
             </tr>`).join("")}</tbody></table></div>
         </div>` : ""}
-        ${(rec.migration || []).length ? `<div style="margin-top:.6rem">
+        ${(rec.scale || []).length ? `<div style="margin-top:.6rem">
           <p style="margin:0 0 .4rem;font-size:.85rem;color:var(--ink-2)">
-            Migration arithmetic for this facility:</p>
+            The capacities here that are short, worst first:</p>
           <div class="scroll-x"><table style="font-size:.85rem">
-            <thead><tr><th>Option</th><th class="n">CU after</th>
-              <th class="n">Work capacity</th><th class="n">Cost</th>
-              <th class="n">Lead time</th><th>Feasible now</th></tr></thead>
-            <tbody>${rec.migration.map((m) => `<tr>
-              <td><b>${esc(m.toSku)}</b></td>
-              <td class="n">${num(Math.round(m.coresAfter))}</td>
-              <td class="n">${num(Math.round(m.capacityAfter))}
-                <span style="color:${m.capacityDelta >= 0 ? "var(--good)" : "var(--bad)"}">
-                (${m.capacityDelta >= 0 ? "+" : ""}${num(Math.round(m.capacityDelta))})</span></td>
-              <td class="n">${m.costDeltaPct > 0 ? "+" : ""}${m.costDeltaPct.toFixed(0)}%</td>
-              <td class="n">${m.leadTimeDays}d</td>
-              <td>${m.feasible ? `<span class="pill good">yes</span>`
-                                : `<span class="pill bad">no</span>`}</td>
+            <thead><tr><th>Capacity</th><th class="n">Now</th><th class="n">Peak</th>
+              <th>What is happening</th><th class="n">Queries refused</th>
+              <th>Scale to</th></tr></thead>
+            <tbody>${rec.scale.map((m) => `<tr>
+              <td><a href="/capacity/${encodeURIComponent(m.capacityId)}">${esc(m.capacityId)}</a></td>
+              <td class="n"><b>${esc(m.fromSku)}</b><br><span class="t3">${num(m.cuBefore)} CU</span></td>
+              <td class="n ${m.peakPct > 100 ? "t-bad" : ""}">${pct(m.peakPct)}</td>
+              <td>${m.throttledDays
+                    ? `<span class="pill ${(PROBLEM[m.worstStage] || PROBLEM.none).tone}">${
+                         esc((PROBLEM[m.worstStage] || PROBLEM.none).text)}</span>
+                       <br><span class="t3">${num(m.throttledDays)} of ${num(m.windowDays)} days</span>`
+                    : `<span class="pill warn">No room left</span>`}</td>
+              <td class="n">${m.interactiveRejected ? num(m.interactiveRejected) : "—"}</td>
+              <td><b class="t-good">${esc(m.toSku)}</b>
+                <br><span class="t3">${num(m.cuAfter)} CU · applies immediately</span></td>
             </tr>`).join("")}</tbody></table></div></div>` : ""}
       </div>`).join("")
     : `<p class="empty" style="padding:0">No denials recorded at this facility.</p>`)}
@@ -2963,11 +3044,10 @@ PAGES["/policy"] = async (view) => {
     </tr>`).join("")}</tbody></table></div>`, { flush: true })}
 
   ${panel("Capacity pools", `<div class="scroll-x"><table>
-    <thead><tr><th>Region</th><th>Hardware</th><th class="n">Compute units</th>
+    <thead><tr><th>Region</th><th class="n">Compute units</th>
       <th class="n">Capacity units</th><th>Equivalent Fabric SKU</th></tr></thead>
     <tbody>${d.pools.map((p) => `<tr>
       <td><b>${esc(p.Region)}</b></td>
-      <td>${esc(p.SKUClass)}</td>
       <td class="n">${num(Math.round(p.DeployedUnits))}</td>
       <td class="n">${num(Math.round(p.CapacityUnits))}</td>
       <td><span class="pill info">${esc(p.EquivalentSKU)}</span></td>

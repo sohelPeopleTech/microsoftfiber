@@ -143,36 +143,37 @@ def test_the_funnel_stages_are_a_real_funnel():
     assert past_allowance == ov["kpis"]["failed"]
 
 
-def test_lead_time_can_outrank_utilisation():
-    """Urgency is not a ranking of how full a region is.
+def test_throttling_can_outrank_utilisation():
+    """Urgency is not a ranking of how full something is.
 
-    This previously pinned four exact figures for a sentence in the Regions
-    explainer that named centralindia and northcentralus. That sentence was
-    removed when hardware and lead time came off the Regions tab -- the
-    explainer now says why hardware is *not* shown there -- so the test was
-    guarding text that no longer exists and passing on coincidence.
+    The version of this test that stood here checked the property through lead
+    time: somewhere in the fleet, a region less full than another needed its
+    order raised sooner because its hardware took longer to arrive. Fabric has
+    no hardware and no order, so that particular illustration is gone -- but the
+    property it protected is the whole reason this product exists, and it now
+    holds through the thing that actually hurts.
 
-    What is worth protecting is the property the sentence was illustrating, and
-    it holds without naming anyone: somewhere in the fleet a region that is less
-    full than another needs its order raised sooner, because its hardware takes
-    longer to arrive. If that ever stops being true the product is ranking by
-    utilisation and calling it urgency.
+    A capacity averaging sixty per cent that spends a week refusing queries is a
+    worse problem than one sitting steadily at ninety and refusing nothing. If
+    that ever stops being visible, the product is ranking by utilisation and
+    calling it urgency.
     """
-    regions = [r for r in api.overview()["regions"]
-               if r["daysUntilOrder"] is not None]
-    assert len(regions) >= 2, "need at least two regions with an order-by date"
+    sites = [d for d in api.datacentres()["datacentres"] if d["requests"]]
+    assert len(sites) >= 2
 
-    inversions = [
-        (a["region"], b["region"])
-        for a in regions for b in regions
-        if a["utilisation"] < b["utilisation"]          # a is less full
-        and a["daysUntilOrder"] < b["daysUntilOrder"]   # yet a is more overdue
-        and a["leadTime"] > b["leadTime"]               # because of lead time
-    ]
+    scored = [(d["datacentre"], d["siteUtilisationPct"],
+               (d["risk"] or {}).get("components", {}).get("throttling", 0.0),
+               (d["risk"] or {}).get("score", 0.0))
+              for d in sites]
+
+    inversions = [(a[0], b[0]) for a in scored for b in scored
+                  if a[1] < b[1]              # a is less full
+                  and a[2] > b[2]             # but more of it is refusing work
+                  and a[3] > b[3]]            # and it outranks b
     assert inversions, (
-        "no region is less full than another yet more urgent -- urgency has "
-        "collapsed into a utilisation ranking, and lead time is doing nothing"
-    )
+        "no site that is less full than another outranks it on throttling -- "
+        "the risk score is tracking utilisation, which the utilisation column "
+        "already shows")
 
 
 def test_action_due_means_the_order_by_date_has_passed():
@@ -520,8 +521,8 @@ def test_a_bad_weight_set_is_rejected_rather_than_renormalised():
     import riskindex
 
     for bad in ({"failureRate": 1.0},
-                {"failureRate": .5, "pressure": .5, "unresolved": .5, "leadTime": .5},
-                {"failureRate": -.1, "pressure": .4, "unresolved": .4, "leadTime": .3}):
+                {"failureRate": .5, "pressure": .5, "unresolved": .5, "throttling": .5},
+                {"failureRate": -.1, "pressure": .4, "unresolved": .4, "throttling": .3}):
         with _pytest.raises(ValueError):
             riskindex.resolve_weights(bad)
 
@@ -531,10 +532,10 @@ def test_changing_the_weights_changes_the_score():
     import riskindex
 
     args = dict(requests=1, denied=1, unresolved=1, utilisation_pct=97.2,
-                threshold_pct=85, lead_time_days=45, busiest_unresolved=2)
+                threshold_pct=85, throttling_share=1.00, busiest_unresolved=2)
     default = riskindex.score(**args).score
     even = riskindex.score(**args, weights={
-        "failureRate": .25, "pressure": .25, "unresolved": .25, "leadTime": .25}).score
+        "failureRate": .25, "pressure": .25, "unresolved": .25, "throttling": .25}).score
     assert default != even
 
 
@@ -593,41 +594,109 @@ def test_every_explainer_supplies_every_field_it_renders():
             assert key in block, f"explainer missing {key}: {block[:80]}"
 
 
-def test_the_swap_calculator_works_on_a_site_not_a_region():
-    """You take a building offline, not a country. The calculator was working
-    at region level, which is not where the work happens."""
-    opt = api.swap_options()
-    assert opt["sites"] and opt["hardware"] and opt["regions"]
-    for s in opt["sites"]:
-        assert s["datacentre"] and s["region"] and s["currentHardware"]
+def test_the_scale_calculator_works_on_a_capacity_not_a_building():
+    """You scale a capacity, not a country and not a building.
 
-    site = next(s for s in opt["sites"] if s["hasActivity"])
-    target = next(h for h in opt["hardware"] if h != site["currentHardware"])
-    r = api.swap(site["datacentre"], target)
+    The calculator this replaced asked which data centre to take offline and
+    which hardware class to convert it to. Fabric exposes neither, and the unit
+    an admin actually changes is one capacity's F SKU.
+    """
+    opt = api.scale_options_index()
+    assert opt["capacities"] and opt["regions"] and opt["skuLadder"]
+    for c in opt["capacities"]:
+        assert c["capacityId"] and c["region"] and c["sku"]
+        assert c["capacityUnits"] > 0
 
-    assert r["currentHardware"] == site["currentHardware"]
-    assert r["targetHardware"] == target
-    # Sized to that site, not the whole region.
-    assert r["conversion"]["from_units"] == pytest.approx(site["units"], rel=1e-6)
-    # And feasibility is still asked of the region, because the load has to go
-    # somewhere while the building is down.
-    assert r["feasibility"]["region"] == site["region"]
-    assert "can_convert_a_whole_datacentre" in r["feasibility"]
+    # Worst first: the list exists to be acted on.
+    days = [c["throttledDays"] for c in opt["capacities"]]
+    assert days == sorted(days, reverse=True)
+
+    cap = opt["capacities"][0]
+    target = next(k for k in opt["skuLadder"]
+                  if opt["skuLadder"][k] > cap["capacityUnits"])
+    r = api.scale_capacity(cap["capacityId"], target)
+
+    assert r["current"]["sku"] == cap["sku"]
+    assert r["selected"]["sku"] == target
+    assert r["selected"]["capacityUnits"] == opt["skuLadder"][target]
+    # The whole point of the reframe: there is nothing to wait for.
+    assert r["selected"]["immediate"] is True
+    assert "leadTime" not in str(r) and "lead_time" not in str(r)
 
 
-def test_swapping_to_the_hardware_it_already_runs_is_rejected():
+def test_scaling_up_relieves_the_measured_peak():
+    """Utilisation is consumption over a ceiling, and only the ceiling moves.
+
+    If this drifts, the calculator is telling someone a bigger SKU will not help
+    when it will, or the reverse.
+    """
+    opt = api.scale_options_index()
+    cap = opt["capacities"][0]
+    r = api.scale_capacity(cap["capacityId"])
+    cur = r["current"]
+    for o in r["options"]:
+        expected = cur["peakPct"] * cur["capacityUnits"] / o["capacityUnits"]
+        assert o["peakAfterPct"] == pytest.approx(expected, abs=0.15), o["sku"]
+        if o["capacityUnits"] > cur["capacityUnits"]:
+            assert o["peakAfterPct"] < cur["peakPct"]
+
+
+def test_the_calculator_and_the_recommendation_engines_never_disagree():
+    """Two things in the product answer "should this be scaled". They have to
+    agree, or a reader gets a second opinion nobody asked for.
+
+    An earlier version of the calculator picked a rung whenever a larger one
+    scored better -- which is always -- and recommended upgrading 272 of 317
+    capacities, including an F64 running at 42%.
+    """
+    from planning import recommend
+
+    onto = api.get_ontology()
+    wants_up = {r.target for r in recommend.scale_up(onto)}
+    wants_down = {r.target for r in recommend.scale_down(onto)}
+    ladder = api.scale_options_index()["skuLadder"]
+
+    for c in api.scale_options_index()["capacities"]:
+        r = api.scale_capacity(c["capacityId"])
+        rec = r["recommended"]
+        up = bool(rec) and ladder[rec] > c["capacityUnits"]
+        down = bool(rec) and ladder[rec] < c["capacityUnits"]
+        assert up == (c["capacityId"] in wants_up), (
+            f"{c['capacityId']}: calculator says up={up}, scale_up says "
+            f"{c['capacityId'] in wants_up}")
+        assert down == (c["capacityId"] in wants_down), c["capacityId"]
+
+
+def test_the_calculator_names_what_else_a_move_costs():
+    """Two lines on the ladder cost something other than compute to cross, and
+    a calculator that only reported CU would let someone walk into either."""
+    from planning import FREE_VIEWER_CU
+
+    r = api.scale_capacity(api.scale_options_index()["capacities"][0]["capacityId"])
+    cur = r["current"]["capacityUnits"]
+    for o in r["options"]:
+        assert o["gainsFreeViewers"] == (cur < FREE_VIEWER_CU <= o["capacityUnits"])
+        assert o["losesFreeViewers"] == (o["capacityUnits"] < FREE_VIEWER_CU <= cur)
+    assert any(o["crossesSlowBoundary"] for o in r["options"]) or cur >= 512
+
+
+def test_scaling_to_the_sku_it_already_runs_is_rejected():
     """A no-op that returns a result looks like an answer."""
     from fastapi import HTTPException
 
-    site = api.swap_options()["sites"][0]
+    cap = api.scale_options_index()["capacities"][0]
     with pytest.raises(HTTPException) as exc:
-        api.swap(site["datacentre"], site["currentHardware"])
+        api.scale_capacity(cap["capacityId"], cap["sku"])
     assert exc.value.status_code == 400
-    assert "already runs" in exc.value.detail
+    assert "already" in exc.value.detail
 
     with pytest.raises(HTTPException) as exc:
-        api.swap("nowhere-dc01", "AMD-highmem")
+        api.scale_capacity("nowhere-dc01-cap09", "F64")
     assert exc.value.status_code == 404
+
+    with pytest.raises(HTTPException) as exc:
+        api.scale_capacity(cap["capacityId"], "F7")
+    assert exc.value.status_code == 400
 
 
 # --- review feedback: identity, reconciliation, per-site capacity -----------
@@ -697,10 +766,11 @@ def test_the_region_reports_over_threshold_and_activity_separately():
 
 
 def test_every_listed_site_reports_its_capacity_position():
-    """Review asked for cores held, cores left and the site's own threshold."""
+    """Review asked for CU held, CU left and the site's own threshold."""
     for region in api.overview()["regions"]:
         for x in api.region_detail(region["region"])["datacentres"]:
-            for key in ("cores", "coresFree", "thresholdPct", "headroom", "revenueLoss"):
+            for key in ("capacityUnits", "capacityUnitsFree", "thresholdPct",
+                        "headroom", "revenueLoss"):
                 assert x[key] is not None, f"{x['datacentre']} missing {key}"
             assert 0 < x["thresholdPct"] <= 100
 
@@ -708,23 +778,28 @@ def test_every_listed_site_reports_its_capacity_position():
 def test_each_denial_cause_carries_computed_remediation():
     """"If you gave this to ChatGPT it would say the same thing" -- so a cause
     the platform owns must produce arithmetic for that facility, not prose."""
-    seen_migration = seen_threshold = False
+    seen_scale = seen_threshold = False
     for row in api.datacentres()["datacentres"]:
         d = api.datacentre_detail(row["datacentre"])
         for rec in d["recommendations"]:
             assert rec["action"]
-            if rec.get("migration"):
-                seen_migration = True
-                for m in rec["migration"]:
-                    # Sized to this facility, not the region.
-                    assert m["coresAfter"] > 0 and m["leadTimeDays"] > 0
-                    assert m["toSku"] != d["hardware"]
+            if rec.get("scale"):
+                seen_scale = True
+                for m in rec["scale"]:
+                    # Computed from this building's own capacities.
+                    assert m["capacityId"].startswith(row["datacentre"])
+                    assert m["cuAfter"] > m["cuBefore"]
+                    assert m["toSku"] != m["fromSku"]
+                    # There is nothing to wait for, and the text must not imply
+                    # there is -- that was the whole defect in the old model.
+                    assert m["immediate"] is True
+                    assert "throttling" not in m
             if rec.get("threshold"):
                 seen_threshold = True
                 for o in rec["threshold"]:
                     assert 0 < o["thresholdPct"] <= 100
                     assert o["releasesCores"] > 0
-    assert seen_migration, "no hardware-owned cause produced migration options"
+    assert seen_scale, "no capacity-owned cause produced scale options"
     assert seen_threshold, "no threshold-owned cause produced threshold options"
 
 
@@ -1006,14 +1081,14 @@ def test_a_region_with_room_is_not_denied_for_lack_of_room():
     """The check a reviewer makes in one glance."""
     for region in api.overview()["regions"]:
         d = api.region_detail(region["region"])
-        if d["coresFree"] <= 0:
+        if d["capacityUnitsFree"] <= 0:
             continue
         for site in d["datacentres"]:
             for rec in site["recommendations"]:
                 if rec["reason"] != "Insufficient capacity":
                     continue
                 # Only defensible where that site itself was short.
-                assert site["coresFree"] < site["cores"], site["datacentre"]
+                assert site["capacityUnitsFree"] < site["capacityUnits"], site["datacentre"]
 
 
 def test_a_forecast_never_projects_more_capacity_than_exists():
@@ -1120,10 +1195,10 @@ def test_one_ticket_cannot_outrank_a_measured_record():
     arithmetic on one observation. Un-shrunk, the 12 riskiest sites in the
     product were all single-ticket sites and the ranking sorted noise."""
     thin = riskindex.score(requests=1, denied=1, unresolved=1, utilisation_pct=80,
-                           threshold_pct=85, lead_time_days=30,
+                           threshold_pct=85, throttling_share=0.67,
                            busiest_unresolved=1, prior_rate=0.5)
     solid = riskindex.score(requests=20, denied=20, unresolved=1, utilisation_pct=80,
-                            threshold_pct=85, lead_time_days=30,
+                            threshold_pct=85, throttling_share=0.67,
                             busiest_unresolved=1, prior_rate=0.5)
     assert thin.evidence["rawFailureRate"] == solid.evidence["rawFailureRate"] == 1.0
     assert thin.score < solid.score, "evidence must buy rank"
@@ -1134,10 +1209,10 @@ def test_shrinkage_pulls_toward_the_fleet_rate_from_both_directions():
     """It is not a penalty on bad sites -- a site with no failures on one
     request is not proven clean either, and must move up."""
     worse = riskindex.score(requests=1, denied=1, unresolved=0, utilisation_pct=50,
-                            threshold_pct=85, lead_time_days=10,
+                            threshold_pct=85, throttling_share=0.22,
                             busiest_unresolved=1, prior_rate=0.5)
     better = riskindex.score(requests=1, denied=0, unresolved=0, utilisation_pct=50,
-                             threshold_pct=85, lead_time_days=10,
+                             threshold_pct=85, throttling_share=0.22,
                              busiest_unresolved=1, prior_rate=0.5)
     assert worse.evidence["usedFailureRate"] < 1.0, "100% must be pulled down"
     assert better.evidence["usedFailureRate"] > 0.0, "0% must be pulled up"

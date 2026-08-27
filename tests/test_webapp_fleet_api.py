@@ -9,6 +9,7 @@ dropped key fails here rather than on screen.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -348,3 +349,124 @@ def test_a_region_with_capacities_reports_capacity_units():
         if t["capacities"]:
             assert t["capacityUnits"] > 0, f"{p['region']} holds capacities but 0 CU"
             assert t["sites"] > 0
+
+
+# --------------------------------------------------------------------------
+# the vocabulary, in what the endpoints actually send
+# --------------------------------------------------------------------------
+
+#: Hardware classes are *data*, not source text. `test_static_assets.py` greps
+#: pages.js and cannot see them: the template says `${esc(x.hardware)}` and the
+#: string "Intel-highmem" arrives at render time from dim_sku.
+#:
+#: Three tables shipped that way after the pages themselves had been converted
+#: -- the data-centre list printed "Intel-highmem 45d" next to a column of F
+#: SKUs, the capacity-pool table carried a vendor class beside its Fabric SKU
+#: equivalent, and the assistant was handed a provisioning lead time for a
+#: platform that has none. All three were found by rendering the pages in a
+#: browser and reading them, which is not something a test suite does.
+AZURE_VALUES = re.compile(
+    r"\b(Intel-\w+|AMD-\w+|GPU-class|PowerEdge|ProLiant)\b", re.I)
+
+#: Keys that would carry them even if today's values happen to be blank.
+AZURE_KEYS = {"hardware", "leadTime", "leadTimeDays", "currentHardware",
+              "coresDeployed", "coresFree", "cores", "SKUClass"}
+
+
+def _walk(node, path="$"):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield from _walk(v, f"{path}.{k}")
+    elif isinstance(node, list):
+        for i, v in enumerate(node[:40]):
+            yield from _walk(v, f"{path}[{i}]")
+    else:
+        yield path, node
+
+
+ENDPOINTS = [
+    ("overview", lambda: api.overview()),
+    ("datacentres", lambda: api.datacentres()),
+    ("capacity-policy", lambda: api.capacity_policy()),
+    ("datacentre detail", lambda: api.datacentre_detail(
+        api.datacentres()["datacentres"][0]["datacentre"])),
+    ("region detail", lambda: api.region_detail(
+        api.overview()["regions"][0]["region"])),
+    ("scale options", lambda: api.scale_options_index()),
+    ("assistant snapshot", lambda: api._snapshot_datacentres()),
+]
+
+
+#: The one place the Azure model is still computed rather than merely named.
+#:
+#: module1's threshold engine decides *when* a region has to be acted on, and it
+#: does it by subtracting a hardware provisioning lead time from the forecast
+#: crossing date. That produces the order-by date, the days-until-order column,
+#: and sentences like "Intel-highmem takes 45 days to provision -- the request
+#: needed raising 30 days ago."
+#:
+#: It is not converted here because converting it is a model change, not a
+#: rename: in Fabric the lead time is zero, so the order-by date collapses onto
+#: the crossing date, `daysUntilOrder` becomes days-until-crossing, and the
+#: count of regions the map paints amber moves. That belongs in its own change
+#: with its own review, not bolted onto a vocabulary pass.
+#:
+#: Pinned by path so the gap cannot quietly widen: anything Azure appearing
+#: anywhere else fails, and a `reason` that stops naming hardware makes
+#: test_the_known_gap_is_still_exactly_that_gap fail so this comment gets
+#: deleted with it.
+KNOWN_GAP = {"$.regions[].reason", "$.threshold.sku_class",
+             "$.provenance[].Provenance"}
+
+
+def _generalise(path: str) -> str:
+    return re.sub(r"\[\d+\]", "[]", path)
+
+
+@pytest.mark.parametrize("name,call", ENDPOINTS, ids=[e[0] for e in ENDPOINTS])
+def test_no_endpoint_sends_azure_hardware_as_data(name, call):
+    payload = call()
+    offences = []
+    for path, value in _walk(payload):
+        if _generalise(path) in KNOWN_GAP:
+            continue
+        leaf = path.rsplit(".", 1)[-1].split("[")[0]
+        if leaf in AZURE_KEYS:
+            offences.append(f"{path} = {value!r}")
+        elif isinstance(value, str) and AZURE_VALUES.search(value):
+            offences.append(f"{path} = {value!r}")
+    assert not offences, (
+        f"/{name} sends the Azure hardware model as data, which every page "
+        f"rendering it prints:\n  " + "\n  ".join(offences[:12]))
+
+
+def test_the_known_gap_is_still_exactly_that_gap():
+    """The exemption above has to keep earning itself.
+
+    If module1 is converted, these stop naming hardware and this test fails --
+    which is the point. An exemption nothing checks is just a hole.
+    """
+    reasons = [r["reason"] for r in api.overview()["regions"] if r.get("reason")]
+    assert any(AZURE_VALUES.search(r) for r in reasons), (
+        "no region flag names a hardware class any more -- module1 appears to "
+        "have been converted, so delete KNOWN_GAP and this test")
+
+
+def test_the_customer_table_reads_only_fields_the_endpoint_sends():
+    """The `#` column rendered `c.rank`, which /api/customers has never sent.
+
+    Every row printed the word "undefined" in its first cell, on a page that had
+    been reviewed more than once. `num(undefined)` at least renders 0 and looks
+    like a number; this rendered the string, in the table, in production.
+    """
+    import re
+
+    js = (ROOT / "webapp" / "static" / "pages.js").read_text()
+    body = js[js.index('$("cust-table").innerHTML'):]
+    body = body[:body.index("</tbody>")]
+    used = set(re.findall(r"\bc\.([A-Za-z_]\w*)", body))
+    sent = set(api.customers()["customers"][0])
+    missing = sorted(used - sent)
+    assert not missing, (
+        f"the customers table renders {missing} but /api/customers does not "
+        f"send them. Sent: {sorted(sent)}")

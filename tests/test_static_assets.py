@@ -68,15 +68,21 @@ BANNED = ["hardware class", "hardware classes", "hardware order", "hardware faul
           "lead-time", "order due", "order overdue", "waiting to be bought",
           "replacement hardware", "poweredge", "proliant"]
 
-#: Pages still built on module 2's migration model, which moves a facility
-#: between hardware classes and waits out a provisioning lead time. Fabric has
-#: none of that, but these screens genuinely serve it -- /api/datacentre still
-#: returns `hardware: "Intel-highmem"` and `leadTimeDays: 45` -- so the words are
-#: accurate about what the page does. Converting them is a rework of the module,
-#: not of its wording, and silently rewording them would describe a Fabric model
-#: that is not there. Listed rather than pattern-matched so that removing a page
-#: from this list is a deliberate act.
-LEGACY_AZURE_PAGES = {"/actions", "/datacentre", "/policy"}
+#: Empty, and the point is that it is empty.
+#:
+#: This held /actions, /datacentre and /policy, which were still module 2's
+#: migration model -- take a building offline, convert it between hardware
+#: classes, wait out a provisioning lead time. They were exempted because the
+#: words were accurate about what the pages did, and rewording them would have
+#: described a Fabric model that was not there.
+#:
+#: So the model was built instead. /policy turned out never to have belonged
+#: here at all: it had exactly one stray word. The other two now run on
+#: planning.scale, which answers the question Fabric can actually be asked --
+#: which capacity moves to which rung of the F-SKU ladder.
+#:
+#: Anything added back here is a page that has stopped speaking Fabric.
+LEGACY_AZURE_PAGES: set[str] = set()
 
 #: Sentences whose whole point is that the Azure model is gone. A note saying
 #: "hardware and lead time were removed" has to be able to name what it removed.
@@ -130,3 +136,58 @@ def test_the_azure_vocabulary_is_absent_from_what_a_reader_reads(phrase):
     assert not hits, (
         f"{phrase!r} is Azure vocabulary and Fabric has no such thing:\n  "
         + "\n  ".join(hits))
+
+
+def _innermost_interpolations(needle: str):
+    """The tightest `${ ... }` wrapped around each mention of `needle`.
+
+    Not "every interpolation that contains it": these are nested many levels
+    deep, and the outermost wrapper on the Actions page is most of the page.
+    Walking outward from the mention finds the one that actually renders it.
+    """
+    out = []
+    at = JS.find(needle)
+    while at >= 0:
+        depth, i = 0, at
+        start = None
+        while i > 0:                      # outward to the opening ${
+            if JS[i] == "}":
+                depth += 1
+            elif JS[i] == "{":
+                if depth == 0:
+                    if JS[i - 1] == "$":
+                        start = i - 1
+                    break
+                depth -= 1
+            i -= 1
+        if start is not None:
+            depth, j = 0, start + 1
+            while j < len(JS):            # forward to its matching brace
+                if JS[j] == "{":
+                    depth += 1
+                elif JS[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            out.append(JS[start + 2:j])
+        at = JS.find(needle, at + 1)
+    return out
+
+
+def test_the_throttling_labels_are_read_as_text_not_as_objects():
+    """PROBLEM maps a stage to {text, tone, why}, not to a string.
+
+    Interpolating the object itself is valid JavaScript and renders the words
+    "[object Object]" in a red pill where the throttling stage should be. It
+    shipped that way on two tables of the data-centre page. No test could have
+    caught it: both are built inside a template literal that nothing evaluates
+    until a browser renders it, and it was found by looking at the page.
+    """
+    uses = [u for u in _innermost_interpolations("PROBLEM[")
+            if "const PROBLEM" not in u]
+    assert uses, "PROBLEM is no longer interpolated -- update this test"
+    for expr in uses:
+        assert re.search(r"\.(text|tone|why)\b", expr), (
+            "a PROBLEM entry is interpolated whole, which renders as "
+            "[object Object]:\n  " + " ".join(expr.split())[:140])

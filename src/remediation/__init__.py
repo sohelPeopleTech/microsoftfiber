@@ -6,18 +6,26 @@ happening here." That was fair. The action text came from a static dict, so
 every site with the same cause got the same sentence.
 
     before   "Model a hardware change, or raise the ceiling if headroom exists."
-    after    "Switch westeurope-dc01 from GPU-class to AMD-highmem: 92 units
-              becomes 92, work capacity 238 -> 119, cost -55%, 10-day lead
-              time. Region has 120 units of spare capacity, so the site can be
-              taken offline now."
+    after    "3 of westeurope-dc01's 4 capacities need a larger SKU. The worst is
+              westeurope-dc01-cap02, an F8 throttling on 25 of 30 days; moving it
+              to F16 takes it from 8 to 16 CU and applies immediately. It has
+              refused 424 operations in that window."
+
+    The "after" example above used to describe swapping the site onto different
+    hardware, for a cost delta and a 45-day lead time. It was replaced wholesale
+    rather than reworded: a Fabric customer has no hardware to swap, nothing to
+    take offline and nothing to wait for, so every number in that sentence was
+    unactionable even though each was correctly computed.
 
 Every sentence below is produced by the module that owns the cause, using that
 facility's own numbers:
 
     Threshold reached           module1 -- safety line, what raising it releases,
                                 and when the order has to be placed
-    Insufficient capacity       module2 -- the conversion that actually helps,
-    Hardware failure                       costed and feasibility-checked
+    Insufficient capacity       the F-SKU scale that actually helps -- which
+    Hardware failure            capacities in the building are short, what rung
+                                each moves to, and what that leaves them running
+                                at. Immediate; there is nothing to order
     everything else             no module owns it, so the recommendation says
                                 who to talk to rather than inventing a fix
 
@@ -33,8 +41,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import module1
-import module2
 from ontology import attribution
+# Imported as `planning.x`, not `src.planning.x`: the app puts ROOT/src on
+# sys.path and nothing else. module2 is gone from here -- it modelled hardware
+# conversions, and Fabric scales an F SKU instead.
+from planning import F_SKUS, recommend, scale
 
 
 @dataclass
@@ -123,74 +134,90 @@ def _threshold_remediation(onto, site, count: int, crossing_for=None) -> tuple[s
 
 
 # --------------------------------------------------------------------------
-# module 2 -- the conversion that actually helps
+# module 2 -- the scale that actually helps
 # --------------------------------------------------------------------------
 
 
-def _conversion_remediation(onto, site, reason: str, count: int) -> tuple[str, list]:
-    """What module 2 says about swapping this facility's hardware."""
-    current = str(site["SKUClass"])
-    region = str(site["Region"])
-    units = float(site["DeployedUnits"] or 0)
+def _scale_remediation(onto, site, reason: str, count: int) -> tuple[str, list]:
+    """What to do about a capacity-shortage cause at this site, in Fabric terms.
+
+    This replaced a hardware conversion. The old text read "switching its 184
+    cores from Intel-standard to AMD-highmem raises work capacity by 42 units
+    for +18% cost, arriving in 45 days, and the region can spare the site while
+    it is taken offline" -- five claims, none of which a Fabric customer can act
+    on or verify. There is no hardware to switch, no site to take offline and
+    no 45 days to wait.
+
+    What a Fabric admin does instead is move the capacities that are actually
+    throttling up the SKU ladder, one at a time, and it takes effect
+    immediately. So the options are the capacities in this building that need
+    it, each with the rung to move to and what that leaves them running at.
+    """
+    dc = str(site["DatacentreId"])
+    caps = onto["dim_capacity"]
+    here = caps[caps["DatacentreId"].astype(str) == dc]
+    if here.empty:
+        return (f"{count} request(s) failed at {dc} for {reason.lower()}. "
+                f"No Fabric capacities are recorded in this data centre."), []
+
+    health = recommend._health(onto).set_index("CapacityId")
 
     options = []
-    for target in sorted(onto["dim_sku"]["SKUClass"]):
-        if target == current:
+    for _, row in here.iterrows():
+        cid = str(row["CapacityId"])
+        if cid not in health.index:
             continue
-        try:
-            src = module2.calculator.sku_from_dim(onto["dim_sku"], current)
-            tgt = module2.calculator.sku_from_dim(onto["dim_sku"], target)
-            conv = module2.convert_same_footprint(src, tgt, units).to_dict()
-            plan = module2.plan_conversion(onto, region, target, convert_datacentres=1)
-        except (KeyError, ValueError):
+        view = scale.capacity_scale_view(row, health.loc[cid])
+        target = view["recommended"]
+        cur = view["current"]
+        if not target or F_SKUS[target] <= cur["capacityUnits"]:
             continue
+        after = next(o for o in view["options"] if o["sku"] == target)
         options.append({
-            "kind": "conversion",
+            "kind": "scale",
+            "capacityId": cid,
+            "fromSku": cur["sku"],
             "toSku": target,
-            "coresAfter": round(float(conv["to_units"]), 1),
-            "capacityAfter": round(float(conv["capacity_after"]), 1),
-            "capacityDelta": round(float(conv["capacity_delta"]), 1),
-            "costDeltaPct": round(float(conv["cost_delta_pct"]), 1),
-            "leadTimeDays": int(conv["lead_time_days"]),
-            "feasible": bool(plan.can_convert_a_whole_datacentre),
-            "spareUnits": round(float(plan.max_offline_units), 1),
+            "cuBefore": cur["capacityUnits"],
+            "cuAfter": after["capacityUnits"],
+            "meanPct": cur["meanPct"],
+            "peakPct": cur["peakPct"],
+            "peakAfterPct": after["peakAfterPct"],
+            "throttledDays": cur["throttledDays"],
+            "windowDays": cur["windowDays"],
+            "worstStage": cur["worstStage"],
+            "interactiveRejected": cur["interactiveRejected"],
+            "cuDeltaPct": after["cuDeltaPct"],
+            "gainsFreeViewers": after["gainsFreeViewers"],
+            "crossesSlowBoundary": after["crossesSlowBoundary"],
+            "immediate": True,
         })
 
-    # The useful swap is one that adds capability and can actually be scheduled.
-    gains = [o for o in options if o["capacityDelta"] > 0 and o["feasible"]]
-    gains.sort(key=lambda o: -o["capacityDelta"])
-    options.sort(key=lambda o: -o["capacityDelta"])
+    # Worst first: what is refusing the most work is what to fix first.
+    options.sort(key=lambda o: (-o["throttledDays"], -o["interactiveRejected"]))
 
-    if gains:
-        best = gains[0]
+    if options:
+        first = options[0]
+        refused = ""
+        if first["interactiveRejected"]:
+            refused = (f" It has refused {first['interactiveRejected']:,} "
+                       f"operations in that window.")
         action = (
-            f"{count} request(s) failed at {site['DatacentreId']} for "
-            f"{reason.lower()}. Switching its {units:.0f} cores from {current} to "
-            f"{best['toSku']} raises work capacity by {best['capacityDelta']:.0f} units "
-            f"for {best['costDeltaPct']:+.0f}% cost, arriving in {best['leadTimeDays']} days. "
-            f"The region has {best['spareUnits']:.0f} spare units, so the site can be "
-            f"taken offline for the work."
+            f"{count} request(s) failed at {dc} for {reason.lower()}. "
+            f"{len(options)} of its {len(here)} capacities need a larger SKU. "
+            f"The worst is {first['capacityId']}, an {first['fromSku']} throttling "
+            f"on {first['throttledDays']} of {first['windowDays']} days; moving it "
+            f"to {first['toSku']} takes it from {first['cuBefore']} to "
+            f"{first['cuAfter']} CU and applies immediately.{refused}"
         )
-    elif options:
-        blocked = [o for o in options if o["capacityDelta"] > 0 and not o["feasible"]]
-        if blocked:
-            action = (
-                f"{count} request(s) failed at {site['DatacentreId']} for "
-                f"{reason.lower()}. {blocked[0]['toSku']} would add "
-                f"{blocked[0]['capacityDelta']:.0f} work units, but the region cannot "
-                f"spare this site while the work runs. Add capacity elsewhere in "
-                f"{region} first, then convert."
-            )
-        else:
-            action = (
-                f"{count} request(s) failed at {site['DatacentreId']} for "
-                f"{reason.lower()}. {current} is already the densest hardware "
-                f"available here — no swap adds capacity, so this needs more units "
-                f"rather than different ones."
-            )
     else:
-        action = (f"{count} request(s) failed at {site['DatacentreId']} for "
-                  f"{reason.lower()}. No conversion could be modelled.")
+        action = (
+            f"{count} request(s) failed at {dc} for {reason.lower()}, but none of "
+            f"its {len(here)} capacities is short of Capacity Units — none is "
+            f"throttling and none is out of headroom. The constraint is not the "
+            f"size of the capacities here, so scaling them would not have "
+            f"admitted these requests."
+        )
     return action, options
 
 
@@ -216,7 +243,7 @@ def for_site(onto, datacentre_id: str, denied, revenue_by_reason=None,
             action, options = _threshold_remediation(onto, site, int(count),
                                                      crossing_for)
         elif module == "module2":
-            action, options = _conversion_remediation(onto, site, reason, int(count))
+            action, options = _scale_remediation(onto, site, reason, int(count))
         else:
             # No module owns this. Name the site and the volume, then hand it
             # to a person rather than inventing a fix.
