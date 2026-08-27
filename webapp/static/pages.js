@@ -62,7 +62,6 @@ PAGES["/"] = async (view) => {
     ${kpi("Regions monitored", num(d.regions.length), `across ${d.skus.length} Fabric SKUs`, "ink", "Azure regions with capacity requests in this extract. Each region holds Fabric capacities spread over several data centres.")}
     ${kpi("Regions needing action", num(dueNow.length), "at or past their safety line", dueNow.length ? "bad" : "good", "Regions already past the threshold their own data centres hold, or forecast to cross it before the next review. Scaling an F SKU takes effect immediately, so this is a backlog of decisions rather than of deliveries.")}
     ${kpi("Revenue loss", money(k.exposure), `attributed to ${k.failed} failed requests`, "bad", "Microsoft revenue, not the customer\u2019s own. Each customer\u2019s ARR, apportioned by the share of their request left unfulfilled and how long it stayed unfulfilled. A severity ranking, not money written off.")}
-    ${kpi("ARR impacted", money(k.arrAffected), `combined ARR of ${k.customers} affected customers`, "", "Total annual revenue of every customer who hit at least one failure, counted once each. Blast radius rather than loss \u2014 always larger than revenue loss.")}
   </div>
 
   ${panel(`Request outcomes — ${num(k.failed)} of ${num(k.total)} require action`, `
