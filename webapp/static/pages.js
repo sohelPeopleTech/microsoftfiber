@@ -16,7 +16,7 @@ PAGES["/"] = async (view) => {
     ["breached", "overdue", "due_now"].includes(r.status));
   const attention = [...d.regions]
     .filter((r) => r.exposure > 0 || dueNow.includes(r))
-    .sort((a, b) => (a.daysUntilOrder ?? 999) - (b.daysUntilOrder ?? 999));
+    .sort((a, b) => (a.daysUntilAction ?? 999) - (b.daysUntilAction ?? 999));
 
   /* Outcome funnel. The reference tool's conversion funnel asks "how far down
      the pipeline did partners get"; the capacity equivalent asks "how far down
@@ -54,7 +54,7 @@ PAGES["/"] = async (view) => {
       { term: "Revenue loss", means: "<b>Microsoft revenue, not the customer&rsquo;s own.</b> The subscription\u2019s ARR, apportioned by the share of the request left unfulfilled and the duration of the shortfall." },
       { term: "Manual review", means: "Denial causes with no automated remediation \u2014 quota policy, network faults and unrecorded causes require engineering or account-team engagement rather than a platform action." },
     ],
-    next: "Review the denial reason analysis to identify the applicable remediation, then action any region showing a negative value in 'Days to order-by' \u2014 those procurement windows have elapsed.",
+    next: "Review the denial reason analysis to identify the applicable remediation, then action any region showing a negative value in 'Days to decide' \u2014 those crossings are already inside the decision window.",
     sources: "ICM capacity-request extract, subscription ARR reference, and daily Fabric capacity consumption.",
   }) + title("Overview", `Everything across all regions — as of ${String(d.asOf).slice(0, 10)}`) + `
 
@@ -140,14 +140,14 @@ PAGES["/"] = async (view) => {
   ${panel("Regions requiring action", attention.length ? `<div class="scroll-x"><table>
     <thead><tr>
       <th>Region</th><th>Status</th><th>Flag rationale</th>
-      <th class="n">Days to order-by</th><th class="n">Revenue loss</th><th class="n">Failed</th>
+      <th class="n">Days to decide</th><th class="n">Revenue loss</th><th class="n">Failed</th>
     </tr></thead>
     <tbody>${attention.map((r) => `<tr class="clickable" data-region="${esc(r.region)}">
       <td><b>${esc(r.region)}</b></td>
       <td>${statusPill(r.status)}</td>
       <td class="why">${esc(r.reason)}</td>
-      <td class="n">${r.daysUntilOrder == null ? "—" :
-        `<b style="color:${r.daysUntilOrder < 0 ? "var(--bad)" : "inherit"}">${r.daysUntilOrder}</b>`}</td>
+      <td class="n">${r.daysUntilAction == null ? "—" :
+        `<b style="color:${r.daysUntilAction < 0 ? "var(--bad)" : "inherit"}">${r.daysUntilAction}</b>`}</td>
       <td class="n">${money(r.exposure)}</td>
       <td class="n">${num(r.failed)}</td>
     </tr>`).join("")}</tbody></table></div>`
@@ -906,7 +906,11 @@ function spreadMarkers(points, minGap) {
    pills everywhere else so the map does not invent a third vocabulary. */
 function mapTone(p) {
   if (p.status === "breached") return "bad";
-  if (p.status === "overdue" || p.status === "due") return "warn";
+  // "due_now", not "due": module1 emits due_now and this compared against a
+  // string nothing ever sends, so the amber band was carried entirely by
+  // "overdue" -- which only fired because hardware lead times outran the
+  // days left before a crossing.
+  if (p.status === "overdue" || p.status === "due_now") return "warn";
   return "good";
 }
 
@@ -1325,7 +1329,7 @@ function mapDetail(d) {
     <header>
       <b>${esc(d.region)}</b>
       <span class="pill ${d.status === "breached" ? "bad"
-        : (d.status === "overdue" || d.status === "due") ? "warn" : "good"}">${esc(d.status || "—")}</span>
+        : (d.status === "overdue" || d.status === "due_now") ? "warn" : "good"}">${esc(d.status || "—")}</span>
       <!-- capacityUnits/workspaces, not units/nodes: those two were left over
            from the Azure model, are not on this payload, and rendered as a
            confident "0 units - 0 nodes" in the header of every region. -->
@@ -1372,7 +1376,7 @@ PAGES["/map"] = async (view) => {
      the regions rather than counting them saves a reader hunting the map for
      which two of eleven a number meant. */
   const past = d.points.filter((p) => p.status === "breached");
-  const late = d.points.filter((p) => p.status === "overdue" || p.status === "due");
+  const late = d.points.filter((p) => p.status === "overdue" || p.status === "due_now");
 
   view.innerHTML = howto({
     answers: "<b>Where the fleet stands, on one screen.</b> Every region as a point: how full it is against its own safety line, when it crosses, what has to be scaled, and which Fabric workloads will not run there.",
@@ -1534,13 +1538,12 @@ PAGES["/regions"] = async (view) => {
        above promises it, and a promised control that does nothing is worse
        than not offering it. Exposure lives on a different object, so the
        accessor closes over both. */
-    /* Columns are the set review asked for. Hardware and lead time were removed
-       deliberately: a region holds ten data centres that may run Intel, AMD and
-       GPU-class, so naming one at region level is wrong -- both belong on the
-       facility, which is the thing you actually take offline. "Days to order-by"
-       went with them; it answered a procurement question on a page that is
-       supposed to answer "which region is in trouble, and how much does it
-       owe". */
+    /* Columns are the set review asked for. What a region ran on, and how long
+       it took to arrive, came off this table long before either left the rest
+       of the product, and neither exists anywhere now -- a Fabric region holds
+       capacities. "Days to order-by" went with them; it answered a procurement
+       question on a page that is supposed to answer "which region is in
+       trouble, and how much does it owe". */
     const COLS = [
       { key: "region", label: "Region", get: (r) => r.region, numeric: false },
       { key: "total", label: "Total CU", get: (r) => r.deployed_units, numeric: true },

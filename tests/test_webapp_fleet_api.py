@@ -397,26 +397,19 @@ ENDPOINTS = [
 ]
 
 
-#: The one place the Azure model is still computed rather than merely named.
+#: Was KNOWN_GAP: three payload paths module1's threshold engine reached, where
+#: it subtracted a hardware provisioning lead time from the forecast crossing
+#: date and printed sentences like "Intel-highmem takes 45 days to provision".
 #:
-#: module1's threshold engine decides *when* a region has to be acted on, and it
-#: does it by subtracting a hardware provisioning lead time from the forecast
-#: crossing date. That produces the order-by date, the days-until-order column,
-#: and sentences like "Intel-highmem takes 45 days to provision -- the request
-#: needed raising 30 days ago."
+#: The exemption is gone because the gap is. module1 now subtracts a decision
+#: window -- how long an organisation takes to notice, agree and act -- which is
+#: a policy figure and the same for every region, because in Fabric no region
+#: can be scaled faster than another. Nothing here is exempt any more.
 #:
-#: It is not converted here because converting it is a model change, not a
-#: rename: in Fabric the lead time is zero, so the order-by date collapses onto
-#: the crossing date, `daysUntilOrder` becomes days-until-crossing, and the
-#: count of regions the map paints amber moves. That belongs in its own change
-#: with its own review, not bolted onto a vocabulary pass.
-#:
-#: Pinned by path so the gap cannot quietly widen: anything Azure appearing
-#: anywhere else fails, and a `reason` that stops naming hardware makes
-#: test_the_known_gap_is_still_exactly_that_gap fail so this comment gets
-#: deleted with it.
-KNOWN_GAP = {"$.regions[].reason", "$.threshold.sku_class",
-             "$.provenance[].Provenance"}
+#: One path stays out, and it is not a gap: dim_sku's provenance string names
+#: AMD-standard because that is genuinely what that generated table holds. A
+#: provenance note has to be able to describe its own contents.
+KNOWN_GAP = {"$.provenance[].Provenance"}
 
 
 def _generalise(path: str) -> str:
@@ -440,16 +433,21 @@ def test_no_endpoint_sends_azure_hardware_as_data(name, call):
         f"rendering it prints:\n  " + "\n  ".join(offences[:12]))
 
 
-def test_the_known_gap_is_still_exactly_that_gap():
-    """The exemption above has to keep earning itself.
+def test_no_region_flag_names_hardware_any_more():
+    """The sentence this suite used to carve an exemption around.
 
-    If module1 is converted, these stop naming hardware and this test fails --
-    which is the point. An exemption nothing checks is just a hole.
+    Every region's flag rationale is printed on Overview and Regions. They said
+    "projected to hit 86% on 2026-02-12 (15 days), but Intel-highmem takes 45
+    days to provision -- the request needed raising 30 days ago", which named a
+    vendor, a wait and a purchase, none of which exist in Fabric.
     """
     reasons = [r["reason"] for r in api.overview()["regions"] if r.get("reason")]
-    assert any(AZURE_VALUES.search(r) for r in reasons), (
-        "no region flag names a hardware class any more -- module1 appears to "
-        "have been converted, so delete KNOWN_GAP and this test")
+    assert reasons
+    named = [r for r in reasons if AZURE_VALUES.search(r)]
+    assert not named, (
+        "a region flag still names a hardware class:\n  " + "\n  ".join(named[:5]))
+    assert not [r for r in reasons if "provision" in r.lower() or "lead time" in r.lower()], (
+        "a region flag still talks about provisioning or lead time")
 
 
 def test_the_customer_table_reads_only_fields_the_endpoint_sends():

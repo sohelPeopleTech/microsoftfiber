@@ -110,9 +110,9 @@ def test_snapshot_carries_a_raw_number_for_every_displayed_figure():
     # "late" is a substring of "calculated", so every "how is this calculated?"
     # was answered with the list of regions whose order is late. Two different
     # questions, one confidently wrong answer.
-    ("how is exposure calculated?", "missed the order window"),
-    ("how is the arr calculated?", "missed the order window"),
-    ("can you explain how that was calculated", "missed the order window"),
+    ("how is exposure calculated?", "past the point where the decision"),
+    ("how is the arr calculated?", "past the point where the decision"),
+    ("can you explain how that was calculated", "past the point where the decision"),
 ])
 def test_substrings_do_not_trigger_the_wrong_intent(question, must_not_mention):
     from assistant.agent import _deterministic
@@ -121,9 +121,9 @@ def test_substrings_do_not_trigger_the_wrong_intent(question, must_not_mention):
         "asOf": "2026-01-28",
         "regions": [{"region": "westeurope", "exposureUsd": 76308.97,
                      "exposureDisplay": "$76K", "failedRequests": 4,
-                     "daysUntilOrder": -22, "whyThisStatus": "overdue",
+                     "daysUntilAction": -22, "whyThisStatus": "overdue",
                      "status": "overdue", "utilisationPct": 83.1,
-                     "hardware": "GPU-class", "leadTimeDays": 30}],
+                     "decisionWindowDays": 7}],
         "totals": {"exposureDisplay": "$146K", "exposureUsd": 146470.16,
                    "arrAffectedDisplay": "$1.93M", "arrAffectedUsd": 1930054.0,
                    "requestsTotal": 60, "requestsFailed": 30, "approvedLate": 18,

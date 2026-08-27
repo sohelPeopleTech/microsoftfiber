@@ -191,3 +191,28 @@ def test_the_throttling_labels_are_read_as_text_not_as_objects():
         assert re.search(r"\.(text|tone|why)\b", expr), (
             "a PROBLEM entry is interpolated whole, which renders as "
             "[object Object]:\n  " + " ".join(expr.split())[:140])
+
+
+def test_the_pages_match_on_status_strings_the_engine_actually_emits():
+    """`p.status === "due"` compared against a value nothing has ever sent.
+
+    module1 emits "due_now". Three places in pages.js tested for "due", so the
+    amber band on the fleet map was carried entirely by "overdue" -- a state
+    that only existed because a hardware provisioning lead time outran the days
+    left before a crossing. Remove the lead time and the map loses a colour,
+    which is how this was found.
+    """
+    import re
+    import sys
+    from pathlib import Path as _P
+
+    sys.path.insert(0, str(ROOT / "src"))
+    from module1 import threshold
+
+    emitted = {v for k, v in vars(threshold).items()
+               if k.startswith("STATUS_") and isinstance(v, str)}
+    compared = set(re.findall(r'status\s*===\s*"([a-z_]+)"', JS))
+    unknown = sorted(compared - emitted)
+    assert not unknown, (
+        f"pages.js compares status against {unknown}, which module1 never "
+        f"emits. It emits {sorted(emitted)}")

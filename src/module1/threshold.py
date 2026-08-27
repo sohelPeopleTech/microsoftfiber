@@ -1,8 +1,29 @@
-"""Forecast the crossing, subtract the lead time, flag what is due.
+"""Forecast the crossing, subtract the decision window, flag what is due.
 
 Everything here is arithmetic on a fitted trend. There is no model to trust and
-no threshold buried in code -- the safety line, the horizon and the trend window
-are all parameters, so a reviewer can move them and watch the answer move.
+no threshold buried in code -- the safety line, the horizon, the trend window
+and the decision window are all parameters, so a reviewer can move them and
+watch the answer move.
+
+WHAT THE DECISION WINDOW REPLACED
+    This module used to subtract a hardware provisioning lead time, read per
+    region from dim_region.LeadTimeDays, and say things like "Intel-highmem
+    takes 45 days to provision -- the request needed raising 30 days ago."
+
+    Fabric has no provisioning. An F SKU is scaled in Azure and takes effect
+    immediately, so the wait that model was built around does not exist, and a
+    region did not become more urgent than another because of the hardware
+    underneath it.
+
+    Something real remains, though, and setting the wait to zero would have
+    thrown it away: somebody still has to notice, decide and approve. That is
+    an organisational latency, not a hardware one, which is why it is now a
+    single policy figure rather than a per-region property. The default is
+    grounded in this estate's own record -- the ICM extract's denied-then-
+    approved requests took a median of 6.3 days to turn around.
+
+    The visible consequence is that regions no longer rank by whose hardware is
+    slowest. They rank by who crosses first, which in Fabric is the truth.
 """
 
 from __future__ import annotations
@@ -27,8 +48,31 @@ DEFAULT_TREND_DAYS = 45
 #: than given a date nobody should plan against.
 MAX_PROJECTION_DAYS = 365
 
-STATUS_OVERDUE = "overdue"          # already past the order-by date
-STATUS_DUE = "due_now"              # order-by date is today or within grace
+#: Days before the crossing by which a decision has to be made.
+#:
+#: Not a provisioning wait -- there is none. This is how long it takes an
+#: organisation to notice a region is filling, agree to scale it, and act. The
+#: default is the median turnaround on this estate's own denied-then-approved
+#: capacity requests, which is the same approval path.
+#:
+#: A policy figure, so it is uniform. In Fabric no region can be scaled faster
+#: than another, and pretending otherwise was the defect.
+DEFAULT_DECISION_WINDOW_DAYS = 7
+
+#: How far ahead a capacity review looks. A region whose decision falls inside
+#: this is on this cycle's agenda; one beyond it is not yet.
+#:
+#: This is what the amber band on the fleet map means, and it has to be stated
+#: somewhere. Under the old model amber was produced accidentally, by hardware
+#: lead times of 30 to 45 days exceeding the days left before a crossing -- so
+#: which regions appeared amber depended on what machines happened to be in
+#: them. `grace_days` existed to express this properly and defaulted to zero,
+#: which is why nothing was ever "due now": the state was unreachable and the
+#: colour came from the lead time instead.
+DEFAULT_REVIEW_DAYS = 30
+
+STATUS_OVERDUE = "overdue"          # already past the act-by date
+STATUS_DUE = "due_now"              # decision falls inside this review cycle
 STATUS_APPROACHING = "approaching"  # will be due, but not yet
 STATUS_STABLE = "stable"            # flat or falling -- no crossing in range
 STATUS_BREACHED = "breached"        # already over the threshold
@@ -37,15 +81,14 @@ STATUS_BREACHED = "breached"        # already over the threshold
 @dataclass
 class ThresholdFlag:
     region: str
-    sku_class: str
-    lead_time_days: int
+    decision_window_days: int
     current_utilisation_pct: float
     threshold_pct: float
     trend_pct_per_day: float
     days_to_threshold: float | None
     cross_date: str | None
-    order_by_date: str | None
-    days_until_order: float | None
+    act_by_date: str | None
+    days_until_action: float | None
     status: str
     reason: str
     deployed_units: float
@@ -81,8 +124,9 @@ def project_region(
     as_of: date | None = None,
     threshold_pct: float | None = None,
     trend_days: int = DEFAULT_TREND_DAYS,
-    grace_days: int = 0,
+    grace_days: int = DEFAULT_REVIEW_DAYS,
     crossing_for=None,
+    decision_window_days: int = DEFAULT_DECISION_WINDOW_DAYS,
 ) -> ThresholdFlag:
     """When does this region cross its own safety threshold?
 
@@ -114,8 +158,10 @@ def project_region(
     if region not in dim.index:
         raise KeyError(f"unknown region {region!r}")
     meta = dim.loc[region]
-    lead_time = int(meta["LeadTimeDays"])
-    sku = str(meta["SKUClass"])
+    # dim_region still carries LeadTimeDays and SKUClass; module 2 and the
+    # propensity model read them. This module deliberately does not: they
+    # describe hardware, and nothing here is about hardware any more.
+    window = int(decision_window_days)
 
     # The region's own line unless one was forced on it. Falls back to the
     # policy default only if the ontology has no threshold for this region,
@@ -133,27 +179,27 @@ def project_region(
 
     def flag(status, reason, days=None, cross=None, order=None, until=None, short=None):
         return ThresholdFlag(
-            region=region, sku_class=sku, lead_time_days=lead_time,
+            region=region, decision_window_days=window,
             current_utilisation_pct=round(level, 2), threshold_pct=threshold_pct,
             trend_pct_per_day=round(slope, 4),
-            days_to_threshold=days, cross_date=cross, order_by_date=order,
-            days_until_order=until, status=status, reason=reason,
+            days_to_threshold=days, cross_date=cross, act_by_date=order,
+            days_until_action=until, status=status, reason=reason,
             deployed_units=round(deployed, 1), used_units=round(used, 1),
             units_short_at_cross=short,
         )
 
-    # Already over the line -- no forecast needed, and the lead time is now a
-    # measure of how late the request already is.
+    # Already over the line -- no forecast needed. The decision window is now a
+    # measure of how long ago this should have been acted on.
     if level >= threshold_pct:
-        order = as_of - timedelta(days=lead_time)
+        order = as_of - timedelta(days=window)
         return flag(
             STATUS_BREACHED,
             f"already at {level:.1f}%, past the {threshold_pct:.0f}% threshold; "
-            f"with a {lead_time}-day lead time this is {lead_time} days late.",
+            f"the decision was due {window} days ago. Scaling is immediate.",
             days=0.0,
             cross=as_of.isoformat(),
             order=order.isoformat(),
-            until=-float(lead_time),
+            until=-float(window),
             short=0.0,
         )
 
@@ -196,7 +242,7 @@ def project_region(
         )
 
     cross = as_of + timedelta(days=float(days_to_cross))
-    order = cross - timedelta(days=lead_time)
+    order = cross - timedelta(days=window)
     until = (order - as_of).days
     short = deployed * (threshold_pct - level) / 100.0
 
@@ -204,22 +250,25 @@ def project_region(
         status = STATUS_OVERDUE
         reason = (
             f"projected to hit {threshold_pct:.0f}% on {cross.isoformat()} "
-            f"({days_to_cross:.0f} days), but {sku} takes {lead_time} days to "
-            f"provision -- the request needed raising {abs(until)} days ago."
+            f"({days_to_cross:.0f} days), inside the {window}-day decision "
+            f"window -- this needed deciding {abs(until)} days ago."
         )
     elif until <= grace_days:
         status = STATUS_DUE
+        # Names the review cycle, because that is the branch that fired.
+        # It named the decision window instead, which put "inside the 7-day
+        # decision window" against a region crossing in 28 days.
         reason = (
             f"projected to hit {threshold_pct:.0f}% on {cross.isoformat()} "
-            f"({days_to_cross:.0f} days); {sku} takes {lead_time} days to "
-            f"provision, so the request is due today."
+            f"({days_to_cross:.0f} days); allowing {window} days to decide, "
+            f"that falls in this review cycle -- settle it by {order.isoformat()}."
         )
     else:
         status = STATUS_APPROACHING
         reason = (
             f"projected to hit {threshold_pct:.0f}% on {cross.isoformat()}; "
-            f"with a {lead_time}-day lead time the request is due on "
-            f"{order.isoformat()}, in {until} days."
+            f"allowing {window} days to decide, settle it by "
+            f"{order.isoformat()} -- {until} days away."
         )
 
     return flag(
@@ -235,9 +284,17 @@ def project_region(
 def project_all(onto, **kwargs) -> pd.DataFrame:
     """Every region, ordered by urgency rather than by utilisation.
 
-    Sorting by days-until-order rather than by current usage is what surfaces
-    the inversion: a region at 71% on 45-day hardware outranks one at 94% on
-    10-day hardware, because the first has already run out of time to act.
+    Sorting by days-until-action rather than by current usage still matters --
+    a region at 71% and climbing steeply outranks one flat at 94% -- but it no
+    longer produces the inversion this docstring used to celebrate, where a
+    region outranked a fuller one because its hardware took longer to arrive.
+    Every region now has the same decision window, because in Fabric no region
+    can be scaled faster than another.
+
+    The urgency that hardware lead time was standing in for has not gone away;
+    it moved to where it is actually measured. A capacity that is throttling is
+    refusing work today regardless of when its region's average crosses, and
+    that is on the fleet map, in the recommendations, and in the risk score.
     """
     rows = [
         project_region(onto, region, **kwargs).to_dict()
@@ -253,7 +310,7 @@ def project_all(onto, **kwargs) -> pd.DataFrame:
     }
     df["_p"] = df["status"].map(priority)
     df = df.sort_values(
-        ["_p", "days_until_order", "current_utilisation_pct"],
+        ["_p", "days_until_action", "current_utilisation_pct"],
         ascending=[True, True, False],
         na_position="last",
     ).drop(columns="_p")

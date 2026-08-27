@@ -265,7 +265,11 @@ tbody tr.at-risk:hover { background: #fbd9dc; }
 tbody tr.at-risk td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
 td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 td.mono { font-family: var(--mono); font-size: .82rem; }
-.why { color: var(--ink-2); max-width: 46ch; }
+/* A max with no min: in an eleven-column table the browser squeezed this to
+   about ten characters and wrapped a sentence into fifteen lines, making
+   every row taller than the viewport. The table scrolls; the column should
+   not collapse to make it fit. */
+.why { color: var(--ink-2); max-width: 46ch; min-width: 26ch; }
 
 /* ------------------------------------------------------------------- chips */
 

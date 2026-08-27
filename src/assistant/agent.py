@@ -39,10 +39,10 @@ question that was asked. If someone asks directly where the data comes from \
 or whether it is real, answer plainly and completely from dataCaveats -- \
 never deny it and never dress it up.
 - No markdown headings, no bullet lists unless comparing three or more things.
-- Never mention a field name. Write "the order window passed 32 days ago", not "daysUntilOrder of -32". The reader has never seen the schema.
+- Never mention a field name. Write "the decision window passed 32 days ago", not "daysUntilAction of -32". The reader has never seen the schema.
 - The camelCase keys are never words. Say "ARR affected", "revenue exposure", \
-"failed requests", "days until the order date" -- never arrAffected, \
-exposureUsd, failedRequests, daysUntilOrder, whyThisStatus. A leaked key is \
+"failed requests", "days left to decide" -- never arrAffected, \
+exposureUsd, failedRequests, daysUntilAction, whyThisStatus. A leaked key is \
 the single most common way this answer reads as machine output.
 
 WHAT THE FIELDS MEAN
@@ -55,10 +55,14 @@ the data.
 Not money lost.
 - arrAffected: the whole annual revenue of every affected customer. Blast \
 radius, always larger than exposure.
-- status: breached = already over the safety line; overdue = the order window \
-has passed; approaching = still time; stable = not heading for a crossing.
-- daysUntilOrder: days left to place a hardware order. Negative means late.
-- leadTime: days for that region's hardware to arrive.
+- status: breached = already over the safety line; overdue = the decision \
+window has passed; approaching = still time; stable = not heading for a crossing.
+- daysUntilAction: days left to decide before the region crosses its line. \
+Negative means that point has passed. Scaling itself is immediate -- a Fabric \
+capacity is scaled in Azure and takes effect at once -- so this is decision \
+time, never delivery time. There is nothing to order and nothing to wait for.
+- decisionWindowDays: how long the organisation allows itself to notice, agree \
+and act. A policy figure, the same for every region.
 - coverage: share of product features live in that region.
 - growth: change in requested capacity, in units, not percent.
 - customers: identified by the first 8 characters of their subscription id. Use that short form when naming one.
@@ -121,9 +125,8 @@ def build_snapshot(onto, m5, flags, growth, coverage, spikes, provenance,
             # answering "the status is approaching" beside a page reading "Not in
             # risk". thresholdStatus above is the vocabulary the product uses.
             "utilisationPct": f["current_utilisation_pct"],
-            "hardware": f["sku_class"],
-            "leadTimeDays": f["lead_time_days"],
-            "daysUntilOrder": f["days_until_order"],
+            "daysUntilAction": f["days_until_action"],
+            "decisionWindowDays": f["decision_window_days"],
             "whyThisStatus": f["reason"],
             "exposureUsd": round(float(e.get("RevenueExposureUSD", 0)), 2),
             "exposureDisplay": money(float(e.get("RevenueExposureUSD", 0))),
@@ -382,7 +385,7 @@ def _deterministic(question: str, snapshot: dict) -> str:
     how = snapshot["howItWorks"]
     q = question.lower()
     worst = max(regions, key=lambda r: r["exposureUsd"]) if regions else None
-    late = [r for r in regions if (r["daysUntilOrder"] or 0) < 0]
+    late = [r for r in regions if (r["daysUntilAction"] or 0) < 0]
 
     # --- how a number was produced ----------------------------------------
     asks_how = _mentions(q, "how", "why", "explain", "calculat", "formula", "work out",
@@ -450,9 +453,12 @@ def _deterministic(question: str, snapshot: dict) -> str:
         return (f"{worst['region']} — {worst['exposureDisplay']} of revenue exposure across "
                 f"{worst['failedRequests']} failed requests. {worst['whyThisStatus']}")
 
-    if _mentions(q, "late", "overdue", "urgent", "due now", "order window") and late:
-        names = ", ".join(f"{r['region']} ({abs(r['daysUntilOrder']):.0f}d late)" for r in late)
-        return f"{len(late)} region(s) have missed the order window: {names}."
+    if _mentions(q, "late", "overdue", "urgent", "due now", "decision window") and late:
+        names = ", ".join(f"{r['region']} ({abs(r['daysUntilAction']):.0f}d ago)"
+                          for r in late)
+        return (f"{len(late)} region(s) are past the point where the decision "
+                f"should have been made: {names}. Scaling itself is immediate, "
+                f"so each can still be fixed today.")
 
     named = [r for r in regions if r["region"] in q]
     if named:
@@ -463,8 +469,7 @@ def _deterministic(question: str, snapshot: dict) -> str:
         # question that fell back raised a KeyError instead of answering.
         return (f"{r['region']}: {r['thresholdStatus'].lower()}, "
                 f"{r['utilisationPct']}% utilised against a "
-                f"{r['thresholdPct']}% threshold, on {r['hardware']} with a "
-                f"{r['leadTimeDays']}-day lead time. "
+                f"{r['thresholdPct']}% threshold. "
                 f"{r['exposureDisplay']} exposure across {r['failedRequests']} failed "
                 f"requests. {r['whyThisStatus']}")
 

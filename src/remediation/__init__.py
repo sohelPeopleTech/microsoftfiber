@@ -103,10 +103,10 @@ def _threshold_remediation(onto, site, count: int, crossing_for=None) -> tuple[s
     try:
         flag = module1.project_region(onto, str(site["Region"]),
                                       crossing_for=crossing_for)
-        if getattr(flag, "order_by_date", None):
+        if getattr(flag, "act_by_date", None):
             order_by = (f" The region's order-by date is "
-                        f"{str(flag.order_by_date)[:10]}"
-                        f"{' and has passed' if (flag.days_until_order or 0) < 0 else ''}.")
+                        f"{str(flag.act_by_date)[:10]}"
+                        f"{' and has passed' if (flag.days_until_action or 0) < 0 else ''}.")
     except Exception:
         pass
 

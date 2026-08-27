@@ -176,23 +176,35 @@ def test_throttling_can_outrank_utilisation():
         "already shows")
 
 
-def test_action_due_means_the_order_by_date_has_passed():
-    """The KPI subtitle says "order-by date reached or passed".
+def test_needing_action_means_the_decision_falls_in_this_review_cycle():
+    """The KPI counts regions at or past their safety line.
 
-    Three states, not two. `daysUntilOrder is None` means the backtested model
-    projects no crossing at all, which is the opposite of overdue -- reading it
-    as 0 counted the calmest regions as the most urgent.
+    This used to assert that anything actionable had `daysUntilAction <= 0`,
+    which held only because "overdue" was the only amber state that ever fired
+    -- and it fired because a hardware provisioning lead time outran the days
+    left before a crossing. There is no lead time now: a region is actionable
+    when it is already over the line, or when the decision falls inside the
+    review cycle, so a positive number is the normal case for an amber region.
+
+    Three states, not two. `daysUntilAction is None` means the backtested model
+    projects no crossing at all, which is the opposite of urgent -- reading it
+    as 0 counted the calmest regions as the most pressing.
     """
+    from module1.threshold import DEFAULT_REVIEW_DAYS
+
     ov = api.overview()
     due_statuses = ("breached", "overdue", "due_now")
     for region in ov["regions"]:
-        days, status = region["daysUntilOrder"], region["status"]
+        days, status = region["daysUntilAction"], region["status"]
         if days is None:
             assert status not in due_statuses, (
                 f"{region['region']}: {status} with no projected crossing")
             continue
-        assert (status in due_statuses) == (days <= 0), \
-            f"{region['region']}: {status} vs {days}"
+        assert (status in due_statuses) == (days <= DEFAULT_REVIEW_DAYS), (
+            f"{region['region']}: {status} with {days} days to decide, against a "
+            f"{DEFAULT_REVIEW_DAYS}-day review cycle")
+        if status == "breached":
+            assert days <= 0, f"{region['region']} is breached but not yet due"
 
 
 def test_the_two_tabs_never_disagree_about_a_crossing_date():

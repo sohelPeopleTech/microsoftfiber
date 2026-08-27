@@ -325,7 +325,7 @@ def overview():
             "region": name,
             "status": f["status"],
             "utilisation": f["current_utilisation_pct"],
-            "daysUntilOrder": f["days_until_order"],
+            "daysUntilAction": f["days_until_action"],
             "reason": f["reason"],
             "exposure": e.get("RevenueExposureUSD", 0),
             "failed": e.get("TicketsFlagged", 0),
@@ -1218,9 +1218,8 @@ def capacity_map():
             "thresholdPct": f.get("threshold_pct"),
             "status": f.get("status"),
             "crossingDate": f.get("cross_date"),
-            "daysUntilOrder": f.get("days_until_order"),
-            "leadTimeDays": f.get("lead_time_days"),
-            "skuClass": f.get("sku_class"),
+            "daysUntilAction": f.get("days_until_action"),
+            "decisionWindowDays": f.get("decision_window_days"),
             "capacities": int(c["capacities"]) if c is not None else 0,
             "sites": int(c["sites"]) if c is not None else 0,
             "capacityUnits": int(c["cu"]) if c is not None else 0,
@@ -2787,7 +2786,7 @@ def suggestions():
     snap = get_snapshot()
     regions = snap["regions"]
     worst = max(regions, key=lambda r: r["exposureUsd"])["region"] if regions else "westeurope"
-    late = [r["region"] for r in regions if (r["daysUntilOrder"] or 0) < 0]
+    late = [r["region"] for r in regions if (r["daysUntilAction"] or 0) < 0]
     out = [
         "Which region should we fix first, and why?",
         f"Why is {worst} the worst?",
