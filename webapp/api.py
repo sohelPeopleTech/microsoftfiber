@@ -317,6 +317,7 @@ def overview():
     flags = _records(module1.project_all(onto, crossing_for=_forecast_crossing))
     spikes = module4.explain_anomalies(get_demand(), onto["fact_event"])
 
+    causes = _failure_causes(onto)
     regions = []
     for f in flags:
         name = f["region"]
@@ -334,6 +335,8 @@ def overview():
             "growth": growth.get(name, {}).get("AbsoluteChange", 0),
             "coverage": coverage.get(name, {}).get("CoveragePct", 0),
             "spikes": sum(1 for s in spikes if s.region == name),
+            # Why the money is there, beside how much of it there is.
+            "failureCause": causes.get(name, {}),
         })
 
     return {
@@ -412,6 +415,64 @@ def _failed_incident_ids() -> frozenset:
 def _failed_rows(fact):
     """The failing subset of a ticket frame."""
     return fact[fact["IncidentId"].astype(str).isin(_failed_incident_ids())]
+
+
+#: Denial causes that mean the region genuinely ran out of Capacity Units.
+#: Everything else -- a maintenance window, a quota, a network fault, a ticket
+#: nobody actioned -- happened while there was room to spare, and adding
+#: capacity would not have prevented it.
+CAPACITY_CAUSES = frozenset({"Insufficient capacity", "Threshold reached"})
+
+
+def _failure_causes(onto) -> dict[str, dict]:
+    """Per region: why its requests failed, and whether capacity was the reason.
+
+    This exists because of a question the Overview could not answer. Regions
+    sitting comfortably inside their safety line still carry revenue loss, and
+    a reader seeing a green pill beside a five-figure number reasonably asks
+    how both can be true.
+
+    They can be true because the two columns look in opposite directions. The
+    status is a forecast about the region's ceiling; the loss is history about
+    individual requests. Across the whole extract, every failure in a region
+    that is currently green landed on a data centre that had room -- they
+    failed on maintenance windows, quota policy, network faults and tickets
+    nobody actioned.
+
+    So the table now says which it was, because "add capacity here" is the
+    wrong answer to most of them.
+    """
+    fact = onto["fact_capacity_request"]
+    failed = _failed_rows(fact)
+    sites = onto["dim_datacentre"].set_index("DatacentreId")
+
+    out: dict[str, dict] = {}
+    for region, grp in failed.groupby("Region"):
+        named = grp[grp["DenialReason"].astype(str).str.strip() != ""]
+        counts = named["DenialReason"].value_counts()
+        capacity_n = int(sum(counts.get(c, 0) for c in CAPACITY_CAUSES))
+
+        # Did any of them land somewhere that was actually full? A region can
+        # sit under its own line while one building in it is over its own.
+        on_full = 0
+        for dc in grp["DatacentreId"].astype(str):
+            if dc not in sites.index:
+                continue
+            row = sites.loc[dc]
+            dep, used = float(row["DeployedUnits"] or 0), float(row["UsedUnits"] or 0)
+            thr = float(row["ThresholdPct"] or 0)
+            if dep and (used / dep * 100.0) > thr:
+                on_full += 1
+
+        out[str(region)] = {
+            "topCause": str(counts.index[0]) if len(counts) else "",
+            "topCauseCount": int(counts.iloc[0]) if len(counts) else 0,
+            "causes": int(len(counts)),
+            "capacityCaused": capacity_n,
+            "otherCaused": int(len(grp)) - capacity_n,
+            "landedOnAFullSite": on_full,
+        }
+    return out
 
 
 def _reason_breakdown(onto, region: str | None = None) -> list[dict]:

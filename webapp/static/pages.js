@@ -8,6 +8,50 @@
 /* ==================================================================== 1/6 */
 /* Overview                                                                  */
 
+/* Why a region carries revenue loss, which is not the same question as whether
+   it is running out of capacity.
+
+   A reader asked it directly: the pill is green, the region is nowhere near its
+   threshold, so where is the money coming from. The two columns look in
+   opposite directions -- the status forecasts the region's ceiling, the loss is
+   history about individual requests -- and across this extract every failure in
+   a currently-green region landed on a data centre that had room. They failed
+   on maintenance windows, quota policy, network faults and tickets nobody
+   actioned.
+
+   So the table says which it was. "Add capacity here" is the wrong answer to
+   most of them, and nothing on the page said so. */
+function failureCause(r) {
+  const c = r.failureCause;
+  if (!r.failed) return `<span class="t3">—</span>`;
+  if (!c || !c.topCause) {
+    return `<span class="t3">cause not recorded</span>`;
+  }
+  const capacity = c.capacityCaused || 0;
+  const other = c.otherCaused || 0;
+  const onFull = c.landedOnAFullSite || 0;
+
+  /* Three states, not two. The middle one is the honest case and the reason
+     this column exists: a request whose recorded cause was a shortage, in a
+     region where nothing is over its line today. Reporting only the recorded
+     cause would reproduce the confusion one step down -- "capacity was the
+     constraint" beside a green pill is exactly what prompted the question. */
+  let verdict;
+  if (capacity > other && onFull) {
+    verdict = `<span class="t-bad">capacity was the constraint</span>
+      <span class="t3">· ${num(onFull)} hit a full data centre</span>`;
+  } else if (capacity > other) {
+    verdict = `<span class="t-warn">recorded as a shortage</span>
+      <span class="t3">· but no data centre here is over its line today</span>`;
+  } else if (capacity) {
+    verdict = `<span class="t-warn">${num(other)} of ${num(capacity + other)} were not about capacity</span>`;
+  } else {
+    verdict = `<span class="t-good">not a capacity problem</span>`;
+  }
+  return `${esc(c.topCause)}${c.causes > 1 ? `<span class="t3"> +${c.causes - 1} other</span>` : ""}
+    <br>${verdict}`;
+}
+
 PAGES["/"] = async (view) => {
   const d = await get("/api/overview");
   const k = d.kpis;
@@ -46,13 +90,14 @@ PAGES["/"] = async (view) => {
       { what: "Request outcomes", is: "the two failure types the tool targets — SLA breached before being granted, and never granted at all. Everything handled inside SLA is collapsed into one line below them, for reconciliation only." },
       { what: "Demand distribution", is: "request volume by region, highest first \u2014 the link between the region count and the incident count. Select a row to open that region." },
       { what: "Denial reason analysis", is: "root cause for every denial with the corresponding remediation path. This determines which team owns the fix." },
-      { what: "Regions requiring action", is: "prioritised by how soon each has to be decided on, with the rationale for each flag." },
+      { what: "Regions requiring action", is: "prioritised by how soon each has to be decided on, with the rationale for each flag and the dominant cause behind any revenue loss \u2014 so a green region carrying money is explained rather than puzzling." },
     ],
     words: [
       { term: "FTR", means: "First-time resolution \u2014 approved on the initial pass with no denial recorded." },
       { term: "SLA", means: "Committed turnaround by subscription tier \u2014 Enterprise 48h, Premium 72h, Standard and Free 96h. Resolution inside the window is normal handling; beyond it is a breach and is classified as a failure." },
       { term: "Revenue loss", means: "<b>Microsoft revenue, not the customer&rsquo;s own.</b> The subscription\u2019s ARR, apportioned by the share of the request left unfulfilled and the duration of the shortfall." },
       { term: "Manual review", means: "Denial causes with no automated remediation \u2014 quota policy, network faults and unrecorded causes require engineering or account-team engagement rather than a platform action." },
+      { term: "Why a green region still shows revenue loss", means: "The two columns look in opposite directions. <b>Status</b> is a forecast about the region\u2019s ceiling; <b>revenue loss</b> is history about individual requests. Being under the threshold means there was room \u2014 it does not mean the request got through. Across this extract, <b>every failure in a region that is currently green landed on a data centre that had room</b>: they failed on maintenance windows, quota policy, network faults and tickets nobody actioned. The <i>Why those requests failed</i> column says which it was, because &ldquo;add capacity here&rdquo; is the wrong answer to most of them." },
     ],
     next: "Review the denial reason analysis to identify the applicable remediation, then action any region showing a negative value in 'Days to decide' \u2014 those crossings are already inside the decision window.",
     sources: "ICM capacity-request extract, subscription ARR reference, and daily Fabric capacity consumption.",
@@ -127,7 +172,8 @@ PAGES["/"] = async (view) => {
   ${panel("Regions requiring action", attention.length ? `<div class="scroll-x"><table>
     <thead><tr>
       <th>Region</th><th>Status</th><th>Flag rationale</th>
-      <th class="n">Days to decide</th><th class="n">Revenue loss</th><th class="n">Failed</th>
+      <th class="n">Days to decide</th><th class="n">Revenue loss</th>
+      <th>Why those requests failed</th><th class="n">Failed</th>
     </tr></thead>
     <tbody>${attention.map((r) => `<tr class="clickable" data-region="${esc(r.region)}">
       <td><b>${esc(r.region)}</b></td>
@@ -136,6 +182,7 @@ PAGES["/"] = async (view) => {
       <td class="n">${r.daysUntilAction == null ? "—" :
         `<b style="color:${r.daysUntilAction < 0 ? "var(--bad)" : "inherit"}">${r.daysUntilAction}</b>`}</td>
       <td class="n">${money(r.exposure)}</td>
+      <td class="why">${failureCause(r)}</td>
       <td class="n">${num(r.failed)}</td>
     </tr>`).join("")}</tbody></table></div>`
     : `<p class="empty">No region is currently flagged.</p>`,

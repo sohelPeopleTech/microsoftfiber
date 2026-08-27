@@ -538,3 +538,56 @@ def test_a_page_reads_only_fields_its_endpoint_sends(page, marker, var, call):
     assert not missing, (
         f"{page} renders {missing}, which appears nowhere in what its endpoint "
         f"sends -- each prints as 0 or as the word \"undefined\".")
+
+
+# --------------------------------------------------------------------------
+# why a region carries revenue loss
+# --------------------------------------------------------------------------
+
+
+def test_every_region_with_failures_says_why_they_failed():
+    """The Overview prints a cause beside the money, so one has to exist."""
+    for r in api.overview()["regions"]:
+        if not r["failed"]:
+            continue
+        c = r.get("failureCause") or {}
+        assert c, f"{r['region']} has {r['failed']} failures and no cause breakdown"
+        assert c["capacityCaused"] + c["otherCaused"] == r["failed"], (
+            f"{r['region']}: {c['capacityCaused']} capacity + {c['otherCaused']} other "
+            f"!= {r['failed']} failed")
+        assert c["topCause"], f"{r['region']} has failures but no dominant cause"
+
+
+def test_a_healthy_region_that_carries_loss_did_not_run_out_of_capacity():
+    """The claim the Overview explainer makes, asserted against the data.
+
+    A reader asked how a region can show a green pill and a five-figure revenue
+    loss at the same time. The answer the page now gives is that the status
+    forecasts the region's ceiling while the loss is history about individual
+    requests -- and that in a region which is currently fine, those requests
+    failed somewhere that had room.
+
+    If that ever stops being true, the explainer is telling people something
+    false and this fails rather than the sentence quietly becoming wrong.
+    """
+    healthy = [r for r in api.overview()["regions"]
+               if r["status"] in ("stable", "approaching") and r["failed"]]
+    assert healthy, "no healthy region carries a failure -- the case is untested"
+
+    for r in healthy:
+        c = r["failureCause"]
+        assert c["landedOnAFullSite"] == 0, (
+            f"{r['region']} is {r['status']} but {c['landedOnAFullSite']} of its "
+            f"failures landed on a data centre over its own threshold -- the "
+            f"Overview explainer says that never happens")
+
+
+def test_a_breached_region_is_allowed_to_be_a_capacity_problem():
+    """The other half. If nothing is ever capacity-caused the column says
+    nothing, and the distinction it exists to draw is not being drawn."""
+    breached = [r for r in api.overview()["regions"]
+                if r["status"] == "breached" and r["failed"]]
+    assert breached
+    assert any(r["failureCause"]["capacityCaused"] > 0 for r in breached), (
+        "no breached region has a capacity-caused failure, so the column never "
+        "distinguishes one case from the other")
