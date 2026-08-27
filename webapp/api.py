@@ -452,17 +452,25 @@ def _failure_causes(onto) -> dict[str, dict]:
         counts = named["DenialReason"].value_counts()
         capacity_n = int(sum(counts.get(c, 0) for c in CAPACITY_CAUSES))
 
-        # Did any of them land somewhere that was actually full? A region can
-        # sit under its own line while one building in it is over its own.
-        on_full = 0
-        for dc in grp["DatacentreId"].astype(str):
+        def over_its_line(dc: str) -> bool:
             if dc not in sites.index:
-                continue
+                return False
             row = sites.loc[dc]
             dep, used = float(row["DeployedUnits"] or 0), float(row["UsedUnits"] or 0)
             thr = float(row["ThresholdPct"] or 0)
-            if dep and (used / dep * 100.0) > thr:
-                on_full += 1
+            return bool(dep) and (used / dep * 100.0) > thr
+
+        # Two different questions, and conflating them printed something false.
+        #
+        # `landedOnAFullSite` asks where the failures happened. `sitesOverLine`
+        # asks what the region contains. westeurope answers 0 and 2: none of its
+        # failures hit a full building, and yet dc04 sits at 100% with nothing
+        # free. The column said "no data centre here is over its line", which
+        # was a claim about the region made from a measurement about the
+        # failures, and the region page contradicted it one click later.
+        on_full = sum(1 for dc in grp["DatacentreId"].astype(str) if over_its_line(dc))
+        in_region = sites[sites["Region"].astype(str) == str(region)]
+        over_line = sum(1 for dc in in_region.index.astype(str) if over_its_line(dc))
 
         out[str(region)] = {
             "topCause": str(counts.index[0]) if len(counts) else "",
@@ -471,6 +479,8 @@ def _failure_causes(onto) -> dict[str, dict]:
             "capacityCaused": capacity_n,
             "otherCaused": int(len(grp)) - capacity_n,
             "landedOnAFullSite": on_full,
+            "sitesOverLine": over_line,
+            "sites": int(len(in_region)),
         }
     return out
 

@@ -591,3 +591,59 @@ def test_a_breached_region_is_allowed_to_be_a_capacity_problem():
     assert any(r["failureCause"]["capacityCaused"] > 0 for r in breached), (
         "no breached region has a capacity-caused failure, so the column never "
         "distinguishes one case from the other")
+
+
+def test_the_failure_column_separates_where_they_failed_from_what_the_region_holds():
+    """Two different questions, and conflating them printed something false.
+
+    The column said "no data centre here is over its line today" whenever no
+    failure had landed on a full site. Those are not the same claim. westeurope
+    had neither of its failures on a full building *and* two data centres over
+    their own line -- dc04 at 100% with nothing free -- so the Overview asserted
+    something the region page disproved one click later.
+
+    Both numbers are now carried, and this asserts they are actually different
+    somewhere, because if they never diverge the distinction is untested and the
+    wording will drift back.
+    """
+    regions = [r for r in api.overview()["regions"] if r["failed"]]
+    assert regions
+
+    for r in regions:
+        c = r["failureCause"]
+        assert c["landedOnAFullSite"] <= r["failed"], r["region"]
+        assert 0 <= c["sitesOverLine"] <= c["sites"], r["region"]
+        # A failure cannot land on a full site in a region that has none.
+        if c["sitesOverLine"] == 0:
+            assert c["landedOnAFullSite"] == 0, (
+                f"{r['region']}: {c['landedOnAFullSite']} failures landed on a full "
+                f"site, but the region reports no site over its line")
+
+    diverging = [r["region"] for r in regions
+                 if r["failureCause"]["sitesOverLine"] > 0
+                 and r["failureCause"]["landedOnAFullSite"] == 0]
+    assert diverging, (
+        "no region holds a full data centre while its failures landed elsewhere, "
+        "so the two figures are indistinguishable here and the column's wording "
+        "is not being exercised")
+
+
+def test_a_region_can_average_comfortably_and_still_hold_a_full_data_centre():
+    """The thing the regional average hides, asserted rather than assumed.
+
+    This is the case that made a reader distrust the page: westeurope reads
+    83.1% against a 90% line and looks fine, while one of its data centres is at
+    100% with zero free.
+    """
+    for r in api.overview()["regions"]:
+        if r["status"] not in ("stable", "approaching", "due_now"):
+            continue
+        d = api.region_detail(r["region"])
+        over = [s for s in d["datacentres"] if s["overThreshold"]]
+        if over:
+            worst = max(over, key=lambda s: s["utilisationPct"])
+            assert worst["utilisationPct"] > worst["thresholdPct"]
+            return
+    raise AssertionError(
+        "no region under its own line holds a data centre over that site's line -- "
+        "the case the column exists to surface does not occur in this data")

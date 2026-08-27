@@ -31,22 +31,32 @@ function failureCause(r) {
   const other = c.otherCaused || 0;
   const onFull = c.landedOnAFullSite || 0;
 
-  /* Three states, not two. The middle one is the honest case and the reason
-     this column exists: a request whose recorded cause was a shortage, in a
-     region where nothing is over its line today. Reporting only the recorded
-     cause would reproduce the confusion one step down -- "capacity was the
-     constraint" beside a green pill is exactly what prompted the question. */
+  /* Two different questions, and an earlier version answered one while
+     printing the other. `onFull` is where the failures happened; `overLine` is
+     what the region contains. westeurope answers 0 and 2 -- none of its
+     failures hit a full building, and yet dc04 sits at 100% with nothing free.
+     This said "no data centre here is over its line", which the region page
+     contradicted one click later, and a reader caught it.
+
+     So the verdict now only ever speaks about the failures, and the count of
+     full sites is stated separately as the fact it is. */
+  const overLine = c.sitesOverLine || 0;
+  const full = overLine
+    ? `<span class="t3"> · ${num(overLine)} of ${num(c.sites)} data centres here
+       ${overLine === 1 ? "is over its own line" : "are over their own lines"}</span>`
+    : "";
+
   let verdict;
   if (capacity > other && onFull) {
     verdict = `<span class="t-bad">capacity was the constraint</span>
-      <span class="t3">· ${num(onFull)} hit a full data centre</span>`;
+      <span class="t3">· ${num(onFull)} landed on a full data centre</span>`;
   } else if (capacity > other) {
     verdict = `<span class="t-warn">recorded as a shortage</span>
-      <span class="t3">· but no data centre here is over its line today</span>`;
+      <span class="t3">· but they landed where there was room</span>${full}`;
   } else if (capacity) {
-    verdict = `<span class="t-warn">${num(other)} of ${num(capacity + other)} were not about capacity</span>`;
+    verdict = `<span class="t-warn">${num(other)} of ${num(capacity + other)} were not about capacity</span>${full}`;
   } else {
-    verdict = `<span class="t-good">not a capacity problem</span>`;
+    verdict = `<span class="t-good">not a capacity problem</span>${full}`;
   }
   return `${esc(c.topCause)}${c.causes > 1 ? `<span class="t3"> +${c.causes - 1} other</span>` : ""}
     <br>${verdict}`;
@@ -97,7 +107,7 @@ PAGES["/"] = async (view) => {
       { term: "SLA", means: "Committed turnaround by subscription tier \u2014 Enterprise 48h, Premium 72h, Standard and Free 96h. Resolution inside the window is normal handling; beyond it is a breach and is classified as a failure." },
       { term: "Revenue loss", means: "<b>Microsoft revenue, not the customer&rsquo;s own.</b> The subscription\u2019s ARR, apportioned by the share of the request left unfulfilled and the duration of the shortfall." },
       { term: "Manual review", means: "Denial causes with no automated remediation \u2014 quota policy, network faults and unrecorded causes require engineering or account-team engagement rather than a platform action." },
-      { term: "Why a green region still shows revenue loss", means: "The two columns look in opposite directions. <b>Status</b> is a forecast about the region\u2019s ceiling; <b>revenue loss</b> is history about individual requests. Being under the threshold means there was room \u2014 it does not mean the request got through. Across this extract, <b>every failure in a region that is currently green landed on a data centre that had room</b>: they failed on maintenance windows, quota policy, network faults and tickets nobody actioned. The <i>Why those requests failed</i> column says which it was, because &ldquo;add capacity here&rdquo; is the wrong answer to most of them." },
+      { term: "Why a green region still shows revenue loss", means: "The two columns look in opposite directions. <b>Status</b> is a forecast about the region\u2019s ceiling; <b>revenue loss</b> is history about individual requests. Being under the threshold means there was room \u2014 it does not mean the request got through. Across this extract, <b>every failure in a region that is currently green landed on a data centre that had room</b>: they failed on maintenance windows, quota policy, network faults and tickets nobody actioned. The <i>Why those requests failed</i> column says which it was, because &ldquo;add capacity here&rdquo; is the wrong answer to most of them. Note that this is a statement about <i>where the failures happened</i>, not about the whole region &mdash; a region can average comfortably and still hold one data centre at 100%, so the column counts those separately." },
     ],
     next: "Review the denial reason analysis to identify the applicable remediation, then action any region showing a negative value in 'Days to decide' \u2014 those crossings are already inside the decision window.",
     sources: "ICM capacity-request extract, subscription ARR reference, and daily Fabric capacity consumption.",
