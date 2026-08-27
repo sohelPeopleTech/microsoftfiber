@@ -306,3 +306,45 @@ def test_every_new_route_is_a_served_tab():
     for path in ("/map", "/recommendations"):
         assert path in api.TABS, f"{path} is not served"
     assert "/capacity" in api.DEEP, "/capacity/<id> would not survive a refresh"
+
+
+# --------------------------------------------------------------------------
+# the page reads what the endpoint sends
+# --------------------------------------------------------------------------
+
+
+def test_the_drilldown_header_reads_only_totals_that_exist():
+    """`num(t.units)` on a payload with no `units` prints 0, not an error.
+
+    The region header shipped reading `t.units` and `t.nodes` -- two fields left
+    behind by the Azure model and absent from this endpoint -- and rendered
+    "0 units - 0 nodes" under every region on the map, including one holding 412
+    CU across 27 capacities. Nothing failed: undefined reached a number
+    formatter, which answered 0. The zero looked like a measurement.
+
+    So this reads the field names straight out of the template and checks the
+    endpoint actually sends them.
+    """
+    import re
+
+    js = (ROOT / "webapp" / "static" / "pages.js").read_text()
+    body = js[js.index("function mapDetail("):]
+    body = body[:body.index("\n}")]
+    used = set(re.findall(r"\bt\.([A-Za-z_]\w*)", body))
+    assert used, "mapDetail no longer reads totals through `t.` -- update this test"
+
+    region = api.capacity_map()["points"][0]["region"]
+    totals = api.map_region(region)["totals"]
+    missing = sorted(used - set(totals))
+    assert not missing, (
+        f"mapDetail renders {missing} but /api/map/{{region}} does not send them, "
+        f"so each prints as 0. Sent: {sorted(totals)}")
+
+
+def test_a_region_with_capacities_reports_capacity_units():
+    """The header's own numbers, asserted as numbers rather than as keys."""
+    for p in api.capacity_map()["points"]:
+        t = api.map_region(p["region"])["totals"]
+        if t["capacities"]:
+            assert t["capacityUnits"] > 0, f"{p['region']} holds capacities but 0 CU"
+            assert t["sites"] > 0

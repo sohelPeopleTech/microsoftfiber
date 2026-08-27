@@ -362,7 +362,12 @@ def overview():
         "regionDistribution": _region_distribution(onto),
         "reasons": _reason_breakdown(onto),
         "regions": regions,
-        "skus": sorted(onto["dim_sku"]["SKUClass"]),
+        # The F-SKUs actually deployed, not the Intel/AMD hardware classes the
+        # first module shipped. Fabric never exposes the hardware, and the
+        # overview was counting five vendor classes nothing else in the product
+        # mentions. Read in one place: the "Regions monitored" sub-label.
+        "skus": sorted(onto["dim_capacity"]["FabricSku"].unique(),
+                       key=lambda s: admission.F_SKUS.get(s, 0)),
         "provenance": _records(ontology.sources(onto.tables)),
     }
 

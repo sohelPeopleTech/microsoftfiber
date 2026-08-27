@@ -59,8 +59,8 @@ PAGES["/"] = async (view) => {
   }) + title("Overview", `Everything across all regions — as of ${String(d.asOf).slice(0, 10)}`) + `
 
   <div class="kpis">
-    ${kpi("Regions monitored", num(d.regions.length), `across ${d.skus.length} hardware classes`, "ink", "Azure regions with capacity requests in this extract. Each region contains several data centres.")}
-    ${kpi("Procurement action due", num(dueNow.length), "order-by date elapsed", dueNow.length ? "bad" : "good", "Regions where the latest date to place a hardware order has already passed. Replacement hardware takes 10 to 45 days to arrive depending on class.")}
+    ${kpi("Regions monitored", num(d.regions.length), `across ${d.skus.length} Fabric SKUs`, "ink", "Azure regions with capacity requests in this extract. Each region holds Fabric capacities spread over several data centres.")}
+    ${kpi("Regions needing action", num(dueNow.length), "at or past their safety line", dueNow.length ? "bad" : "good", "Regions already past the threshold their own data centres hold, or forecast to cross it before the next review. Scaling an F SKU takes effect immediately, so this is a backlog of decisions rather than of deliveries.")}
     ${kpi("Revenue loss", money(k.exposure), `attributed to ${k.failed} failed requests`, "bad", "Microsoft revenue, not the customer\u2019s own. Each customer\u2019s ARR, apportioned by the share of their request left unfulfilled and how long it stayed unfulfilled. A severity ranking, not money written off.")}
     ${kpi("ARR impacted", money(k.arrAffected), `combined ARR of ${k.customers} affected customers`, "", "Total annual revenue of every customer who hit at least one failure, counted once each. Blast radius rather than loss \u2014 always larger than revenue loss.")}
   </div>
@@ -212,7 +212,7 @@ async function showRecommendation(region) {
 
     ${d.options.length ? `<h4 style="margin:0 0 .3rem;font-size:.85rem">If the safety line moved</h4>
     <div class="scroll-x"><table>
-      <thead><tr><th>New line</th><th class="n">Cores released</th>
+      <thead><tr><th>New line</th><th class="n">CU released</th>
         <th class="n">Headroom after</th><th>Covers what is owed?</th></tr></thead>
       <tbody>${d.options.map((o) => `<tr>
         <td class="n">${pct(o.thresholdPct, 0)}</td>
@@ -241,7 +241,7 @@ async function showRecommendation(region) {
    for them merged, on the grounds that reading a spike in requests against the
    headroom available to absorb it means holding both pictures at once.
 
-   They are merged, not averaged: cores and percent-full are different units and
+   They are merged, not averaged: CU and percent-full are different units and
    keep an axis each, so nothing is rescaled into a number that was never
    measured. `combinedRegionChart` draws that; `demandChart` below still serves
    customers and data centres, where no utilisation series exists to pair with. */
@@ -383,9 +383,9 @@ function demandChart(d) {
    the fitted projection, the error band the model actually earned on held-out
    data, and the crossing marker -- the same furniture as Forecast.
 
-   Two units, so two axes: cores on the left, how-full on the right. Nothing is
+   Two units, so two axes: CU on the left, how-full on the right. Nothing is
    rescaled into a number nobody measured. Colour carries the series and dash
-   carries the tense -- blue is cores, grey is utilisation, dashed is projected
+   carries the tense -- blue is CU, grey is utilisation, dashed is projected
    in both cases -- because a reader who learns the rule once should not have to
    relearn it halfway across the chart.
 
@@ -445,7 +445,7 @@ function combinedRegionChart(d, f) {
   /* Hover. One entry per recorded day, plus the months that predate the
      utilisation record so the left of the chart is not dead to the cursor.
      Each carries whatever is true at that date: a reading, a projection with
-     its range, and the cores asked for in the month it falls in. */
+     its range, and the CU asked for in the month it falls in. */
   const coresBy = Object.fromEntries(
     hist.map((m) => [m.month, m]).concat(proj.map((m) => [m.month, { ...m, isProjection: true }])));
   const monthOf = (iso) => iso.slice(0, 7);
@@ -513,7 +513,7 @@ function combinedRegionChart(d, f) {
   const utilStart = hasUtil ? x(day(fHist[0].date)) : null;
 
   return `<div class="legend">
-    <span><i class="ln demand"></i>Cores requested — what customers asked for (left axis)</span>
+    <span><i class="ln demand"></i>CU requested — what customers asked for (left axis)</span>
     ${proj.length ? `<span><i class="ln demand-proj"></i>Projected demand</span>` : ""}
     ${hasUtil ? `<span><i class="ln util"></i>How full the region ran — one reading per day (right axis)</span>` : ""}
     ${hasUtil && fProj.length ? `<span><i class="ln util-proj"></i>Projected utilisation${f.model ? ` — ${esc(f.model)}` : ""}</span>` : ""}
@@ -790,7 +790,7 @@ async function demandPanels(scope, id) {
       <b>In plain terms:</b> ${showChart ? `this chart carries two different
       measurements, which is why it has two scales.
       The <b style="color:var(--brand)">blue line</b> is what customers
-      <b>asked for</b> — cores per month, read on the left. The
+      <b>asked for</b> — CU per month, read on the left. The
       <b style="color:var(--ink-2)">grey line</b> is how <b>full the region
       actually ran</b> — a percentage, one reading per day, read on the right.
       One is demand arriving, the other is the room left to absorb it.
@@ -868,7 +868,7 @@ async function demandPanels(scope, id) {
    answer. By looking at it, you should be able to get those insights."
 
    So a marker carries what would otherwise be four screens: how full the region
-   is, whether it crosses its safety line and when, what is waiting to be bought,
+   is, whether it crosses its safety line and when, what has to be scaled,
    and what Fabric will not run there. Selecting one opens the detail beside the
    map rather than navigating away, because comparing two regions means seeing
    the second without losing the first.
@@ -1064,8 +1064,8 @@ function whenBlock(d) {
    The variable part belongs in columns and the constant part belongs said once.
    So each kind gets a table of its capacities, and the reasoning that applies
    to all of them sits underneath it, grouped by the thing it actually depends
-   on -- for a purchase that is the hardware class, because the lead time is a
-   property of the hardware and not of the capacity. */
+   on -- for a scale-up that is the throttling stage, because the urgency is a
+   property of what the capacity is refusing and not of the capacity itself. */
 
 /* What is happening, in the words someone would use out loud.
 
@@ -1326,8 +1326,11 @@ function mapDetail(d) {
       <b>${esc(d.region)}</b>
       <span class="pill ${d.status === "breached" ? "bad"
         : (d.status === "overdue" || d.status === "due") ? "warn" : "good"}">${esc(d.status || "—")}</span>
+      <!-- capacityUnits/workspaces, not units/nodes: those two were left over
+           from the Azure model, are not on this payload, and rendered as a
+           confident "0 units - 0 nodes" in the header of every region. -->
       <span class="hint">${num(t.sites)} data centres · ${num(t.capacities)} capacities ·
-        ${num(t.units)} units · ${num(t.nodes)} nodes</span>
+        ${num(t.capacityUnits)} CU · ${num(t.workspaces)} workspaces</span>
       <a class="closer" href="#" id="detail-close" aria-label="Close">×</a>
     </header>
     <div class="body">
@@ -1342,8 +1345,16 @@ function mapDetail(d) {
       <h3 class="sec">What is in each data centre?</h3>
       ${sitesBlock(d)}
 
+      <!-- Was "N of M sites are past their own line", reading a totals field
+           nothing sends, so it read "0 of 10" everywhere. It could not be
+           fixed by supplying the field: a site has no line of its own in the
+           Fabric model. CU does not pool, so a data centre is not a thing that
+           fills up -- each capacity in it throttles on its own consumption.
+           What is countable, and what an admin acts on, is how many sites hold
+           a capacity that is throttling. -->
       <p class="prov">
-        ${num(t.sitesPastThreshold)} of ${num(t.sites)} sites are past their own line.
+        ${num((d.sites || []).filter((s) => s.throttlingCapacities > 0).length)}
+        of ${num(t.sites)} data centres hold at least one throttling capacity.
         ${t.freeViewerCapable} of ${num(t.capacities)} capacities are F64 or larger, so Power BI
         content on the rest needs a Pro or PPU licence per viewer.
         Capacities, their CU consumption and their throttling history are generated;
@@ -1364,17 +1375,17 @@ PAGES["/map"] = async (view) => {
   const late = d.points.filter((p) => p.status === "overdue" || p.status === "due");
 
   view.innerHTML = howto({
-    answers: "<b>Where the fleet stands, on one screen.</b> Every region as a point: how full it is against its own safety line, when it crosses, what is waiting to be bought, and which Fabric workloads will not run there.",
+    answers: "<b>Where the fleet stands, on one screen.</b> Every region as a point: how full it is against its own safety line, when it crosses, what has to be scaled, and which Fabric workloads will not run there.",
     steps: [
-      { what: "Marker colour", is: "the region's state against <i>its own</i> threshold — red is past it, amber has an order due or overdue, green is inside it. The same three states the pills use elsewhere." },
-      { what: "Marker size", is: "deployed units, by area rather than radius so a region twice the size looks twice the size." },
+      { what: "Marker colour", is: "the region's state against <i>its own</i> threshold — red is past it, amber is forecast to cross it, green is inside it. The same three states the pills use elsewhere." },
+      { what: "Marker size", is: "Capacity Units deployed, by area rather than radius so a region twice the size looks twice the size." },
       { what: "Selecting one", is: "opens its card beside the map. It stays open while you pick another, because the question is usually which of two regions is worse." },
       { what: "Overlapping points", is: "eastus and eastus2 are both in Virginia, and three European regions sit within four degrees. Markers that would cover each other are nudged apart and joined to their true position by a hairline." },
     ],
     words: [
       { term: "How full", means: "Utilisation against the region's own safety threshold, which is derived from the thresholds its data centres actually hold — not one figure applied to every region." },
       { term: "Unavailable features", means: "Fabric workloads Microsoft does not currently run in that region. This is <b>real published data</b>, refreshed from Microsoft Learn, and it is a capacity decision that has nothing to do with how full a region is: a region with plenty of headroom is still the wrong home for a workload it cannot run." },
-      { term: "To buy / to move", means: "Two different answers. <b>To buy</b> means capacity is running out. <b>To move</b> means the capacity is fine but the hardware under it is failing more than the fleet average — adding more of the same would not fix it." },
+      { term: "To scale / to rebalance", means: "Two different answers. <b>To scale</b> means a capacity is throttling or has no headroom left, and the fix is a bigger F SKU. <b>To rebalance</b> means the region has room but one workspace is taking most of a single capacity — a bigger SKU would carry the same imbalance up the ladder." },
     ],
     next: "Start with the red markers, then the amber ones carrying a move recommendation — those are the ones no utilisation figure would have surfaced.",
     sources: "Azure region coordinates and Microsoft Fabric regional availability are real. Capacities, their CU consumption and their throttling history are generated — every generated row carries its provenance.",
@@ -1384,7 +1395,7 @@ PAGES["/map"] = async (view) => {
     <span><b>${d.points.length}</b> regions</span>
     ${past.length ? `<span><b class="t-bad">${past.length}</b> past their safety line
       ${past.map((p) => `<a href="#" class="pick t-bad" data-region="${esc(p.region)}">${esc(p.region)}</a>`).join(" ")}</span>` : ""}
-    ${late.length ? `<span><b class="t-warn">${late.length}</b> with an order overdue
+    ${late.length ? `<span><b class="t-warn">${late.length}</b> due to cross it
       ${late.map((p) => `<a href="#" class="pick t-warn" data-region="${esc(p.region)}">${esc(p.region)}</a>`).join(" ")}</span>` : ""}
     ${!past.length && !late.length ? `<span class="t3">Nothing at risk.</span>` : ""}
   </div></section>
@@ -1394,7 +1405,7 @@ PAGES["/map"] = async (view) => {
       <div class="map-holder">${fleetMap(d)}
         <div class="legend map-legend">
           <span><i class="dot bad"></i>Past its safety line</span>
-          <span><i class="dot warn"></i>Order due or overdue</span>
+          <span><i class="dot warn"></i>Due to cross its line</span>
           <span><i class="dot good"></i>Inside its line</span>
           <span class="t3">Marker area = Capacity Units</span>
         </div>
@@ -1471,10 +1482,10 @@ PAGES["/regions"] = async (view) => {
     words: [
       { term: "Threshold status", means: "Whether the region is <b>in risk</b> — utilisation has moved past its safety threshold — or not. It is a state, not a fault: a region using the capacity it holds has done nothing wrong." },
       { term: "Threshold utilised by", means: "How far past the safety threshold utilisation has reached, in percentage points. At an 85% threshold and 97.2% utilisation, the threshold has been utilised by 12.2%." },
-      { term: "CU pending", means: "Capacity requested by customers and not yet delivered. This is what the region owes, not how many tickets failed \u2014 one ticket can be worth hundreds of cores." },
+      { term: "CU pending", means: "Capacity requested by customers and not yet delivered. This is what the region owes, not how many tickets failed \u2014 one ticket can be worth hundreds of CU." },
       { term: "Why there is no hardware here", means: "Fabric is a SaaS platform \u2014 a customer never sees a server. What sits under a region is Fabric <b>capacities</b>, each with an F-SKU and a number of Capacity Units, and those are on the Fleet map and the data-centre pages. There is nothing to take offline and nothing to provision." },
     ],
-    next: "Work the regions in risk first, largest cores-pending first. Open the recommendation to see whether moving the safety threshold covers what is owed, or whether the region needs capacity added.",
+    next: "Work the regions in risk first, largest CU-pending first. Open the recommendation to see whether moving the safety threshold covers what is owed, or whether the region needs capacity added.",
     sources: "daily regional utilisation, Fabric capacity consumption per region, and the ICM capacity-request history.",
   }) + title("Regions", "How full each region is, and what it still owes") + `
 
@@ -1662,7 +1673,7 @@ PAGES["/region"] = async (view, name, showAll = false) => {
 
       <h4 style="margin:1.25rem 0 .4rem;font-size:.9rem">Every data centre in this region</h4>
       <div class="scroll-x"><table>
-        <thead><tr><th>Data centre</th><th class="n">Cores</th><th class="n">Free</th>
+        <thead><tr><th>Data centre</th><th class="n">CU</th><th class="n">Free</th>
           <th class="n">Threshold</th><th class="n">Utilisation</th>
           <th>Threshold status</th><th class="n">Requests</th>
           <th class="n">Failed</th>
@@ -2181,8 +2192,9 @@ PAGES["/recommendations"] = async (view, _unused, query) => {
 
    The deepest level the product now reaches. Review's analogy for why it exists:
    a phone with plenty of storage that switches off every five minutes is not a
-   phone you keep, and a capacity with plenty of headroom that drops nodes every
-   week is not capacity you keep either. Utilisation cannot tell those apart. */
+   phone you keep, and a capacity averaging 60% that spends a week refusing
+   queries at peak is not capacity you keep either. A mean cannot tell those
+   apart, which is why the throttling history sits beside it. */
 PAGES["/capacity"] = async (view, id) => {
   const d = await get(`/api/capacity/${encodeURIComponent(id)}`);
   const h = d.health;
@@ -2427,9 +2439,9 @@ PAGES["/datacentres"] = async (view) => {
     ],
     words: [
       { term: "How the score is built", is: "", means: `${Object.entries(d.weights).map(([k, w]) => `${Math.round(w * 100)}% ${esc(words(k))}`).join(", ")}. Each site is scored from its own rows — this is not a region total divided up.` },
-      { term: "Primary denial reason", means: "The most frequent denial cause at that facility \u2014 the fastest indicator of whether the constraint is capacity, hardware or policy." },
+      { term: "Primary denial reason", means: "The most frequent denial cause at that facility \u2014 the fastest indicator of whether the constraint is capacity, licensing or policy." },
     ],
-    next: `Rank by score, but read the evidence line beneath it before acting: ${solid.length} of ${d.datacentres.length} sites here have three or more requests, so for most of them the ranking is driven by utilisation and lead time — which are measured continuously — rather than by a failure rate drawn from one or two tickets.`,
+    next: `Rank by score, but read the evidence line beneath it before acting: ${solid.length} of ${d.datacentres.length} sites here have three or more requests, so for most of them the ranking is driven by utilisation and throttling — which are measured continuously — rather than by a failure rate drawn from one or two tickets.`,
     sources: "ICM capacity requests attributed to a facility, and the Fabric capacities in it.",
   }) + title("Data centres", `${d.withActivity} sites with activity, of ${d.totalSites} across all regions`) + `
 
@@ -2467,7 +2479,7 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
   view.innerHTML = howto({
     answers: `<b>Everything recorded at ${esc(x.datacentre)}</b> — capacity position, denial causes, recommended remediation and the full incident list.`,
     steps: [
-      { what: "Capacity position", is: "cores deployed, cores free, and this facility's own safety threshold." },
+      { what: "Capacity position", is: "CU deployed, CU free, and this facility's own safety threshold." },
       { what: "Recommended remediation", is: "one entry per denial cause at this site, with the migration arithmetic where a hardware change is the fix." },
       { what: "Risk index breakdown", is: "each component of the score, with its measured value and contribution." },
       { what: "Incident register", is: "every request raised here, with the derivation behind each revenue-loss figure." },
@@ -2511,7 +2523,7 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
            padding:.8rem 1rem;border-radius:3px;margin:0">${esc(rec.action)}</p>
         ${(rec.threshold || []).length ? `<div style="margin-top:.6rem">
           <div class="scroll-x"><table style="font-size:.85rem">
-            <thead><tr><th>Raise safety line to</th><th class="n">Cores released</th>
+            <thead><tr><th>Raise safety line to</th><th class="n">CU released</th>
               <th class="n">Headroom after</th></tr></thead>
             <tbody>${rec.threshold.map((o) => `<tr>
               <td><b>${pct(o.thresholdPct)}</b></td>
@@ -2524,7 +2536,7 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
           <p style="margin:0 0 .4rem;font-size:.85rem;color:var(--ink-2)">
             Migration arithmetic for this facility:</p>
           <div class="scroll-x"><table style="font-size:.85rem">
-            <thead><tr><th>Option</th><th class="n">Cores after</th>
+            <thead><tr><th>Option</th><th class="n">CU after</th>
               <th class="n">Work capacity</th><th class="n">Cost</th>
               <th class="n">Lead time</th><th>Feasible now</th></tr></thead>
             <tbody>${rec.migration.map((m) => `<tr>
@@ -2601,7 +2613,7 @@ PAGES["/reasons"] = async (view) => {
       { what: "The regions listed", is: "where that cause is worst. If one cause is concentrated in one region, that is usually a single fix rather than several." },
     ],
     words: [
-      { term: "Why this view exists", means: "\u201cwesteurope has 4 failures\u201d does not identify an owner. \u201cThree capacity-ceiling denials and one hardware fault\u201d identifies two remediations with two different owners." },
+      { term: "Why this view exists", means: "\u201cwesteurope has 4 failures\u201d does not identify an owner. \u201cThree capacity-ceiling denials and one licensing block\u201d identifies two remediations with two different owners." },
     ],
     next: "Work the causes with the largest revenue loss that are not marked manual review — those have a fix the platform can already model.",
     sources: `the ${d.totalFailed} failed requests, grouped by cause.`,
