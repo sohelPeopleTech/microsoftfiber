@@ -23,7 +23,7 @@ facility's own numbers:
     Threshold reached           module1 -- safety line, what raising it releases,
                                 and when the order has to be placed
     Insufficient capacity       the F-SKU scale that actually helps -- which
-    Hardware failure            capacities in the building are short, what rung
+    Platform incident           capacities in the building are short, what rung
                                 each moves to, and what that leaves them running
                                 at. Immediate; there is nothing to order
     everything else             no module owns it, so the recommendation says
@@ -75,17 +75,19 @@ def _site(onto, datacentre_id: str):
 
 
 # --------------------------------------------------------------------------
-# module 1 -- the safety line and the order date
+# module 1 -- the safety line and the date it has to be decided by
 # --------------------------------------------------------------------------
 
 
 def _threshold_remediation(onto, site, count: int, crossing_for=None) -> tuple[str, list]:
-    """What module 1 says about this facility's headroom and order date."""
-    cores = float(site["DeployedUnits"] or 0)
+    """What module 1 says about this site's headroom and when to decide."""
+    # Capacity Units. The variable was called `cores` and the sentences it built
+    # said "184 cores with 155 committed", on a page whose every other figure
+    # was already in CU.
+    units = float(site["DeployedUnits"] or 0)
     used = float(site["UsedUnits"] or 0)
     line = float(site["ThresholdPct"] or 0)
-    lead = int(site["LeadTimeDays"] or 0)
-    headroom = cores * line / 100.0 - used
+    headroom = units * line / 100.0 - used
 
     options = []
     for candidate in (line + 5, line + 10):
@@ -94,19 +96,19 @@ def _threshold_remediation(onto, site, count: int, crossing_for=None) -> tuple[s
         options.append({
             "kind": "threshold",
             "thresholdPct": round(candidate, 1),
-            "releasesCores": round(cores * (candidate - line) / 100.0, 1),
-            "headroomAfter": round(cores * candidate / 100.0 - used, 1),
+            "releasesCores": round(units * (candidate - line) / 100.0, 1),
+            "headroomAfter": round(units * candidate / 100.0 - used, 1),
         })
 
-    # What module 1 already knows about the region's order timing.
+    # What module 1 already knows about when the region has to be decided on.
     order_by = ""
     try:
         flag = module1.project_region(onto, str(site["Region"]),
                                       crossing_for=crossing_for)
         if getattr(flag, "act_by_date", None):
-            order_by = (f" The region's order-by date is "
+            order_by = (f" The region has to be decided on by "
                         f"{str(flag.act_by_date)[:10]}"
-                        f"{' and has passed' if (flag.days_until_action or 0) < 0 else ''}.")
+                        f"{' and that date has passed' if (flag.days_until_action or 0) < 0 else ''}.")
     except Exception:
         pass
 
@@ -115,20 +117,20 @@ def _threshold_remediation(onto, site, count: int, crossing_for=None) -> tuple[s
         best = usable[0]
         action = (
             f"{count} request(s) hit the {line:.0f}% safety line at "
-            f"{site['DatacentreId']}, which holds {cores:.0f} cores with "
+            f"{site['DatacentreId']}, which holds {units:.0f} CU with "
             f"{used:.0f} committed — "
-            f"{f'{headroom:.0f} cores of headroom' if headroom >= 0 else f'already {abs(headroom):.0f} cores past the line'}. "
+            f"{f'{headroom:.0f} CU of headroom' if headroom >= 0 else f'already {abs(headroom):.0f} CU past the line'}. "
             f"Raising the line to {best['thresholdPct']:.0f}% releases "
-            f"{best['releasesCores']:.0f} cores and leaves "
+            f"{best['releasesCores']:.0f} CU and leaves "
             f"{best['headroomAfter']:.0f} spare.{order_by}"
         )
     else:
         action = (
             f"{count} request(s) hit the {line:.0f}% safety line at "
             f"{site['DatacentreId']}. No safety line up to 100% releases enough — "
-            f"{used:.0f} of {cores:.0f} cores are already committed, so this is "
-            f"procurement, not policy. {site['SKUClass']} takes {lead} days to "
-            f"arrive.{order_by}"
+            f"{used:.0f} of {units:.0f} CU are already committed, so moving the "
+            f"line cannot fix this. The capacities here need larger SKUs, which "
+            f"takes effect immediately.{order_by}"
         )
     return action, options
 

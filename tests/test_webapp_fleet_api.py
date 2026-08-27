@@ -365,8 +365,17 @@ def test_a_region_with_capacities_reports_capacity_units():
 #: equivalent, and the assistant was handed a provisioning lead time for a
 #: platform that has none. All three were found by rendering the pages in a
 #: browser and reading them, which is not something a test suite does.
+#: Vendor names, and the vocabulary of a platform you wait for and rack up.
+#:
+#: The second half of this was added after "1 request(s) hit the 80% safety line
+#: at southcentralus-dc01, which holds 184 cores with 155 committed" was found
+#: on screen. That sentence is composed in Python and shipped inside a payload,
+#: so neither the source scan (which reads pages.js) nor the earlier version of
+#: this scan (which only looked for vendor names) could see it.
 AZURE_VALUES = re.compile(
-    r"\b(Intel-\w+|AMD-\w+|GPU-class|PowerEdge|ProLiant)\b", re.I)
+    r"\b(Intel-\w+|AMD-\w+|GPU-class|PowerEdge|ProLiant"
+    r"|cores?|provision(?:ing|ed)?|lead[- ]time|hardware"
+    r"|order-by|procurement)\b", re.I)
 
 #: Keys that would carry them even if today's values happen to be blank.
 AZURE_KEYS = {"hardware", "leadTime", "leadTimeDays", "currentHardware",
@@ -397,19 +406,18 @@ ENDPOINTS = [
 ]
 
 
-#: Was KNOWN_GAP: three payload paths module1's threshold engine reached, where
-#: it subtracted a hardware provisioning lead time from the forecast crossing
-#: date and printed sentences like "Intel-highmem takes 45 days to provision".
+#: The provenance table describes the other tables, so it has to be able to name
+#: what they contain. dim_sku really is one row per hardware class, and its cost
+#: index really is relative to AMD-standard -- module 2 and the propensity model
+#: still read that table. A provenance note that could not say so would be worse
+#: than useless.
 #:
-#: The exemption is gone because the gap is. module1 now subtracts a decision
-#: window -- how long an organisation takes to notice, agree and act -- which is
-#: a policy figure and the same for every region, because in Fabric no region
-#: can be scaled faster than another. Nothing here is exempt any more.
-#:
-#: One path stays out, and it is not a gap: dim_sku's provenance string names
-#: AMD-standard because that is genuinely what that generated table holds. A
-#: provenance note has to be able to describe its own contents.
-KNOWN_GAP = {"$.provenance[].Provenance"}
+#: This is the whole exemption list, and it is metadata about generated tables
+#: rather than anything a capacity admin is told. It replaced KNOWN_GAP, which
+#: named three paths module1's threshold engine reached while it was still
+#: subtracting a hardware provisioning lead time from the crossing date. That
+#: engine is converted, so those paths are gone.
+SELF_DESCRIBING = {"$.provenance[].Provenance", "$.provenance[].Grain"}
 
 
 def _generalise(path: str) -> str:
@@ -421,7 +429,7 @@ def test_no_endpoint_sends_azure_hardware_as_data(name, call):
     payload = call()
     offences = []
     for path, value in _walk(payload):
-        if _generalise(path) in KNOWN_GAP:
+        if _generalise(path) in SELF_DESCRIBING:
             continue
         leaf = path.rsplit(".", 1)[-1].split("[")[0]
         if leaf in AZURE_KEYS:
@@ -468,3 +476,65 @@ def test_the_customer_table_reads_only_fields_the_endpoint_sends():
     assert not missing, (
         f"the customers table renders {missing} but /api/customers does not "
         f"send them. Sent: {sorted(sent)}")
+
+
+# --------------------------------------------------------------------------
+# every page reads only what its endpoint sends
+# --------------------------------------------------------------------------
+
+#: This class of defect has now shipped four times: `t.units`/`t.nodes` in the
+#: region header, `t.sitesPastThreshold` under it, `c.rank` in the customers
+#: table, and `r.cores` on the region page after the field was renamed to
+#: `capacityUnits`. Every one rendered a confident number -- 0, or the literal
+#: word "undefined" -- because reading a missing key is not an error in
+#: JavaScript, and none could be caught by running the tests.
+#:
+#: The three fixes before this one each guarded a single template. This walks
+#: them all: for each page, the object it destructures from its endpoint, and
+#: every `<var>.<field>` read off it.
+PAGE_CONTRACTS = [
+    # (page, marker in pages.js, variable, callable returning the payload)
+    ("/region", 'PAGES["/region"]', "r",
+     lambda: api.region_detail(api.overview()["regions"][0]["region"])),
+    ("/datacentre", 'PAGES["/datacentre"]', "x",
+     lambda: api.datacentre_detail(api.datacentres()["datacentres"][0]["datacentre"])),
+    ("/capacity", 'PAGES["/capacity"]', "d",
+     lambda: api.capacity_detail(api.scale_options_index()["capacities"][0]["capacityId"])),
+]
+
+
+def _page_source(marker: str) -> str:
+    js = (ROOT / "webapp" / "static" / "pages.js").read_text()
+    start = js.index(marker)
+    nxt = js.find('\nPAGES["', start + 1)
+    return js[start:nxt if nxt > 0 else len(js)]
+
+
+@pytest.mark.parametrize("page,marker,var,call",
+                         PAGE_CONTRACTS, ids=[c[0] for c in PAGE_CONTRACTS])
+def test_a_page_reads_only_fields_its_endpoint_sends(page, marker, var, call):
+    import re
+
+    src = _page_source(marker)
+    used = set(re.findall(rf"\b{re.escape(var)}\.([A-Za-z_]\w*)", src))
+
+    # Every key anywhere in the payload, not just the top level. These pages
+    # nest `.map((r) => ...)` inside a scope that already binds `r`, so a regex
+    # cannot tell `r.action` on a reason from `r.action` on the region. Matching
+    # against the whole tree accepts the shadowed ones and still catches what
+    # this exists for: a field that was renamed and now exists nowhere at all.
+    def keys(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                yield k
+                yield from keys(v)
+        elif isinstance(node, list):
+            for v in node[:20]:
+                yield from keys(v)
+
+    payload = call()
+    sent = set(keys(payload))
+    missing = sorted(used - sent)
+    assert not missing, (
+        f"{page} renders {missing}, which appears nowhere in what its endpoint "
+        f"sends -- each prints as 0 or as the word \"undefined\".")

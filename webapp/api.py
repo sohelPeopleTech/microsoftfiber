@@ -1770,7 +1770,8 @@ def _customer_recommendation(customer: dict, grp, ctx) -> dict:
         "detail": (
             f"{len(failing)} refused request(s), mostly '{top_reason}'. Every region "
             f"this customer runs in is at or past its safety line, so there is nowhere "
-            f"to move the workload. This one needs hardware, not a conversation."
+            f"to move the workload. This one needs more Capacity Units, not a "
+            f"conversation."
         ),
     }
 

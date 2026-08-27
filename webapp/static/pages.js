@@ -40,13 +40,13 @@ PAGES["/"] = async (view) => {
       <span class="n">${num(n)}</span><span class="what">${esc(label)}</span></div>`;
 
   view.innerHTML = howto({
-    answers: "<b>Portfolio position across all monitored regions</b> \u2014 procurement urgency, request outcomes, and the revenue attributed to failures.",
+    answers: "<b>Portfolio position across all monitored regions</b> \u2014 which need a decision, request outcomes, and the revenue attributed to failures.",
     steps: [
-      { what: "KPI strip", is: "portfolio totals \u2014 regions under management, procurement actions now due, and the revenue impact of failed requests." },
+      { what: "KPI strip", is: "portfolio totals \u2014 regions under management, how many need a decision now, and the revenue impact of failed requests." },
       { what: "Request outcomes", is: "the two failure types the tool targets — SLA breached before being granted, and never granted at all. Everything handled inside SLA is collapsed into one line below them, for reconciliation only." },
       { what: "Demand distribution", is: "request volume by region, highest first \u2014 the link between the region count and the incident count. Select a row to open that region." },
       { what: "Denial reason analysis", is: "root cause for every denial with the corresponding remediation path. This determines which team owns the fix." },
-      { what: "Regions requiring action", is: "prioritised by procurement urgency, with the rationale for each flag." },
+      { what: "Regions requiring action", is: "prioritised by how soon each has to be decided on, with the rationale for each flag." },
     ],
     words: [
       { term: "FTR", means: "First-time resolution \u2014 approved on the initial pass with no denial recorded." },
@@ -1480,7 +1480,7 @@ PAGES["/regions"] = async (view) => {
     steps: [
       { what: "Safety threshold control", is: "the utilisation ceiling. Adjusting it recomputes every region — this is a recalculation, not a filter. Each region's threshold is also shown as its own column." },
       { what: "Region table", is: "every monitored region: capacity held, capacity used, how much of the safety threshold has been consumed, and how much CU is still owed. Any column is sortable." },
-      { what: "Recommendation", is: "opens the region-level advice — what moving the safety threshold would release and whether it covers what is owed. Hardware decisions are per facility, so it links through to the data centres." },
+      { what: "Recommendation", is: "opens the region-level advice — what moving the safety threshold would release and whether it covers what is owed. Which capacity to scale is a per-site question, so it links through to the data centres." },
       { what: "Region drill-down", is: "selecting a row opens that region: data centres in scope, denial causes, all incidents, feature availability and demand anomalies." },
     ],
     words: [
@@ -1640,11 +1640,11 @@ PAGES["/region"] = async (view, name, showAll = false) => {
     view.innerHTML = title(`Region: ${name}`, `${r.siteCount} data centres`) + panel(`Region: ${name}`, `
       <p style="margin-top:0"><b>${atRisk ? "In risk." : "Not in risk."}</b> ${esc(t.reason)}</p>
       <div class="kpis" style="margin:1rem 0">
-        ${kpi("Total CU", num(Math.round(r.cores)),
+        ${kpi("Total CU", num(Math.round(r.capacityUnits)),
               `${num(Math.round(r.capacityUnitsFree))} free across ${r.siteCount} sites`, "ink",
               "Compute deployed across every facility in this region.")}
         ${kpi("Utilised CU", num(used),
-              `of ${num(Math.round(r.cores))} deployed`, atRisk ? "bad" : "ink")}
+              `of ${num(Math.round(r.capacityUnits))} deployed`, atRisk ? "bad" : "ink")}
         ${kpi("Utilisation", pct(t.current_utilisation_pct, 1),
               `against a ${pct(t.threshold_pct, 0)} safety threshold`,
               atRisk ? "bad" : "good")}
@@ -1653,9 +1653,9 @@ PAGES["/region"] = async (view, name, showAll = false) => {
                 ? `threshold utilised by ${pct(t.current_utilisation_pct - t.threshold_pct, 1)}`
                 : `${pct(t.threshold_pct - t.current_utilisation_pct, 1)} still available`,
               atRisk ? "bad" : "good",
-              `The share of this region's ${num(Math.round(r.cores))} CU at which it is treated as at risk. `
-              + `${pct(t.threshold_pct, 0)} of ${num(Math.round(r.cores))} is `
-              + `${num(Math.round(r.cores * t.threshold_pct / 100))} CU. Utilisation past that point `
+              `The share of this region's ${num(Math.round(r.capacityUnits))} CU at which it is treated as at risk. `
+              + `${pct(t.threshold_pct, 0)} of ${num(Math.round(r.capacityUnits))} is `
+              + `${num(Math.round(r.capacityUnits * t.threshold_pct / 100))} CU. Utilisation past that point `
               + `is consuming the margin the threshold exists to protect.`)}
       </div>
       <div class="kpis" style="margin:0 0 1rem">
@@ -1858,7 +1858,7 @@ PAGES["/customer"] = async (view, sub, showAll = false) => {
     answers: `<b>Everything recorded for ${esc(c.customerName)}</b> — capacity position, account-level recommendation, and every request they have raised.`,
     steps: [
       { what: "Account position", is: "what they pay us per year, how much of it is exposed, and how many of their requests failed." },
-      { what: "Recommendation", is: "strategic rather than per-ticket — where this customer already has headroom, or whether they need hardware." },
+      { what: "Recommendation", is: "strategic rather than per-ticket — where this customer already has headroom, or whether every region they sit in is genuinely full." },
       { what: "Incident register", is: "every request they raised, with the derivation behind each revenue-loss figure." },
     ],
     next: "Where the recommendation points at another region, check that region has the Fabric features this customer needs before proposing a move.",
@@ -3009,7 +3009,7 @@ PAGES["/policy"] = async (view) => {
     steps: [
       { what: "The reserve", is: "the share of each region held for each subscription tier. Higher tiers may borrow unused lower-tier reserve; lower tiers may never borrow upward." },
       { what: "The simulation", is: "every request replayed in arrival order under that reserve, then compared with what actually happened." },
-      { what: "Would have prevented", is: "failures that occurred in reality but would have been admitted under the reserve. Where it is zero, the region was genuinely out of capacity — that is a procurement problem, not a policy one." },
+      { what: "Would have prevented", is: "failures that occurred in reality but would have been admitted under the reserve. Where it is zero, the region was genuinely out of capacity — no admission policy can conjure Capacity Units, so that one needs scaling, not rationing." },
       { what: "Capacity pools", is: "each region expressed as the Fabric SKU ladder, so a denial can be discussed in the units a customer actually buys." },
     ],
     words: [

@@ -215,7 +215,7 @@ def _recommend(a: Anomaly) -> str:
         return (
             f"{a.region} demand in {a.period} is {lift}, matching "
             f"{_article(a.event_type)} {a.event_type.lower()} {a.event_timing}. "
-            f"Pre-provision capacity in "
+            f"Scale ahead of it in "
             f"{a.region} rather than waiting for the next request to be denied."
         )
     if a.matched:

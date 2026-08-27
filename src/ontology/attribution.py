@@ -37,19 +37,23 @@ REASONS: dict[str, dict] = {
         "weight": 34,
         "detail": "The region did not have enough free units to grant the request.",
         "module": "module2",
-        "action": "Model a hardware change, or raise the ceiling if headroom exists.",
+        "action": "Scale the capacities that are short, or raise the ceiling if headroom exists.",
     },
     "Threshold reached": {
         "weight": 24,
         "detail": "Granting it would have pushed the region past its safety line.",
         "module": "module1",
-        "action": "Review the safety threshold and bring the hardware order forward.",
+        "action": "Review the safety threshold, or scale now -- an F SKU applies immediately.",
     },
-    "Hardware failure": {
+    # Was "Hardware failure", describing units offline in a building. A Fabric
+    # customer never sees the building or the units; what they experience when
+    # the platform itself is at fault is a service incident on the capacity.
+    "Platform incident": {
         "weight": 14,
-        "detail": "Units were offline in the target datacentre when the request landed.",
+        "detail": "The capacity was degraded by a platform-side incident when the "
+                  "request landed.",
         "module": "module2",
-        "action": "Confirm the repair, then re-run the request against restored capacity.",
+        "action": "Confirm the incident is closed, then re-run the request.",
     },
     "Awaiting maintenance window": {
         "weight": 10,
@@ -146,7 +150,7 @@ def assign_datacentre(fact: pd.DataFrame, count_for) -> pd.Series:
 #: one of these regardless of how much room the site has, so they are the
 #: fallback once the capacity-based causes have been ruled out.
 OPERATIONAL = [
-    "Hardware failure",
+    "Platform incident",
     "Awaiting maintenance window",
     "Quota policy",
     "Network unreachable",
