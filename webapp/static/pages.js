@@ -2187,6 +2187,7 @@ PAGES["/actions"] = async (view) => {
 
 const REC_KIND = {
   scale_up: { label: "Scale up", tone: "bad" },
+  reclaim: { label: "Reclaim idle capacity", tone: "warn" },
   load_balance: { label: "Move a workspace", tone: "warn" },
   scale_down: { label: "Scale down", tone: "" },
   licensing: { label: "Licence", tone: "" },
@@ -2202,6 +2203,7 @@ function recCard(r) {
       <b>${esc(r.headline)}</b>
     </header>
     <p class="rec-why">${esc(r.detail)}</p>
+    ${r.kind === "reclaim" ? reclaimEvidence(e) : `
     <p class="ev">
       ${e.region ? `<a href="/region/${encodeURIComponent(e.region)}">${esc(e.region)}</a>` : ""}
       ${e.datacentre ? `· <a href="/datacentre/${encodeURIComponent(e.datacentre)}">${esc(e.datacentre)}</a>` : ""}
@@ -2213,8 +2215,57 @@ function recCard(r) {
       ${e.scaleTo ? `· to <b>${esc(e.scaleTo)}</b> (${num(e.scaleToUnits)} CU)` : ""}
       ${e.workspace ? `· move <b>${esc(e.workspace)}</b> (${pct(e.workspaceSharePct, 0)}) to ${esc(e.moveTo)}` : ""}
       ${e.stepTo ? `· step to <b>${esc(e.stepTo)}</b>` : ""}
-    </p>
+    </p>`}
   </article>`;
+}
+
+/* A reclaim is the only recommendation about two parties rather than one
+   capacity, and the reader is an executive deciding whether a call is worth
+   making. So it leads with what the region refused and what that cost, names
+   the account holding the idle capacity, and states plainly that nobody can
+   action it on the customer's behalf -- a transfer is the obvious wrong reading
+   and the screen has to close it off. */
+function reclaimEvidence(e) {
+  return `
+    <div class="reclaim-ev">
+      <div class="reclaim-cols">
+        <div>
+          <span class="t3">Refused in ${esc(e.region || "")}</span>
+          <b class="t-bad">${money(e.exposureUnblocked)}</b>
+          <span class="t3">${num(e.refusedRequests)} request(s) ·
+            ${num(e.refusedAccounts)} account(s) · short by ${num(e.shortfallUnits)} CU</span>
+        </div>
+        <div>
+          <span class="t3">Idle, and held by</span>
+          <b>${esc(e.heldByName || "unidentified")}</b>
+          <span class="t3"><a href="/capacity/${encodeURIComponent(e.capacityId || "")}">${esc(e.capacityId || "")}</a>
+            · ${esc(e.fabricSku || "")} at ${pct(e.meanUtilisationPct, 0)} for ${num(e.windowDays)}d</span>
+        </div>
+        <div>
+          <span class="t3">Returns to the region</span>
+          <b class="t-good">${num(e.releasesUnits)} CU</b>
+          <span class="t3">${esc(e.fabricSku || "")} → ${esc(e.stepTo || "")} ·
+            covers ${pct(e.coversPct, 0)} of the shortfall</span>
+        </div>
+        <div>
+          <span class="t3">Next step</span>
+          <b>Account conversation</b>
+          <span class="t3">${esc(e.owner || "")}</span>
+        </div>
+      </div>
+      <p class="reclaim-note">
+        <b>This is a recommendation, not an action.</b> A Fabric capacity belongs to
+        the tenant that owns it — it cannot be moved to another customer, and
+        Microsoft cannot resize it on their behalf. What is being proposed is a
+        conversation with ${esc(e.heldByName || "the account")}: if they step down to
+        ${esc(e.stepTo || "")}, ${num(e.releasesUnits)} CU returns to
+        ${esc(e.region || "")} and the next request there can be granted from it.
+        ${e.losesFreeViewers
+          ? `<b class="t-warn">Weigh first:</b> ${esc(e.stepTo || "")} is below F64, so
+             every Power BI viewer on that capacity would need a Pro or PPU licence.`
+          : ""}
+      </p>
+    </div>`;
 }
 
 PAGES["/recommendations"] = async (view, _unused, query) => {
@@ -2234,6 +2285,7 @@ PAGES["/recommendations"] = async (view, _unused, query) => {
       { what: "Scale up", is: "the capacity is throttling, or has no headroom left for the next surge. Fabric absorbs ten minutes of overage, then delays interactive jobs by 20 seconds, then rejects them at an hour, then rejects everything at 24 hours. Scaling an F SKU takes effect immediately \u2014 there is nothing to order." },
       { what: "Move a workspace", is: "one workspace is most of what a throttling capacity consumes. Moving it costs nothing per second, where the next SKU up bills continuously." },
       { what: "Scale down", is: "the capacity is idle. F SKUs bill per second whether or not anything runs on them, so unused CUs are a standing cost. Nothing that throttled in the window appears here." },
+      { what: "Reclaim idle capacity", is: "the region refused somebody while capacity sat idle in it. Names the account holding it, what the region refused, and how much of that shortfall stepping down would cover. It is a conversation to have, not a change anyone can make for the customer \u2014 a Fabric capacity belongs to its tenant." },
       { what: "Licence", is: "a commercial step, not a capacity one. Below F64 every Power BI viewer needs Pro or PPU; at F64 a Free licence and a viewer role are enough." },
     ],
     words: [
@@ -2241,6 +2293,7 @@ PAGES["/recommendations"] = async (view, _unused, query) => {
       { term: "Bursting and smoothing", means: "Fabric lets an operation use more compute than the SKU provides, then spreads the cost over future 30-second timepoints \u2014 interactive over 5 to 64 minutes, background over 24 hours. So <b>utilisation above 100% is normal</b> and is not by itself a fault." },
       { term: "Throttling stages", means: "Only when smoothed consumption eats into future capacity does throttling begin. Ten minutes is free (overage protection); past that, interactive delay at 20 seconds, interactive rejection at an hour, background rejection at 24 hours." },
       { term: "Why these are separate", means: "A throttling capacity and an idle one are opposite problems, and an average of them describes neither. Blending them into one score is how a capacity refusing user queries reads as calm." },
+      { term: "Why so few reclaims exist", means: "Capacity is not divisible and the ladder doubles, so slack is only recoverable when the <b>whole next rung down</b> still fits. An F64 running 40 CU cannot give up 24 \u2014 there is no F24, and F32 would take eight CU away from what it is using. That is why a fleet of hundreds yields a handful, and the value is naming the region, the account and the amount rather than the volume." },
     ],
     next: "Work the throttling capacities first — those are refusing user operations now. Scale-downs are money rather than risk and can wait.",
     sources: "Capacities, their CU consumption and their throttling history are generated. The Fabric SKU ladder, the CU arithmetic, the published throttling thresholds and the F64 licensing rule are real.",

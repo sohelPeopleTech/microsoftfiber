@@ -704,3 +704,24 @@ table.caps td .t3 { display: block; color: var(--ink-3); font-size: .74rem; font
 .chart-tip .t-warn { color: #f0b429; }
 .chart-tip .t-bad  { color: #ff9a9a; }
 .chart-tip .t-good { color: #86e0ae; }
+
+/* Reclaim recommendations.
+   The only recommendation about two parties rather than one capacity, read by
+   an executive deciding whether an account call is worth making. Four columns
+   so the money, the holder, what comes back and who owns the conversation are
+   all readable without prose, then one note closing off the reading everybody
+   reaches for first -- that the capacity could simply be handed over. */
+.reclaim-ev { margin: .15rem 1.15rem 0; }
+.reclaim-cols {
+  display: grid; gap: .9rem 1.6rem;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  padding: .85rem 1rem; background: var(--wash, #f3f6f9); border-radius: 4px;
+}
+.reclaim-cols > div { display: flex; flex-direction: column; gap: .18rem; min-width: 0; }
+.reclaim-cols b { font-size: 1.22rem; line-height: 1.15; }
+.reclaim-cols .t3 { font-size: .76rem; line-height: 1.35; }
+.reclaim-note {
+  margin: .6rem 0 .2rem; padding: .7rem .95rem; font-size: .84rem;
+  line-height: 1.5; color: var(--ink-2);
+  background: var(--warn-wash); border-left: 3px solid var(--warn); border-radius: 3px;
+}

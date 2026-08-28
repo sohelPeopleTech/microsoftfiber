@@ -1187,8 +1187,21 @@ def spikes(region: str | None = None):
 @lru_cache(maxsize=1)
 def _recommendations() -> list:
     from planning import recommend as planning_recommend
+    from planning import reclaim as planning_reclaim
 
-    return planning_recommend.all_recommendations(get_ontology())
+    onto = get_ontology()
+    recs = planning_recommend.all_recommendations(onto)
+
+    # Composed here rather than inside all_recommendations, which is a pure
+    # function of the ontology. Reclaim is the one engine that needs priced
+    # tickets too -- it ranks by the revenue a region refused, not by CU -- and
+    # pushing module 5's output down into the planner would tie the two
+    # together for the sake of one caller.
+    reclaims = planning_reclaim.reclaim(
+        onto, _ticket_rows(get_module5().priced, slice(None)))
+    recs.extend(r.to_dict() for r in reclaims)
+    recs.sort(key=lambda r: -r["urgency"])
+    return recs
 
 
 @lru_cache(maxsize=1)
@@ -1438,9 +1451,9 @@ def recommendations(kind: Annotated[str | None, Query()] = None,
                     limit: Annotated[int, Query(ge=1, le=500)] = 100):
     """What to do, most urgent first.
 
-    Filterable because the three kinds answer to different people: procurement
-    goes to whoever raises purchase orders, a workload change goes to whoever
-    owns the hardware, and the licensing case is commercial.
+    Filterable because the kinds answer to different people: a scale is the
+    capacity owner's, a rebalance is whoever places workspaces, the licensing
+    case is commercial, and a reclaim is an account conversation.
     """
     recs = _recommendations()
     if kind:

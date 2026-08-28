@@ -157,6 +157,76 @@ def capacity_inventory(dim_region: pd.DataFrame,
                 "on the real Fabric SKU ladder")
 
 
+def assign_capacity_owners(capacities: pd.DataFrame,
+                           tickets: pd.DataFrame) -> pd.DataFrame:
+    """Give every capacity the account that holds it.
+
+    Nothing in the estate recorded this, and without it the platform can say
+    "this capacity is idle" but never "this account is sitting on it" -- which
+    is the whole of the reclaim question. In production the link is real and
+    already exists: a Fabric capacity is an Azure resource in a customer's
+    subscription.
+
+    Here it is generated, like the capacities themselves, but not invented from
+    nothing. The subscriptions are the real ones from the ICM extract, and a
+    capacity is assigned to an account weighted by how much capacity that
+    account has actually asked for in that region -- so the accounts holding the
+    most in a region are the ones that requested the most there, which is the
+    relationship the real link would have. An account that has never requested
+    anything in a region can never be shown holding capacity there.
+
+    Regions with no requests at all fall back to the largest accounts by ARR,
+    because a region has to belong to somebody and leaving it blank would put a
+    hole in the one column the reclaim recommendation reads.
+    """
+    if capacities.empty or tickets.empty:
+        return capacities.assign(SubscriptionId="", TenantId="")
+
+    rng = _rng(29)
+    # The raw extract carries AdditionalLimitCapacity -- how much extra the
+    # account asked for. RequestedCapacity is a derived name that appears later
+    # in the ontology, so it cannot be read here.
+    asked_col = next((c for c in ("AdditionalLimitCapacity", "RequestedCapacity")
+                      if c in tickets.columns), None)
+    needed = {"SubscriptionId", "TenantId", "Region"}
+    if asked_col is None or not needed <= set(tickets.columns):
+        return capacities.assign(SubscriptionId="", TenantId="")
+
+    t = tickets[["SubscriptionId", "TenantId", "Region", asked_col]].copy()
+    t["asked"] = pd.to_numeric(t[asked_col], errors="coerce").fillna(0.0)
+
+    # Every account that has asked for capacity anywhere, largest first. This is
+    # the fallback pool, and it is ordered so the fallback is deterministic.
+    everywhere = (t.groupby(["SubscriptionId", "TenantId"], as_index=False)
+                   .agg(asked=("asked", "sum")).sort_values("asked", ascending=False))
+    everywhere = everywhere[everywhere["asked"] > 0]
+
+    owners = {}
+    for region, group in t.groupby("Region"):
+        demand = (group.groupby(["SubscriptionId", "TenantId"], as_index=False)
+                       .agg(asked=("asked", "sum")))
+        demand = demand[demand["asked"] > 0]
+        owners[str(region)] = demand if not demand.empty else everywhere
+
+    out, assigned = capacities.copy(), []
+    for row in out.itertuples():
+        pool = owners.get(str(row.Region))
+        if pool is None or pool.empty:
+            pool = everywhere
+        weights = pool["asked"].to_numpy(dtype=float)
+        weights = weights / weights.sum()
+        pick = int(rng.choice(len(pool), p=weights))
+        assigned.append((str(pool["SubscriptionId"].iloc[pick]),
+                         str(pool["TenantId"].iloc[pick])))
+
+    out["SubscriptionId"] = [a for a, _ in assigned]
+    out["TenantId"] = [b for _, b in assigned]
+    out["Provenance"] = out["Provenance"] + (
+        "; holder assigned from the real subscriptions in the extract, weighted "
+        "by capacity each account requested in that region")
+    return out
+
+
 # --------------------------------------------------------------------------
 # procurement
 # --------------------------------------------------------------------------
@@ -228,7 +298,7 @@ def generate_fleet(tickets: pd.DataFrame, dim_region: pd.DataFrame,
     """
     from . import fabric
 
-    caps = capacity_inventory(dim_region)
+    caps = assign_capacity_owners(capacity_inventory(dim_region), tickets)
     return {
         "capacity_inventory": caps,
         "partial_grants": partial_grants(tickets),
