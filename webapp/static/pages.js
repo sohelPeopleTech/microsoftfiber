@@ -2936,7 +2936,14 @@ function forecastChart(f) {
   const all = [...hist.map((p) => p.value),
                ...proj.map((p) => p.upper), ...proj.map((p) => p.lower),
                f.thresholdPct];
-  const lo = Math.floor(Math.min(...all) - 2), hi = Math.ceil(Math.max(...all) + 2);
+  // Utilisation is a share of deployed capacity, so 100% is the ceiling and
+  // there is nothing above it to draw. The axis added two points of headroom
+  // unconditionally and topped out at 102%, on a chart whose own caption says
+  // the projection is capped at 100% because a line past that forecasts
+  // nothing. Five of the eleven regions showed it. The floor is clamped for
+  // the same reason -- a region cannot be less than empty.
+  const lo = Math.max(0, Math.floor(Math.min(...all) - 2));
+  const hi = Math.min(100, Math.ceil(Math.max(...all) + 2));
   const n = hist.length + proj.length;
   const x = (i) => L + (i / (n - 1)) * (W - L - R);
   const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
@@ -3008,7 +3015,12 @@ PAGES["/forecast"] = async (view) => {
     ],
     next: "Work the regions with the soonest crossing date. A region already past its line is a present condition, not a forecast.",
     sources: "daily regional utilisation with detected anomalies excluded, backtested over " + d.folds + " rolling folds at a " + d.horizonDays + "-day horizon.",
-  }) + title("Forecast", `${d.forecasts.length} regions projected against a ${d.thresholdPct}% safety line`) + `
+  }) + title("Forecast", d.thresholdPct == null
+       // Null is the normal case: every region is judged against the line its
+       // own data centres hold, and only the what-if control forces one figure
+       // on all of them. Interpolated raw, it printed "a null% safety line".
+       ? `${d.forecasts.length} regions, each projected against its own safety line`
+       : `${d.forecasts.length} regions projected against a ${d.thresholdPct}% safety line`) + `
 
   ${d.forecasts.map((f) => panel(`${f.region} — ${f.alreadyBreached
       ? (f.saturationDate ? `already over the line, full by ${f.saturationDate}`

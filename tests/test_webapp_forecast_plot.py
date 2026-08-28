@@ -133,3 +133,56 @@ def test_the_error_shown_belongs_to_the_model_in_use():
         "no region uses a model other than the backtest winner, so the two "
         "figures cannot differ here and this test proves nothing — check "
         "whether the forced-model setting is still in play")
+
+
+def test_no_forecast_axis_goes_above_full():
+    """Utilisation is a share of deployed capacity, so 100% is the ceiling.
+
+    The axis added two points of headroom unconditionally and topped out at
+    102% in five of the eleven regions -- on a chart whose own caption says the
+    projection is capped at 100% because a line past that is not a forecast of
+    anything. The data was right the whole time; only the axis was wrong.
+
+    Computed here the way the chart computes it, from the endpoint's own
+    numbers, because the suite cannot see a rendered SVG.
+    """
+    import math
+    import sys
+    from pathlib import Path as _P
+
+    sys.path.insert(0, str(_P(__file__).resolve().parents[1] / "webapp"))
+    import api
+
+    over = []
+    for f in api.forecast_all()["forecasts"]:
+        proj = f.get("projection") or []
+        values = ([p["value"] for p in f["history"]]
+                  + [p["upper"] for p in proj] + [p["lower"] for p in proj]
+                  + [f["thresholdPct"]])
+        hi = min(100, math.ceil(max(values) + 2))
+        lo = max(0, math.floor(min(values) - 2))
+        assert hi <= 100, f"{f['region']} axis tops out at {hi}%"
+        assert lo >= 0, f"{f['region']} axis starts at {lo}%"
+        assert hi > lo, f"{f['region']} has a collapsed axis"
+        if max(p["upper"] for p in proj) > 100 if proj else False:
+            over.append(f["region"])
+    assert not over, f"the confidence band exceeds full capacity in {over}"
+
+
+def test_the_forecast_title_never_prints_a_null_threshold():
+    """`thresholdPct` is null in the normal case -- every region is judged
+    against the line its own data centres hold, and only the what-if control
+    forces one figure on all of them. Interpolated raw it read "11 regions
+    projected against a null% safety line"."""
+    import sys
+    from pathlib import Path as _P
+
+    sys.path.insert(0, str(_P(__file__).resolve().parents[1] / "webapp"))
+    import api
+
+    assert api.forecast_all()["thresholdPct"] is None, (
+        "the default is no longer null -- this test guards the null branch")
+    js = (_P(__file__).resolve().parents[1] / "webapp" / "static" / "pages.js").read_text()
+    block = js[js.index('title("Forecast"'):js.index('title("Forecast"') + 500]
+    assert "d.thresholdPct == null" in block, (
+        "the Forecast title interpolates thresholdPct without checking for null")
