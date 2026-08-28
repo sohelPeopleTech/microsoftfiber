@@ -318,6 +318,7 @@ def overview():
     spikes = module4.explain_anomalies(get_demand(), onto["fact_event"])
 
     causes = _failure_causes(onto)
+    throttling = _region_throttling()
     regions = []
     for f in flags:
         name = f["region"]
@@ -337,6 +338,9 @@ def overview():
             "spikes": sum(1 for s in spikes if s.region == name),
             # Why the money is there, beside how much of it there is.
             "failureCause": causes.get(name, {}),
+            # Whether anyone in the region is being refused *now*, which the
+            # utilisation average cannot say because CU does not pool.
+            "throttling": throttling.get(name, {}),
         })
 
     return {
@@ -1205,6 +1209,41 @@ def _recommendations() -> list:
 
 
 @lru_cache(maxsize=1)
+def _region_throttling() -> dict[str, dict]:
+    """How many capacities in each region are refusing work right now.
+
+    A region's utilisation is an average and answers a procurement question:
+    is there room here to grant more. It cannot answer the operational one --
+    is anybody being refused -- because Capacity Units do not pool. westeurope
+    reads 83.1% against a 90% line and is not in risk, and inside that average
+    one F8 runs at 182.5%, has throttled on all thirty days, and has refused
+    1,338 operations that it cannot borrow a single CU from the F32 sitting at
+    33% beside it.
+
+    An executive reading the region tables could not see any of that. The
+    throttling was computed, and shown on the capacity pages, and absent from
+    every screen above them.
+    """
+    health = _capacity_health()
+    out: dict[str, dict] = {}
+    for region, group in health.groupby("Region"):
+        throttling = group[group["ThrottledDays"] > 0]
+        worst = (group.sort_values("MeanUtilisationPct", ascending=False).iloc[0]
+                 if len(group) else None)
+        refused = int(group["InteractiveRejected"].sum()
+                      + group["BackgroundRejected"].sum())
+        out[str(region)] = {
+            "capacities": int(len(group)),
+            "throttling": int(len(throttling)),
+            "operationsRefused": refused,
+            "worstCapacityId": str(worst["CapacityId"]) if worst is not None else "",
+            "worstMeanPct": round(float(worst["MeanUtilisationPct"]), 1) if worst is not None else 0.0,
+            "worstStage": str(worst["WorstStage"]) if worst is not None else "none",
+        }
+    return out
+
+
+@lru_cache(maxsize=1)
 def _capacity_health():
     from planning import capacity_health
 
@@ -1272,6 +1311,7 @@ def capacity_map():
     flags = {f["region"]: f for f in _records(
         module1.project_all(onto, crossing_for=_forecast_crossing))}
     exposure = {r["Region"]: r for r in get_module5().finding["regions"]}
+    throttling_by_region = _region_throttling()
 
     by_region_kind: dict[tuple, int] = {}
     for r in recs:
@@ -1306,6 +1346,7 @@ def capacity_map():
             "decisionWindowDays": f.get("decision_window_days"),
             "capacities": int(c["capacities"]) if c is not None else 0,
             "sites": int(c["sites"]) if c is not None else 0,
+            "throttling": throttling_by_region.get(region, {}),
             "capacityUnits": int(c["cu"]) if c is not None else 0,
             "coresPending": e.get("CoresPending", 0),
             "failed": e.get("TicketsFlagged", 0),
@@ -2020,10 +2061,15 @@ def threshold(pct: Annotated[float | None, Query(ge=50.0, le=99.0)] = None,
     # attached here rather than left for the reader to assemble across tabs.
     pending = _cores_pending_by_region()
     customers = _waiting_customers_by_region()
+    throttling = _region_throttling()
     for f in flags:
         region = str(f["region"])
         f["cores_pending"] = round(pending.get(region, 0.0), 1)
         f["customers_waiting"] = int(customers.get(region, 0))
+        # Whether anything in the region is refusing work now. The utilisation
+        # beside it is an average and cannot say: CU does not pool, so a region
+        # inside its line can hold a capacity at 182% refusing every day.
+        f["throttling"] = throttling.get(region, {})
         f["free_units"] = round(float(f["deployed_units"]) - float(f["used_units"]), 1)
         # "Breached by 12.2%" was rejected in review: a breach reads as a fault,
         # and the capacity consumed past the line is still the region's own, not

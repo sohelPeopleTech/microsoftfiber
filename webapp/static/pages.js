@@ -187,7 +187,7 @@ PAGES["/"] = async (view) => {
     </tr></thead>
     <tbody>${attention.map((r) => `<tr class="clickable" data-region="${esc(r.region)}">
       <td><b>${esc(r.region)}</b></td>
-      <td>${statusPill(r.status)}</td>
+      <td>${statusPill(r.status)}<br>${refusingNow(r.throttling)}</td>
       <td class="why">${esc(r.reason)}</td>
       <td class="n">${r.daysUntilAction == null ? "—" :
         `<b style="color:${r.daysUntilAction < 0 ? "var(--bad)" : "inherit"}">${r.daysUntilAction}</b>`}</td>
@@ -1529,6 +1529,7 @@ PAGES["/regions"] = async (view) => {
     ],
     words: [
       { term: "Threshold status", means: "Whether the region is <b>in risk</b> — utilisation has moved past its safety threshold — or not. It is a state, not a fault: a region using the capacity it holds has done nothing wrong." },
+      { term: "Refusing work now", means: "How many capacities in the region are actually turning operations away today. This is <b>not</b> the same question as the threshold beside it, and a region can be comfortable on one and severe on the other: <b>Capacity Units do not pool</b>, so an F8 running at 182% cannot borrow anything from an F32 running at 33% in the same region. The threshold asks whether there is room to grant more capacity here; this asks whether anybody is being refused right now." },
       { term: "Threshold utilised by", means: "How far past the safety threshold utilisation has reached, in percentage points. At an 85% threshold and 97.2% utilisation, the threshold has been utilised by 12.2%." },
       { term: "CU pending", means: "Capacity requested by customers and not yet delivered. This is what the region owes, not how many tickets failed \u2014 one ticket can be worth hundreds of CU." },
       { term: "Why there is no hardware here", means: "Fabric is a SaaS platform \u2014 a customer never sees a server. What sits under a region is Fabric <b>capacities</b>, each with an F-SKU and a number of Capacity Units, and those are on the Fleet map and the data-centre pages. There is nothing to take offline and nothing to provision." },
@@ -1622,7 +1623,7 @@ PAGES["/regions"] = async (view) => {
           <td class="n">${num(Math.round(r.used_units))}</td>
           <td class="n"><b style="color:${r.at_risk ? "var(--bad)" : "inherit"}">${pct(r.current_utilisation_pct, 1)}</b></td>
           <td class="n">${pct(r.threshold_pct, 0)}</td>
-          <td>${thresholdPill(r)}</td>
+          <td>${thresholdPill(r)}<br>${refusingNow(r.throttling)}</td>
           <td class="n">${r.cores_pending ? `<b>${num(Math.round(r.cores_pending))}</b>` : "—"}</td>
           <td class="n">${money(e.exposure)}</td>
           <td class="n">${r.customers_waiting || "—"}</td>
@@ -2184,6 +2185,33 @@ PAGES["/actions"] = async (view) => {
    interesting part of it: a region past its threshold needs buying and every
    other screen already says so. The two counts that lead the page are the ones
    nothing else would have surfaced. */
+
+/* Whether anything in a region is refusing work right now.
+
+   The threshold status beside this answers a different question -- is there
+   room here to grant more capacity -- and it cannot answer this one, because
+   Capacity Units do not pool. westeurope reads 83.1% against a 90% line and is
+   "not in risk", and inside that average one F8 runs at 182.5%, has throttled
+   every day for thirty days and has refused 1,481 operations. It cannot borrow
+   a single CU from the F32 sitting at 33% beside it.
+
+   An executive reading the region tables had no way to see that: the throttling
+   was computed, shown on the capacity pages, and absent from every screen above
+   them. So it is stated here, next to the status rather than instead of it,
+   because both are true and they answer to different people. */
+function refusingNow(t) {
+  if (!t || !t.capacities) return "";
+  if (!t.throttling) {
+    return `<span class="t3" style="font-size:.72rem">nothing refusing work</span>`;
+  }
+  const severe = t.worstStage === "background_rejection"
+    || t.worstStage === "interactive_rejection";
+  return `<span class="refusing ${severe ? "t-bad" : "t-warn"}">
+      ${num(t.throttling)} of ${num(t.capacities)} refusing work</span>
+    ${t.operationsRefused
+      ? `<span class="t3" style="font-size:.72rem">${num(t.operationsRefused)} operations turned away</span>`
+      : ""}`;
+}
 
 const REC_KIND = {
   scale_up: { label: "Scale up", tone: "bad" },

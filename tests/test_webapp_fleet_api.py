@@ -647,3 +647,66 @@ def test_a_region_can_average_comfortably_and_still_hold_a_full_data_centre():
     raise AssertionError(
         "no region under its own line holds a data centre over that site's line -- "
         "the case the column exists to surface does not occur in this data")
+
+
+# --------------------------------------------------------------------------
+# a region can be inside its line and still be refusing work
+# --------------------------------------------------------------------------
+
+
+REGION_VIEWS = [
+    ("overview", lambda: api.overview()["regions"]),
+    ("threshold", lambda: api.threshold()["regions"]),
+    ("map", lambda: api.capacity_map()["points"]),
+]
+
+
+@pytest.mark.parametrize("name,call", REGION_VIEWS, ids=[v[0] for v in REGION_VIEWS])
+def test_every_region_view_says_whether_anything_is_refusing_work(name, call):
+    """An executive reads regions, not capacities.
+
+    The throttling was computed, shown on the capacity pages, and absent from
+    every screen above them -- so westeurope read "not in risk" at 83.1% against
+    a 90% line while eleven of its twenty-four capacities refused 1,481
+    operations, and nothing on a region screen said so.
+    """
+    for row in call():
+        t = row.get("throttling")
+        assert t is not None, f"/{name}: {row['region']} carries no throttling figure"
+        assert t["capacities"] >= t["throttling"] >= 0
+        assert t["operationsRefused"] >= 0
+
+
+def test_the_two_region_signals_are_allowed_to_disagree():
+    """The threshold and the throttling answer different questions.
+
+    The threshold asks whether there is room to grant more capacity here.
+    Throttling asks whether anybody is being refused right now. Capacity Units
+    do not pool, so a region can be comfortable on the first and severe on the
+    second -- and if they never diverge, one of them is redundant and the
+    distinction this exists to draw is not being drawn.
+    """
+    regions = api.overview()["regions"]
+    calm_but_refusing = [r for r in regions
+                         if r["status"] not in ("breached", "overdue")
+                         and r["throttling"]["throttling"] > 0]
+    assert calm_but_refusing, (
+        "no region is inside its line while refusing work, so the throttling "
+        "column tells the reader nothing the status column did not")
+
+    worst = max(calm_but_refusing, key=lambda r: r["throttling"]["operationsRefused"])
+    assert worst["throttling"]["worstMeanPct"] > 100, (
+        f"{worst['region']} is the strongest example and its worst capacity is "
+        f"only at {worst['throttling']['worstMeanPct']}%")
+
+
+def test_the_three_region_views_report_the_same_throttling():
+    """Overview, Regions and the map read one figure. Three definitions of the
+    same thing is how the capacity-policy simulator once reported 45 failures
+    where every other screen reported 30."""
+    ov = {r["region"]: r["throttling"] for r in api.overview()["regions"]}
+    th = {r["region"]: r["throttling"] for r in api.threshold()["regions"]}
+    mp = {r["region"]: r["throttling"] for r in api.capacity_map()["points"]}
+    for region, seen in ov.items():
+        assert th[region] == seen, region
+        assert mp[region] == seen, region
