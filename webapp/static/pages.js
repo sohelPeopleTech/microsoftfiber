@@ -2251,6 +2251,22 @@ function recCard(r) {
    the account holding the idle capacity, and states plainly that nobody can
    action it on the customer's behalf -- a transfer is the obvious wrong reading
    and the screen has to close it off. */
+/* The scored row for the model actually in use.
+
+   The KPIs beside the chart read scores[0], which is the backtest winner.
+   Where the model is forced -- it is set to sarima for every region here --
+   that is a different model, so northcentralus printed holt_winters' 1.06%
+   error under "Model used: sarima", whose own error is 1.11%. westeurope was
+   worse: it showed theil_sen's positive skill while sarima, the model actually
+   drawing the line on the chart, scores -0.2% and is beaten by assuming
+   nothing changes at all.
+
+   Falls back to the winner only if the model in use was not scored, which
+   should not happen and would be visible in the table if it did. */
+function scoreFor(f) {
+  return (f.scores || []).find((s) => s.model === f.model) || (f.scores || [])[0];
+}
+
 function reclaimEvidence(e) {
   return `
     <div class="reclaim-ev">
@@ -3058,22 +3074,22 @@ PAGES["/forecast"] = async (view) => {
                                  : `not projected within ${d.projectionDays} days`,
               f.crossingDate ? "bad" : "good",
               "First projected day past the safety line. The range comes from the error the model made on data it never saw.")}
-      ${kpi("Forecast error", f.scores.length ? `${f.scores[0].mape.toFixed(2)}%` : "—",
+      ${kpi("Forecast error (MAPE)", f.scores.length ? `${scoreFor(f).mape.toFixed(2)}%` : "—",
             f.scores.length && f.history.length
-              ? `typically ±${(f.scores[0].mape / 100 * f.history[f.history.length - 1].value).toFixed(1)} points out, ${d.horizonDays} days ahead`
+              ? `typically ±${(scoreFor(f).mape / 100 * f.history[f.history.length - 1].value).toFixed(1)} points out, ${d.horizonDays} days ahead`
               : "", "ink",
             `How wrong this model was when tested. It was fitted on part of the history, `
             + `asked to predict the ${d.horizonDays} days it had not seen, and marked against `
-            + `what actually happened — repeated over ${f.scores.length ? f.scores[0].folds : d.folds} `
+            + `what actually happened — repeated over ${f.scores.length ? scoreFor(f).folds : d.folds} `
             + `stretches of the record. Lower is better. Note it is a percentage `
-            + `of the reading, not percentage points: ${f.scores.length ? f.scores[0].mape.toFixed(2) : "—"}% `
+            + `of the reading, not percentage points: ${f.scores.length ? scoreFor(f).mape.toFixed(2) : "—"}% `
             + `of a ${f.history.length ? f.history[f.history.length - 1].value.toFixed(0) : "—"}% `
             + `utilisation reading is about `
-            + `${f.scores.length && f.history.length ? (f.scores[0].mape / 100 * f.history[f.history.length - 1].value).toFixed(1) : "—"} points.`)}
-      ${kpi("Skill vs naive", f.scores.length ? `${f.scores[0].skillVsNaive > 0 ? "+" : ""}${f.scores[0].skillVsNaive.toFixed(0)}%` : "—",
+            + `${f.scores.length && f.history.length ? (scoreFor(f).mape / 100 * f.history[f.history.length - 1].value).toFixed(1) : "—"} points.`)}
+      ${kpi("Skill vs naive", f.scores.length ? `${scoreFor(f).skillVsNaive > 0 ? "+" : ""}${scoreFor(f).skillVsNaive.toFixed(0)}%` : "—",
             f.scores.length
-              ? (f.scores[0].skillVsNaive > 0
-                  ? `${f.scores[0].skillVsNaive.toFixed(0)}% more accurate than assuming nothing changes`
+              ? (scoreFor(f).skillVsNaive > 0
+                  ? `${scoreFor(f).skillVsNaive.toFixed(0)}% more accurate than assuming nothing changes`
                   : `worse than assuming nothing changes`)
               : "", f.beatsNaive ? "good" : "bad",
             `Whether the modelling was worth doing at all. The comparison is against `

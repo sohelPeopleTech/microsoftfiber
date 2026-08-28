@@ -83,3 +83,53 @@ def test_breached_region_trims_to_saturation_not_crossing():
 def test_empty_projection_is_returned_untouched(trim):
     d = _trim_for_plotting({"history": [], "projection": []}, trim=trim)
     assert d["projection"] == []
+
+
+# --------------------------------------------------------------------------
+# the KPIs must describe the model that is actually drawing the line
+# --------------------------------------------------------------------------
+
+
+def test_the_error_shown_belongs_to_the_model_in_use():
+    """The KPIs read scores[0], which is the backtest winner, not the model used.
+
+    The model is forced to one choice for every region. Where the backtest
+    would have picked something else, the page printed that other model's
+    accuracy: northcentralus showed holt_winters' 1.06% under "Model used:
+    sarima", whose own error is 1.11%.
+
+    westeurope is the case that matters. sarima scores -0.2% against the naive
+    baseline there -- it is beaten by assuming nothing changes -- while
+    theil_sen, the backtest winner, is positive. The page was reporting the
+    winner's skill for a forecast the winner did not produce, so a region where
+    the modelling actively hurt read as a region where it helped.
+    """
+    import sys
+    from pathlib import Path as _P
+
+    sys.path.insert(0, str(_P(__file__).resolve().parents[1] / "webapp"))
+    import api
+
+    js = (_P(__file__).resolve().parents[1] / "webapp" / "static" / "pages.js").read_text()
+    body = js[js.index('kpi("Model used"'):js.index('All ${f.scores.length} models scored')]
+    assert "scores[0]" not in body, (
+        "a forecast KPI still reads scores[0] — that is the backtest winner, "
+        "which is a different model wherever the choice is forced")
+    assert "scoreFor(f)" in body
+
+    forced = []
+    for region in [r["region"] for r in api.overview()["regions"]]:
+        f = api.forecast_one(region)
+        if not f.get("scores"):
+            continue
+        used = f["model"]
+        row = next((s for s in f["scores"] if s["model"] == used), None)
+        assert row is not None, f"{region}: {used} is in use but was never scored"
+        if f["scores"][0]["model"] != used:
+            forced.append((region, used, round(row["mape"], 2),
+                           f["scores"][0]["model"], round(f["scores"][0]["mape"], 2)))
+
+    assert forced, (
+        "no region uses a model other than the backtest winner, so the two "
+        "figures cannot differ here and this test proves nothing — check "
+        "whether the forced-model setting is still in play")
