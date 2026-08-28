@@ -171,11 +171,15 @@ function statusPill(status) {
    capacity it holds has not done anything wrong. The status a reader needs is
    binary and plain -- is this region in risk or not -- with the amount of the
    threshold consumed stated beside it rather than dressed up as a violation. */
+/* In risk, or not. Nothing else.
+   This carried "threshold utilised by 14.2%" underneath, and a count of
+   capacities refusing work was later stacked under that, which left one cell
+   holding three separate facts and rows four lines tall. The column answers one
+   question and now says only its answer; the other two facts have columns of
+   their own. */
 function thresholdPill(r) {
   return r.at_risk
-    ? `<span class="pill bad">In risk</span>
-       <span style="font-size:.74rem;color:var(--ink-3);display:block;margin-top:.15rem">
-         threshold utilised by ${r.threshold_used_pct.toFixed(1)}%</span>`
+    ? `<span class="pill bad">In risk</span>`
     : `<span class="pill good">Not in risk</span>`;
 }
 

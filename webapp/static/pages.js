@@ -1596,6 +1596,12 @@ PAGES["/regions"] = async (view) => {
       { key: "util", label: "Utilisation", get: (r) => r.current_utilisation_pct, numeric: true },
       { key: "thr", label: "Threshold", get: (r) => r.threshold_pct, numeric: true },
       { key: "status", label: "Threshold status", get: (r) => (r.at_risk ? 1 : 0), numeric: true },
+      // Its own column rather than a third line under the status. The two
+      // answer different questions -- is there room to grant more here, and is
+      // anybody being refused right now -- and stacking them made one cell
+      // four lines tall while implying they were one reading.
+      { key: "refusing", label: "Refusing work",
+        get: (r) => (r.throttling || {}).throttling ?? 0, numeric: true },
       { key: "pending", label: "CU pending", get: (r) => r.cores_pending, numeric: true },
       { key: "exposure", label: "Revenue loss",
         get: (r) => (exposureByRegion[r.region] || {}).exposure ?? 0, numeric: true },
@@ -1623,7 +1629,8 @@ PAGES["/regions"] = async (view) => {
           <td class="n">${num(Math.round(r.used_units))}</td>
           <td class="n"><b style="color:${r.at_risk ? "var(--bad)" : "inherit"}">${pct(r.current_utilisation_pct, 1)}</b></td>
           <td class="n">${pct(r.threshold_pct, 0)}</td>
-          <td>${thresholdPill(r)}<br>${refusingNow(r.throttling)}</td>
+          <td>${thresholdPill(r)}</td>
+          <td>${refusingCell(r.throttling)}</td>
           <td class="n">${r.cores_pending ? `<b>${num(Math.round(r.cores_pending))}</b>` : "—"}</td>
           <td class="n">${money(e.exposure)}</td>
           <td class="n">${r.customers_waiting || "—"}</td>
@@ -2199,6 +2206,20 @@ PAGES["/actions"] = async (view) => {
    was computed, shown on the capacity pages, and absent from every screen above
    them. So it is stated here, next to the status rather than instead of it,
    because both are true and they answer to different people. */
+/* The same figure as refusingNow, sized for a column of its own rather than a
+   line under something else: the count leads, the operations sit under it. */
+function refusingCell(t) {
+  if (!t || !t.capacities) return `<span class="t3">—</span>`;
+  if (!t.throttling) return `<span class="t3">none</span>`;
+  const severe = t.worstStage === "background_rejection"
+    || t.worstStage === "interactive_rejection";
+  return `<b class="${severe ? "t-bad" : "t-warn"}">${num(t.throttling)}</b>
+    <span class="t3">of ${num(t.capacities)}</span>
+    ${t.operationsRefused
+      ? `<br><span class="t3" style="font-size:.72rem">${num(t.operationsRefused)} turned away</span>`
+      : ""}`;
+}
+
 function refusingNow(t) {
   if (!t || !t.capacities) return "";
   if (!t.throttling) {
