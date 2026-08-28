@@ -216,3 +216,30 @@ def test_the_pages_match_on_status_strings_the_engine_actually_emits():
     assert not unknown, (
         f"pages.js compares status against {unknown}, which module1 never "
         f"emits. It emits {sorted(emitted)}")
+
+
+def test_every_threshold_state_has_a_label_a_reader_can_act_on():
+    """`due_now` rendered as "due now" against an act-by date three weeks out.
+
+    The state widened when the hardware lead time became a decision window --
+    it now means "falls inside this review cycle", up to thirty days -- and the
+    word did not widen with it. Any state module 1 emits and the shell does not
+    name falls back to the raw key with its underscore removed, which is how
+    that happened.
+    """
+    import sys
+    from pathlib import Path as _P
+
+    sys.path.insert(0, str(ROOT / "src"))
+    from module1 import threshold
+
+    shell = (ROOT / "webapp" / "static" / "shell.js").read_text()
+    labelled = set(re.findall(r"^\s{2}([a-z_]+):\s*\"", 
+                              shell[shell.index("const STATUS_LABEL"):
+                                    shell.index("function statusPill")], re.M))
+    emitted = {v for k, v in vars(threshold).items()
+               if k.startswith("STATUS_") and isinstance(v, str)}
+    missing = sorted(emitted - labelled)
+    assert not missing, (
+        f"module 1 emits {missing} and shell.js gives them no label, so they "
+        f"reach the screen as the raw key")

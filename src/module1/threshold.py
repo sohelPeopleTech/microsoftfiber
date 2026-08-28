@@ -249,9 +249,10 @@ def project_region(
     if until < 0:
         status = STATUS_OVERDUE
         reason = (
-            f"projected to hit {threshold_pct:.0f}% on {cross.isoformat()} "
-            f"({days_to_cross:.0f} days), inside the {window}-day decision "
-            f"window -- this needed deciding {abs(until)} days ago."
+            f"the region's utilisation is projected to reach "
+            f"{threshold_pct:.0f}% on {cross.isoformat()} ({days_to_cross:.0f} "
+            f"days), inside the {window}-day decision window -- this needed "
+            f"deciding {abs(until)} days ago."
         )
     elif until <= grace_days:
         status = STATUS_DUE
@@ -259,16 +260,18 @@ def project_region(
         # It named the decision window instead, which put "inside the 7-day
         # decision window" against a region crossing in 28 days.
         reason = (
-            f"projected to hit {threshold_pct:.0f}% on {cross.isoformat()} "
-            f"({days_to_cross:.0f} days); allowing {window} days to decide, "
-            f"that falls in this review cycle -- settle it by {order.isoformat()}."
+            f"the region's utilisation is projected to reach "
+            f"{threshold_pct:.0f}% on {cross.isoformat()} ({days_to_cross:.0f} "
+            f"days); allowing {window} days to decide, settle it by "
+            f"{order.isoformat()}, {until} days from now."
         )
     else:
         status = STATUS_APPROACHING
         reason = (
-            f"projected to hit {threshold_pct:.0f}% on {cross.isoformat()}; "
-            f"allowing {window} days to decide, settle it by "
-            f"{order.isoformat()} -- {until} days away."
+            f"the region's utilisation is projected to reach "
+            f"{threshold_pct:.0f}% on {cross.isoformat()}; allowing {window} "
+            f"days to decide, settle it by {order.isoformat()} -- {until} days "
+            f"away."
         )
 
     return flag(

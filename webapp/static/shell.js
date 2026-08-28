@@ -146,9 +146,25 @@ function panel(heading, inner, { hint = "", flush = false } = {}) {
 
 /* Status -> pill class. Shared because Overview, Regions and Actions all show
    the same Module 1 status and must not disagree about what red means. */
+/* What each threshold state is called on screen.
+   `due_now` needed one: the state means "the decision falls inside this review
+   cycle", which is up to thirty days out, and the label read "due now" against
+   a region whose act-by date was three weeks away. The state widened when the
+   hardware lead time was replaced by a decision window; the word did not go
+   with it. The key stays `due_now` because the data and the tests are built on
+   it -- only what a reader sees changes. */
+const STATUS_LABEL = {
+  breached: "past its line",
+  overdue: "overdue",
+  due_now: "decide this cycle",
+  due_soon: "decide this cycle",
+  approaching: "approaching",
+  stable: "stable",
+};
+
 function statusPill(status) {
   const tone = { breached: "bad", overdue: "bad", due_now: "warn", due_soon: "warn" }[status] || "good";
-  return `<span class="pill ${tone}">${esc(words(status))}</span>`;
+  return `<span class="pill ${tone}">${esc(STATUS_LABEL[status] || words(status))}</span>`;
 }
 
 /* Review rejected "breached": a breach reads as a fault, and a region using the

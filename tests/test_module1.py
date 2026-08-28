@@ -238,3 +238,40 @@ def test_a_flag_names_the_rule_that_actually_fired(onto):
                 f"outside its {f.decision_window_days}-day decision window, but the "
                 f"reason claims it is inside it: {f.reason!r}")
         assert f.days_until_action <= DEFAULT_REVIEW_DAYS
+
+
+def test_a_flag_states_how_far_off_the_decision_is(onto):
+    """"Due now" against a date three weeks away is not a date problem, it is a
+    wording one, and it was on screen.
+
+    The state means "the decision falls inside this review cycle", which is up
+    to thirty days. So every flag that names an act-by date also says how many
+    days away it is, and the reader is not left to subtract two dates from an
+    as-of they cannot see.
+    """
+    for region in onto["dim_region"]["Region"]:
+        f = project_region(onto, region)
+        if f.status != STATUS_DUE or f.days_until_action is None:
+            continue
+        assert f.act_by_date and f.act_by_date in f.reason
+        assert f"{int(f.days_until_action)} days from now" in f.reason, (
+            f"{region}: names {f.act_by_date} without saying it is "
+            f"{int(f.days_until_action)} days away — {f.reason!r}")
+
+
+def test_the_forecast_says_it_is_about_the_region_not_about_who_is_refused(onto):
+    """The reason sits in a table beside a count of capacities refusing work.
+
+    westeurope is projected to reach its line on 2026-02-25 and is refusing
+    1,481 operations today. Both are true -- the forecast is about the region's
+    average and the refusals are about individual capacities, which cannot
+    borrow Capacity Units from each other -- but a sentence reading "projected
+    to hit 90% on 2026-02-25" next to "11 of 24 refusing work" reads as a
+    contradiction unless it says what it is forecasting.
+    """
+    for region in onto["dim_region"]["Region"]:
+        f = project_region(onto, region)
+        if f.status in (STATUS_STABLE, STATUS_BREACHED):
+            continue
+        assert "region's utilisation" in f.reason, (
+            f"{region} forecasts without naming what it forecasts: {f.reason!r}")
