@@ -75,7 +75,7 @@ def scale_up(onto, window_days: int = 30) -> list[Recommendation]:
             headline = (f"Scale {c.CapacityId} to {step} — throttling on "
                         f"{c.ThrottledDays} of the last {c.WindowDays} days")
             detail = (
-                f"This capacity reached <b>{stage}</b>. At its worst it was "
+                f"This capacity reached {stage}. At its worst it was "
                 f"{c.PeakFutureMinutes:.0f} minutes into future capacity, and "
                 f"{'it refused ' + format(rejected, ',') + ' operations' if rejected else 'no operations were refused yet'}. "
                 f"Fabric only absorbs ten minutes of overage before it starts "
@@ -178,7 +178,7 @@ def load_balance(onto, window_days: int = 30) -> list[Recommendation]:
             headline=(f"Move {top['WorkspaceName']} off {c.CapacityId} — one "
                       f"workspace is {top['ShareOfCapacityPct']:.0f}% of it"),
             detail=(
-                f"{c.CapacityId} threw <b>{STAGE_LABEL.get(c.WorstStage, c.WorstStage)}</b> "
+                f"{c.CapacityId} threw {STAGE_LABEL.get(c.WorstStage, c.WorstStage)} "
                 f"on {c.ThrottledDays} of {c.WindowDays} days, and one workspace "
                 f"— {top['WorkspaceName']}, running {top['PrimaryWorkload']} — "
                 f"accounts for {top['ShareOfCapacityPct']:.0f}% of what it "

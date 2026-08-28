@@ -267,3 +267,23 @@ def test_no_azure_hardware_vocabulary_survives(onto):
         assert not hit, (
             f"{r['target']} uses the Azure vocabulary {hit.group(0)!r}: "
             f"...{text[max(0, hit.start() - 50):hit.end() + 50]}...")
+
+
+def test_no_recommendation_smuggles_markup_into_its_text(onto):
+    """`detail` and `headline` are rendered by three separate templates and all
+    three escape them, so a <b> placed here for emphasis arrives on screen as
+    the literal characters in front of the words it was meant to emphasise.
+
+    It shipped that way: "This capacity reached <b>background rejection</b>."
+    Emphasis belongs to the renderer, which knows whether it is drawing HTML, a
+    plain-text card or a prompt for the assistant.
+    """
+    import re
+
+    tag = re.compile(r"</?[a-zA-Z][^>]*>")
+    for r in recommend.all_recommendations(onto):
+        for field in ("headline", "detail"):
+            hit = tag.search(r[field])
+            assert not hit, (
+                f"{r['target']} {field} contains markup {hit.group(0)!r}, which "
+                f"every renderer escapes: ...{r[field][max(0, hit.start()-40):hit.end()+40]}...")

@@ -90,6 +90,10 @@ class Recommendation:
     scope: str
     target: str
     headline: str
+    #: Plain text, never markup. Three separate templates render this and all
+    #: three escape it, so a <b> put here for emphasis reached the screen as the
+    #: literal characters in front of the words it was meant to emphasise.
+    #: Emphasis is the renderer's job; this field is the sentence.
     detail: str
     urgency: float
     evidence: dict = field(default_factory=dict)
