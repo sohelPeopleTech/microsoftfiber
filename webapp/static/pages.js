@@ -1529,8 +1529,6 @@ PAGES["/regions"] = async (view) => {
     ],
     words: [
       { term: "Threshold status", means: "Whether the region is <b>in risk</b> — utilisation has moved past its safety threshold — or not. It is a state, not a fault: a region using the capacity it holds has done nothing wrong." },
-      { term: "Refusing work now", means: "How many capacities in the region are actually turning operations away today. This is <b>not</b> the same question as the threshold beside it, and a region can be comfortable on one and severe on the other: <b>Capacity Units do not pool</b>, so an F8 running at 182% cannot borrow anything from an F32 running at 33% in the same region. The threshold asks whether there is room to grant more capacity here; this asks whether anybody is being refused right now." },
-      { term: "Threshold utilised by", means: "How far past the safety threshold utilisation has reached, in percentage points. At an 85% threshold and 97.2% utilisation, the threshold has been utilised by 12.2%." },
       { term: "CU pending", means: "Capacity requested by customers and not yet delivered. This is what the region owes, not how many tickets failed \u2014 one ticket can be worth hundreds of CU." },
       { term: "Why there is no hardware here", means: "Fabric is a SaaS platform \u2014 a customer never sees a server. What sits under a region is Fabric <b>capacities</b>, each with an F-SKU and a number of Capacity Units, and those are on the Fleet map and the data-centre pages. There is nothing to take offline and nothing to provision." },
     ],
@@ -1596,12 +1594,6 @@ PAGES["/regions"] = async (view) => {
       { key: "util", label: "Utilisation", get: (r) => r.current_utilisation_pct, numeric: true },
       { key: "thr", label: "Threshold", get: (r) => r.threshold_pct, numeric: true },
       { key: "status", label: "Threshold status", get: (r) => (r.at_risk ? 1 : 0), numeric: true },
-      // Its own column rather than a third line under the status. The two
-      // answer different questions -- is there room to grant more here, and is
-      // anybody being refused right now -- and stacking them made one cell
-      // four lines tall while implying they were one reading.
-      { key: "refusing", label: "Refusing work",
-        get: (r) => (r.throttling || {}).throttling ?? 0, numeric: true },
       { key: "pending", label: "CU pending", get: (r) => r.cores_pending, numeric: true },
       { key: "exposure", label: "Revenue loss",
         get: (r) => (exposureByRegion[r.region] || {}).exposure ?? 0, numeric: true },
@@ -1630,7 +1622,6 @@ PAGES["/regions"] = async (view) => {
           <td class="n"><b style="color:${r.at_risk ? "var(--bad)" : "inherit"}">${pct(r.current_utilisation_pct, 1)}</b></td>
           <td class="n">${pct(r.threshold_pct, 0)}</td>
           <td>${thresholdPill(r)}</td>
-          <td>${refusingCell(r.throttling)}</td>
           <td class="n">${r.cores_pending ? `<b>${num(Math.round(r.cores_pending))}</b>` : "—"}</td>
           <td class="n">${money(e.exposure)}</td>
           <td class="n">${r.customers_waiting || "—"}</td>
@@ -2206,20 +2197,6 @@ PAGES["/actions"] = async (view) => {
    was computed, shown on the capacity pages, and absent from every screen above
    them. So it is stated here, next to the status rather than instead of it,
    because both are true and they answer to different people. */
-/* The same figure as refusingNow, sized for a column of its own rather than a
-   line under something else: the count leads, the operations sit under it. */
-function refusingCell(t) {
-  if (!t || !t.capacities) return `<span class="t3">—</span>`;
-  if (!t.throttling) return `<span class="t3">none</span>`;
-  const severe = t.worstStage === "background_rejection"
-    || t.worstStage === "interactive_rejection";
-  return `<b class="${severe ? "t-bad" : "t-warn"}">${num(t.throttling)}</b>
-    <span class="t3">of ${num(t.capacities)}</span>
-    ${t.operationsRefused
-      ? `<br><span class="t3" style="font-size:.72rem">${num(t.operationsRefused)} turned away</span>`
-      : ""}`;
-}
-
 function refusingNow(t) {
   if (!t || !t.capacities) return "";
   if (!t.throttling) {
