@@ -46,7 +46,7 @@ ENTITIES = {
 
 
 @dataclass
-class Ontology:
+class DimensionalModel:
     tables: dict
     issues: list
 
@@ -70,7 +70,7 @@ def _synth(synthetic_dir: str | Path, name: str) -> pd.DataFrame:
             return pd.read_csv(gz)
     if not path.exists():
         raise FileNotFoundError(
-            f"{path} missing -- run synthdata.generate first, or the ontology "
+            f"{path} missing -- run synthdata.generate first, or the dimensional model "
             f"will be built with holes rather than failing loudly."
         )
     return pd.read_csv(path)
@@ -448,7 +448,7 @@ def build(
     ticket_source: str | Path = "data/Synthetic_ICM_Capacity_Data.xlsx",
     synthetic_dir: str | Path = "data/synthetic",
     reference_dir: str | Path = "data/reference",
-) -> Ontology:
+) -> DimensionalModel:
     """Build every entity and check the joins hold."""
     gold, _ = ingest.load_gold(ticket_source)
     tickets = gold
@@ -516,7 +516,7 @@ def build(
     fact["DenialReason"] = attribution.assign_denial_reason(
         fact, fact.attrs.get("failed_mask", fact["DeniedDate"].notna()), capacity)
 
-    return Ontology(tables=tables, issues=validate(tables))
+    return DimensionalModel(tables=tables, issues=validate(tables))
 
 
 def validate(tables: dict) -> list[str]:

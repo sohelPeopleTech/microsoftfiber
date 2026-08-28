@@ -93,7 +93,7 @@ credible estimate becomes a number nobody trusts.
 
 ```
 src/module5/       the module (pure pandas; the LLM call over stdlib urllib)
-src/module1..6/    the other modules, all views over src/ontology/
+src/module1..6/    the other modules, all views over src/dimensional/
 src/propensity/    request-failure risk, scored at arrival
 webapp/            the application -- FastAPI + vanilla JS, no build step
 tests/             302 tests, ~4s

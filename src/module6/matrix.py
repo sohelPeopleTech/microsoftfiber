@@ -38,15 +38,15 @@ class Availability:
         return asdict(self)
 
 
-def availability_matrix(onto) -> pd.DataFrame:
+def availability_matrix(entities) -> pd.DataFrame:
     """Feature x region, wide -- the shape a person reads."""
-    bridge = onto["bridge_feature_region"]
+    bridge = entities["bridge_feature_region"]
     wide = bridge.pivot(index="Feature", columns="Region", values="Status")
     return wide.sort_index()
 
 
 def is_available(
-    onto,
+    entities,
     feature: str,
     region: str,
     minimum: str = DEFAULT_MINIMUM,
@@ -57,7 +57,7 @@ def is_available(
     answering "no" to a typo is how someone concludes a feature is missing when
     it is only misspelled.
     """
-    bridge = onto["bridge_feature_region"]
+    bridge = entities["bridge_feature_region"]
     known_features = set(bridge["Feature"])
     known_regions = set(bridge["Region"])
 
@@ -96,7 +96,7 @@ def is_available(
 
 
 def check_expansion(
-    onto,
+    entities,
     region: str,
     features: list[str] | None = None,
     minimum: str = DEFAULT_MINIMUM,
@@ -107,9 +107,9 @@ def check_expansion(
     that region cannot yet do. A recommendation that ignores it can be
     technically correct and still wrong.
     """
-    bridge = onto["bridge_feature_region"]
+    bridge = entities["bridge_feature_region"]
     features = features or sorted(bridge["Feature"].unique())
-    results = [is_available(onto, f, region, minimum) for f in features]
+    results = [is_available(entities, f, region, minimum) for f in features]
 
     missing = [r for r in results if not r.available]
     return {
@@ -129,9 +129,9 @@ def check_expansion(
     }
 
 
-def region_summary(onto, minimum: str = DEFAULT_MINIMUM) -> pd.DataFrame:
+def region_summary(entities, minimum: str = DEFAULT_MINIMUM) -> pd.DataFrame:
     """How complete each region is -- the ranking an expansion decision needs."""
-    bridge = onto["bridge_feature_region"].copy()
+    bridge = entities["bridge_feature_region"].copy()
     bridge["Rank"] = bridge["Status"].map(RANK)
     threshold = RANK[minimum]
 
@@ -151,9 +151,9 @@ def region_summary(onto, minimum: str = DEFAULT_MINIMUM) -> pd.DataFrame:
     return out.sort_values(["CoveragePct", "Region"], ascending=[False, True]).reset_index(drop=True)
 
 
-def feature_summary(onto) -> pd.DataFrame:
+def feature_summary(entities) -> pd.DataFrame:
     """How far each feature has rolled out -- the view a product owner wants."""
-    bridge = onto["bridge_feature_region"].copy()
+    bridge = entities["bridge_feature_region"].copy()
     out = (
         bridge.groupby("Feature")
         .agg(

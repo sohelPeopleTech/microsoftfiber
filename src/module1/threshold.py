@@ -119,7 +119,7 @@ def _fit_trend(series: pd.DataFrame, trend_days: int) -> tuple[float, float]:
 
 
 def project_region(
-    onto,
+    entities,
     region: str,
     as_of: date | None = None,
     threshold_pct: float | None = None,
@@ -149,12 +149,12 @@ def project_region(
     the backtested winner in and this module derives the order-by date from it.
     The local fit remains the fallback, so module 1 still stands alone.
     """
-    usage = onto["fact_usage_daily"]
+    usage = entities["fact_usage_daily"]
     series = usage[usage["Region"] == region].sort_values("Date")
     if series.empty:
         raise KeyError(f"no usage history for region {region!r}")
 
-    dim = onto["dim_region"].set_index("Region")
+    dim = entities["dim_region"].set_index("Region")
     if region not in dim.index:
         raise KeyError(f"unknown region {region!r}")
     meta = dim.loc[region]
@@ -164,7 +164,7 @@ def project_region(
     window = int(decision_window_days)
 
     # The region's own line unless one was forced on it. Falls back to the
-    # policy default only if the ontology has no threshold for this region,
+    # policy default only if the dimensional model has no threshold for this region,
     # which would mean the table was built by an older path.
     if threshold_pct is None:
         own = meta.get("ThresholdPct")
@@ -284,7 +284,7 @@ def project_region(
     )
 
 
-def project_all(onto, **kwargs) -> pd.DataFrame:
+def project_all(entities, **kwargs) -> pd.DataFrame:
     """Every region, ordered by urgency rather than by utilisation.
 
     Sorting by days-until-action rather than by current usage still matters --
@@ -300,8 +300,8 @@ def project_all(onto, **kwargs) -> pd.DataFrame:
     that is on the fleet map, in the recommendations, and in the risk score.
     """
     rows = [
-        project_region(onto, region, **kwargs).to_dict()
-        for region in sorted(onto["dim_region"]["Region"])
+        project_region(entities, region, **kwargs).to_dict()
+        for region in sorted(entities["dim_region"]["Region"])
     ]
     df = pd.DataFrame(rows)
     if df.empty:
@@ -320,9 +320,9 @@ def project_all(onto, **kwargs) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def due_requests(onto, **kwargs) -> pd.DataFrame:
+def due_requests(entities, **kwargs) -> pd.DataFrame:
     """Only what needs a decision now -- the approval queue, not the dashboard."""
-    everything = project_all(onto, **kwargs)
+    everything = project_all(entities, **kwargs)
     if everything.empty:
         return everything
     return everything[

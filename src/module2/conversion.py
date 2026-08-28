@@ -136,7 +136,7 @@ def _options(plan_bits: dict) -> list[dict]:
 
 
 def plan_conversion(
-    onto,
+    entities,
     region: str,
     to_sku: str,
     datacentres: int | None = None,
@@ -144,7 +144,7 @@ def plan_conversion(
     safety_margin_pct: float = DEFAULT_SAFETY_MARGIN_PCT,
 ) -> ConversionPlan:
     """Can this region convert, how, and at what cost."""
-    dim = onto["dim_region"].set_index("Region")
+    dim = entities["dim_region"].set_index("Region")
     if region not in dim.index:
         known = ", ".join(sorted(dim.index))
         raise KeyError(f"unknown region {region!r}. Known: {known}")
@@ -156,10 +156,10 @@ def plan_conversion(
         raise ValueError(f"convert_datacentres must be between 1 and {datacentres}")
 
     meta = dim.loc[region]
-    source = sku_from_dim(onto["dim_sku"], str(meta["SKUClass"]))
-    target = sku_from_dim(onto["dim_sku"], to_sku)
+    source = sku_from_dim(entities["dim_sku"], str(meta["SKUClass"]))
+    target = sku_from_dim(entities["dim_sku"], to_sku)
 
-    usage = onto["fact_usage_daily"]
+    usage = entities["fact_usage_daily"]
     latest = usage[usage["Region"] == region].sort_values("Date").tail(1)
     deployed = float(meta["DeployedUnits"])
     used = float(latest["UsedUnits"].iloc[0]) if len(latest) else 0.0

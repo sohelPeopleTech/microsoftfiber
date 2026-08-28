@@ -176,12 +176,12 @@ def convert_same_footprint(
 
 
 # --------------------------------------------------------------------------
-# the ontology-aware wrapper
+# the dimensional-model-aware wrapper
 # --------------------------------------------------------------------------
 
 
 def sku_from_dim(dim_sku, name: str) -> SKU:
-    """Build a SKU from the ontology's dim_sku row."""
+    """Build a SKU from the dimensional model's dim_sku row."""
     match = dim_sku[dim_sku["SKUClass"] == name]
     if match.empty:
         known = ", ".join(sorted(dim_sku["SKUClass"]))
@@ -195,26 +195,26 @@ def sku_from_dim(dim_sku, name: str) -> SKU:
     )
 
 
-def migrate_region(onto, region: str, to_sku: str, mode: str = "same_footprint") -> dict:
+def migrate_region(entities, region: str, to_sku: str, mode: str = "same_footprint") -> dict:
     """What converting a whole region would do, using real deployed units.
 
     Answers the question a Module 5 recommendation raises but cannot itself
     address: instead of raising the approval threshold, could this region serve
     the demand it already has by changing hardware?
     """
-    dim_region = onto["dim_region"]
+    dim_region = entities["dim_region"]
     row = dim_region[dim_region["Region"] == region]
     if row.empty:
         known = ", ".join(sorted(dim_region["Region"]))
         raise KeyError(f"unknown region {region!r}. Known: {known}")
     row = row.iloc[0]
 
-    source = sku_from_dim(onto["dim_sku"], str(row["SKUClass"]))
-    target = sku_from_dim(onto["dim_sku"], to_sku)
+    source = sku_from_dim(entities["dim_sku"], str(row["SKUClass"]))
+    target = sku_from_dim(entities["dim_sku"], to_sku)
     units = float(row["DeployedUnits"])
 
     # What the region is actually carrying right now, in work units.
-    usage = onto["fact_usage_daily"]
+    usage = entities["fact_usage_daily"]
     latest = usage[usage["Region"] == region].sort_values("Date").tail(1)
     used_units = float(latest["UsedUnits"].iloc[0]) if len(latest) else 0.0
     required = used_units * source.relative_performance

@@ -33,7 +33,7 @@ def _period_key(dates: pd.Series, period: str) -> pd.Series:
 
 
 def demand_by_period(
-    onto,
+    entities,
     period: str = "M",
     measure: str = "RequestedUnits",
 ) -> pd.DataFrame:
@@ -43,7 +43,7 @@ def demand_by_period(
     demand, and leaving the row out would make a moving average skip it and
     overstate the level.
     """
-    fact = onto["fact_capacity_request"].copy()
+    fact = entities["fact_capacity_request"].copy()
     # A request is "raised" when it was denied, or approved if never denied.
     fact["When"] = fact["DeniedDate"].fillna(fact["ApprovedDate"])
     fact["Period"] = _period_key(fact["When"], period)
@@ -59,7 +59,7 @@ def demand_by_period(
         .reset_index()
     )
 
-    regions = sorted(onto["dim_region"]["Region"])
+    regions = sorted(entities["dim_region"]["Region"])
     periods = sorted(grouped["Period"].unique())
     full = pd.MultiIndex.from_product([regions, periods], names=["Region", "Period"])
     out = (
@@ -74,9 +74,9 @@ def demand_by_period(
     return out.reset_index(drop=True)
 
 
-def usage_by_period(onto, period: str = "M") -> pd.DataFrame:
+def usage_by_period(entities, period: str = "M") -> pd.DataFrame:
     """Mean utilisation per region per period -- the dense, generated signal."""
-    usage = onto["fact_usage_daily"].copy()
+    usage = entities["fact_usage_daily"].copy()
     usage["Period"] = _period_key(usage["Date"], period)
     out = (
         usage.groupby(["Region", "Period"])

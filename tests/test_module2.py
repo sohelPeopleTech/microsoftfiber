@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-import ontology
+import dimensional
 from module2 import (
     Conversion,
     convert_like_for_like,
@@ -19,8 +19,8 @@ FAST = SKU("Intel-highmem", relative_performance=1.4, relative_cost=1.7, lead_ti
 
 
 @pytest.fixture(scope="module")
-def onto():
-    return ontology.build(WORKBOOK, "data/synthetic")
+def entities():
+    return dimensional.build(WORKBOOK, "data/synthetic")
 
 
 # --- the ratio ------------------------------------------------------------
@@ -114,23 +114,23 @@ def test_summary_reads_like_a_sentence():
     assert "AMD-standard" in text and "Intel-highmem" in text and "45-day" in text
 
 
-# --- against the ontology -------------------------------------------------
+# --- against the dimensional model -------------------------------------------------
 
 
-def test_sku_can_be_read_from_the_ontology(onto):
-    sku = sku_from_dim(onto["dim_sku"], "GPU-class")
+def test_sku_can_be_read_from_the_ontology(entities):
+    sku = sku_from_dim(entities["dim_sku"], "GPU-class")
     assert sku.relative_performance == 2.6
     assert sku.lead_time_days == 30
 
 
-def test_unknown_sku_names_what_is_available(onto):
+def test_unknown_sku_names_what_is_available(entities):
     with pytest.raises(KeyError, match="Known:"):
-        sku_from_dim(onto["dim_sku"], "Quantum-class")
+        sku_from_dim(entities["dim_sku"], "Quantum-class")
 
 
-def test_migrating_a_real_region_uses_its_real_deployment(onto):
-    result = migrate_region(onto, "westeurope", "Intel-highmem")
-    region = onto["dim_region"].set_index("Region").loc["westeurope"]
+def test_migrating_a_real_region_uses_its_real_deployment(entities):
+    result = migrate_region(entities, "westeurope", "Intel-highmem")
+    region = entities["dim_region"].set_index("Region").loc["westeurope"]
     assert result["deployed_units"] == pytest.approx(float(region["DeployedUnits"]))
     assert result["from_sku"] == region["SKUClass"]
     assert result["used_units_now"] > 0
@@ -138,13 +138,13 @@ def test_migrating_a_real_region_uses_its_real_deployment(onto):
     assert result["lead_time_days"] == 45
 
 
-def test_migrating_to_denser_hardware_covers_current_load(onto):
+def test_migrating_to_denser_hardware_covers_current_load(entities):
     """A region running hot should be covered by a denser class."""
-    result = migrate_region(onto, "southcentralus", "GPU-class")
+    result = migrate_region(entities, "southcentralus", "GPU-class")
     assert result["conversion"]["capacity_delta"] > 0
     assert result["conversion"]["covers_requirement"] is True
 
 
-def test_unknown_region_names_what_is_available(onto):
+def test_unknown_region_names_what_is_available(entities):
     with pytest.raises(KeyError, match="Known:"):
-        migrate_region(onto, "marsnorth1", "GPU-class")
+        migrate_region(entities, "marsnorth1", "GPU-class")

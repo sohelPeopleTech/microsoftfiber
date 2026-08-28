@@ -11,25 +11,25 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import ontology
+import dimensional
 import propensity
 from propensity.model import FEATURES, LEAKAGE, build_training_frame, evaluate
 from tests.conftest import WORKBOOK
 
 
 @pytest.fixture(scope="module")
-def onto():
-    return ontology.build(WORKBOOK, "data/synthetic")
+def entities():
+    return dimensional.build(WORKBOOK, "data/synthetic")
 
 
 @pytest.fixture(scope="module")
-def frame(onto):
-    return build_training_frame(onto)
+def frame(entities):
+    return build_training_frame(entities)
 
 
 @pytest.fixture(scope="module")
-def model(onto):
-    return propensity.train(onto)
+def model(entities):
+    return propensity.train(entities)
 
 
 # --- leakage --------------------------------------------------------------
@@ -45,11 +45,11 @@ def test_training_frame_carries_no_outcome_columns(frame):
     assert not leaked, f"outcome columns present: {leaked}"
 
 
-def test_utilisation_never_comes_from_the_future(onto):
+def test_utilisation_never_comes_from_the_future(entities):
     """Region utilisation must be read as-of the request, not after it."""
     from propensity.model import _utilisation_at
 
-    usage = onto["fact_usage_daily"]
+    usage = entities["fact_usage_daily"]
     region = usage["Region"].iloc[0]
     days = sorted(usage[usage["Region"] == region]["Date"])
     mid = pd.Timestamp(days[len(days) // 2])
@@ -79,17 +79,17 @@ def test_a_leaked_feature_would_be_obvious(frame):
 # --- the frame ------------------------------------------------------------
 
 
-def test_every_request_is_scored(onto, frame):
-    assert len(frame) == len(onto["fact_capacity_request"])
+def test_every_request_is_scored(entities, frame):
+    assert len(frame) == len(entities["fact_capacity_request"])
     assert frame[FEATURES].notna().all().all()
 
 
-def test_label_matches_module5(onto, frame):
+def test_label_matches_module5(entities, frame):
     """One definition of failure across the platform, not two."""
     from module5.classifier import classify
     from module5.config import Config
 
-    classified = classify(onto["fact_capacity_request"], Config())
+    classified = classify(entities["fact_capacity_request"], Config())
     assert frame["failed"].sum() == int(classified["IsFlagged"].sum())
 
 
@@ -168,10 +168,10 @@ def test_probabilities_are_probabilities(model, frame):
 
 
 @pytest.fixture(scope="module")
-def simulated(onto):
+def simulated(entities):
     from synthdata import simulate
-    sim = simulate.simulate_requests(onto, n=600)
-    return sim, simulate.as_fact_table(sim, onto)
+    sim = simulate.simulate_requests(entities, n=600)
+    return sim, simulate.as_fact_table(sim, entities)
 
 
 def test_simulation_matches_the_real_marginals(simulated):
@@ -184,11 +184,11 @@ def test_simulation_matches_the_real_marginals(simulated):
     assert 0.15 <= s["never_fulfilled"] / s["rows"] <= 0.27
 
 
-def test_simulation_is_deterministic(onto):
+def test_simulation_is_deterministic(entities):
     from synthdata import simulate
 
-    a = simulate.simulate_requests(onto, n=100)
-    b = simulate.simulate_requests(onto, n=100)
+    a = simulate.simulate_requests(entities, n=100)
+    b = simulate.simulate_requests(entities, n=100)
     pd.testing.assert_frame_equal(a, b)
 
 
@@ -198,22 +198,22 @@ def test_simulated_rows_are_tagged(simulated):
     assert sim["Provenance"].str.startswith("SIMULATED").all()
 
 
-def test_the_model_finds_signal_when_signal_exists(onto, simulated):
+def test_the_model_finds_signal_when_signal_exists(entities, simulated):
     """The point of the simulation: prove the machinery works, given signal."""
     _, fact = simulated
-    frame = build_training_frame(onto, fact=fact)
+    frame = build_training_frame(entities, fact=fact)
     m = evaluate(frame)
     assert m["better_than_chance"] is True
     assert m["verdict"] == "usable"
     assert m["cv_auc"] > 0.6
 
 
-def test_the_estimate_tracks_the_true_probability(onto, simulated):
+def test_the_estimate_tracks_the_true_probability(entities, simulated):
     """Only a simulation can check this -- real data has no answer key."""
     from propensity.model import _make_pipeline
 
     sim, fact = simulated
-    frame = build_training_frame(onto, fact=fact)
+    frame = build_training_frame(entities, fact=fact)
     pipe = _make_pipeline()
     pipe.fit(frame[FEATURES], frame["failed"])
     predicted = pipe.predict_proba(frame[FEATURES])[:, 1]
@@ -222,17 +222,17 @@ def test_the_estimate_tracks_the_true_probability(onto, simulated):
     assert np.corrcoef(predicted, truth)[0, 1] > 0.3
 
 
-def test_the_ground_truth_never_becomes_a_feature(onto, simulated):
+def test_the_ground_truth_never_becomes_a_feature(entities, simulated):
     """TrueFailureProb is the answer key. It must not reach the model."""
     _, fact = simulated
-    frame = build_training_frame(onto, fact=fact)
+    frame = build_training_frame(entities, fact=fact)
     assert "TrueFailureProb" not in frame.columns
     assert "SimPressure" not in frame.columns
     assert not (set(frame.columns) & LEAKAGE)
 
 
-def test_simulated_and_real_go_through_the_same_feature_code(onto, simulated):
+def test_simulated_and_real_go_through_the_same_feature_code(entities, simulated):
     _, fact = simulated
-    a = build_training_frame(onto)
-    b = build_training_frame(onto, fact=fact)
+    a = build_training_frame(entities)
+    b = build_training_frame(entities, fact=fact)
     assert list(a.columns) == list(b.columns)

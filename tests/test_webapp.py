@@ -323,10 +323,10 @@ def test_every_ticket_is_attributed_to_a_datacentre_in_its_own_region():
     """Region -> data centre -> ticket is the drill-down an engineer works in.
     A ticket attributed to a data centre in the wrong region would make the
     region totals and the data-centre totals disagree."""
-    import ontology
+    import dimensional
 
-    onto = ontology.build()
-    fact, dim = onto["fact_capacity_request"], onto["dim_datacentre"]
+    entities = dimensional.build()
+    fact, dim = entities["fact_capacity_request"], entities["dim_datacentre"]
     by_dc = dict(zip(dim["DatacentreId"], dim["Region"], strict=True))
 
     assert fact["DatacentreId"].notna().all(), "every ticket needs a data centre"
@@ -338,11 +338,11 @@ def test_attribution_is_deterministic():
     """Both new columns are derived, not stored. If they moved between runs, a
     figure quoted in a review would stop being true the next morning -- the
     same defect that forced the reporting pack to be rebuilt."""
-    import ontology
+    import dimensional
 
     signatures = set()
     for _ in range(3):
-        o = ontology.build()
+        o = dimensional.build()
         f = o["fact_capacity_request"].sort_values("IncidentId")
         signatures.add((tuple(f["DatacentreId"]), tuple(f["DenialReason"])))
     assert len(signatures) == 1
@@ -350,9 +350,9 @@ def test_attribution_is_deterministic():
 
 def test_a_reason_is_recorded_for_every_refusal_and_nothing_else():
     """A reason on a request that was never refused invites someone to count it."""
-    import ontology
+    import dimensional
 
-    fact = ontology.build()["fact_capacity_request"]
+    fact = dimensional.build()["fact_capacity_request"]
     refused = fact["DeniedDate"].notna()
     has_reason = fact["DenialReason"].astype(str) != ""
 
@@ -360,7 +360,7 @@ def test_a_reason_is_recorded_for_every_refusal_and_nothing_else():
     assert has_reason.sum() > 0
     # The unknown bucket must actually contain something, or the human-review
     # path cannot be shown to exist.
-    from ontology.attribution import UNKNOWN_REASON
+    from dimensional.attribution import UNKNOWN_REASON
     assert (fact["DenialReason"] == UNKNOWN_REASON).sum() >= 1
 
 
@@ -501,9 +501,9 @@ def test_an_unknown_datacentre_is_a_404():
 def test_datacentre_detail_tickets_belong_to_that_site():
     """A ticket appearing under the wrong site would make the site totals and
     the region totals disagree."""
-    import ontology
+    import dimensional
 
-    fact = ontology.build()["fact_capacity_request"]
+    fact = dimensional.build()["fact_capacity_request"]
     for row in api.datacentres()["datacentres"][:5]:
         d = api.datacentre_detail(row["datacentre"])
         expected = set(fact[fact["DatacentreId"] == row["datacentre"]]["IncidentId"].astype(str))
@@ -563,14 +563,14 @@ def test_methodology_publishes_the_weights_the_run_used():
 
 def test_every_ticket_row_carries_its_site_and_reason():
     """Module 5 loads tickets through its own ingest path, which never sees the
-    two columns the ontology adds. Reading them off that frame with getattr
+    two columns the dimensional model adds. Reading them off that frame with getattr
     silently produced "" for every row -- the Data centre column rendered blank
     and every Reason showed a dash, while the panel directly above the table
     listed the same reasons correctly.
     """
-    import ontology
+    import dimensional
 
-    fact = ontology.build()["fact_capacity_request"]
+    fact = dimensional.build()["fact_capacity_request"]
     expected = {
         str(r.IncidentId): (str(r.DatacentreId), str(r.DenialReason or ""))
         for r in fact.itertuples()
@@ -663,9 +663,9 @@ def test_the_calculator_and_the_recommendation_engines_never_disagree():
     """
     from planning import recommend
 
-    onto = api.get_ontology()
-    wants_up = {r.target for r in recommend.scale_up(onto)}
-    wants_down = {r.target for r in recommend.scale_down(onto)}
+    entities = api.get_entities()
+    wants_up = {r.target for r in recommend.scale_up(entities)}
+    wants_down = {r.target for r in recommend.scale_down(entities)}
     ladder = api.scale_options_index()["skuLadder"]
 
     for c in api.scale_options_index()["capacities"]:
@@ -754,12 +754,12 @@ def test_every_site_in_the_region_is_listed():
     A data centre over its line with nothing yet failed is precisely the case
     worth seeing, because it is the one still cheap to fix.
     """
-    onto = api.get_ontology()
+    entities = api.get_entities()
     for region in api.overview()["regions"]:
         name = region["region"]
         listed = {x["datacentre"] for x in api.region_detail(name)["datacentres"]}
-        expected = set(onto["dim_datacentre"]
-                       .loc[onto["dim_datacentre"]["Region"] == name, "DatacentreId"]
+        expected = set(entities["dim_datacentre"]
+                       .loc[entities["dim_datacentre"]["Region"] == name, "DatacentreId"]
                        .astype(str))
         assert listed == expected, f"{name}: {expected - listed} missing from the table"
 
@@ -987,7 +987,7 @@ def test_recommendations_are_computed_not_canned():
     produce a sentence containing that facility's own numbers, and two
     different sites with the same cause must not read identically.
     """
-    from ontology import attribution
+    from dimensional import attribution
 
     canned = {m.get("action", "") for m in attribution.REASONS.values()}
     by_reason: dict[str, set] = {}
@@ -1067,9 +1067,9 @@ def test_a_denial_reason_never_contradicts_the_sites_own_capacity():
     engine then computed threshold arithmetic for sites nowhere near their
     threshold. It is now derived from the site's actual position.
     """
-    import ontology
+    import dimensional
 
-    o = ontology.build()
+    o = dimensional.build()
     fact = o["fact_capacity_request"]
     sites = o["dim_datacentre"].set_index("DatacentreId")
 
@@ -1243,8 +1243,8 @@ def test_the_evidence_behind_a_score_is_always_reported():
 def test_the_prior_is_the_measured_fleet_rate_not_a_guess():
     """Shrinking toward a hardcoded number would be a different assumption
     smuggled in. It must be the same measurement the entities are compared with."""
-    onto = api.get_ontology()
-    fact = onto["fact_capacity_request"]
+    entities = api.get_entities()
+    fact = entities["fact_capacity_request"]
     expected = len(api._failed_rows(fact)) / len(fact)
     assert api._fleet_failure_rate() == pytest.approx(expected)
     for row in api.datacentres()["datacentres"]:
@@ -1413,9 +1413,9 @@ def test_each_region_is_judged_against_its_own_threshold():
 def test_a_region_threshold_matches_the_sites_it_is_made_of():
     """The region's line is the capacity-weighted mean of its facilities', so a
     region cannot advertise a safety line its buildings are not holding."""
-    onto = api.get_ontology()
-    sites = onto["dim_datacentre"]
-    for r in onto["dim_region"].itertuples():
+    entities = api.get_entities()
+    sites = entities["dim_datacentre"]
+    for r in entities["dim_region"].itertuples():
         here = sites[sites["Region"] == r.Region]
         expected = ((here["DeployedUnits"] * here["ThresholdPct"]).sum()
                     / here["DeployedUnits"].sum())
@@ -1444,9 +1444,9 @@ def test_demand_spikes_are_attributed_to_a_recorded_event_not_inferred():
     """Review asked for the spikes to be highlighted and explained. The link
     comes from the event record itself, so a month is only called deal-driven
     when an event names the incident in it."""
-    onto = api.get_ontology()
-    linked = {str(i) for i in onto["fact_event"]["LinkedIncidentId"].dropna()}
-    for region in sorted(onto["dim_region"]["Region"]):
+    entities = api.get_entities()
+    linked = {str(i) for i in entities["fact_event"]["LinkedIncidentId"].dropna()}
+    for region in sorted(entities["dim_region"]["Region"]):
         d = api.demand_region(region)
         for month in d["demand"]:
             assert month["eventDriven"] == bool(month["events"]), region
@@ -1459,7 +1459,7 @@ def test_demand_spikes_are_attributed_to_a_recorded_event_not_inferred():
 def test_the_demand_baseline_excludes_the_spikes_it_measures():
     """Taking the median of every month would let a signed deal raise the very
     line it is supposed to stand out from."""
-    for region in sorted(api.get_ontology()["dim_region"]["Region"]):
+    for region in sorted(api.get_entities()["dim_region"]["Region"]):
         d = api.demand_region(region)
         spikes = [m for m in d["demand"] if m["eventDriven"]]
         if spikes and len(d["demand"]) > len(spikes):
@@ -1477,7 +1477,7 @@ def test_a_site_reports_its_own_demand_and_defers_on_utilisation():
 
 
 def test_the_threshold_series_is_measured_against_the_regions_own_line():
-    for region in sorted(api.get_ontology()["dim_region"]["Region"]):
+    for region in sorted(api.get_entities()["dim_region"]["Region"]):
         d = api.demand_region(region)
         own = api._region_threshold(region)
         assert d["thresholdPct"] == pytest.approx(own)
@@ -1496,9 +1496,9 @@ def test_customer_history_never_moves_a_reported_figure():
     assert k["exposure"] == pytest.approx(146470.16)
     assert k["customers"] == 15
 
-    onto = api.get_ontology()
-    demand = onto["fact_customer_demand_monthly"]
-    assert len(demand) > len(onto["fact_capacity_request"])
+    entities = api.get_entities()
+    demand = entities["fact_customer_demand_monthly"]
+    assert len(demand) > len(entities["fact_capacity_request"])
     assert "fact_customer_demand_monthly" not in {"fact_capacity_request"}
 
 
@@ -1506,14 +1506,14 @@ def test_real_customer_months_beat_the_generated_ones():
     """Where the extract has an answer, the extract wins."""
     import pandas as pd
 
-    onto = api.get_ontology()
-    fact = onto["fact_capacity_request"]
+    entities = api.get_entities()
+    fact = entities["fact_capacity_request"]
     when = pd.to_datetime(fact["DeniedDate"].fillna(fact["ApprovedDate"]), errors="coerce")
     obs = fact.assign(M=when.dt.tz_localize(None).dt.to_period("M").astype(str))
     real = (obs.groupby(["SubscriptionId", "M"])["AdditionalLimitCapacity"]
             .sum().round(1).to_dict())
 
-    demand = onto["fact_customer_demand_monthly"]
+    demand = entities["fact_customer_demand_monthly"]
     for row in demand[~demand["IsSynthetic"]].itertuples():
         key = (row.SubscriptionId, row.Month)
         assert key in real, f"{key} marked real but is not in the extract"
@@ -1523,7 +1523,7 @@ def test_real_customer_months_beat_the_generated_ones():
 def test_a_mostly_generated_customer_series_declares_itself():
     """A customer-level forecast shown without saying the history was invented
     would be the most misleading screen in the product."""
-    subs = api.get_ontology()["dim_subscription"]["SubscriptionId"].astype(str)
+    subs = api.get_entities()["dim_subscription"]["SubscriptionId"].astype(str)
     for sub in list(subs)[:6]:
         d = api.demand_customer(sub)
         assert d["realMonths"] <= len(d["demand"])
@@ -1534,7 +1534,7 @@ def test_a_mostly_generated_customer_series_declares_itself():
 def test_customer_demand_is_deterministic():
     """Two builds must give byte-identical history, or every screenshot and
     every figure quoted from one changes under the reader."""
-    import ontology as onto_mod
+    import dimensional as onto_mod
 
     a = onto_mod.build()["fact_customer_demand_monthly"]
     b = onto_mod.build()["fact_customer_demand_monthly"]
@@ -1559,7 +1559,7 @@ def test_filled_demand_months_match_the_level_of_the_real_ones():
     """Uncalibrated, the generated months came out at 235-1413 cores against
     16-322 real ones, so the chart showed demand collapsing exactly where the
     real data began -- an artefact read as a finding."""
-    for region in sorted(api.get_ontology()["dim_region"]["Region"]):
+    for region in sorted(api.get_entities()["dim_region"]["Region"]):
         d = api.demand_region(region)
         real = [m["cores"] for m in d["demand"] if m["isReal"] and not m["eventDriven"]]
         fill = [m["cores"] for m in d["demand"] if not m["isReal"] and not m["eventDriven"]]
@@ -1580,7 +1580,7 @@ def test_generated_demand_months_are_marked_as_such():
 def test_generated_demand_months_carry_the_requests_behind_their_cores():
     """A chart showing capacity requested with nothing having requested it is
     the first thing anyone asks about, and it had no answer."""
-    for region in sorted(api.get_ontology()["dim_region"]["Region"]):
+    for region in sorted(api.get_entities()["dim_region"]["Region"]):
         for m in api.demand_region(region)["demand"]:
             if m["cores"] > 0:
                 assert m["tickets"] > 0, f"{region} {m['month']}: cores with no requests"
@@ -1589,7 +1589,7 @@ def test_generated_demand_months_carry_the_requests_behind_their_cores():
 def test_generated_months_never_sit_inside_the_recorded_window():
     """A month between two recorded months with no tickets is not missing data --
     nothing was asked for. Filling it invents demand that provably did not exist."""
-    for region in sorted(api.get_ontology()["dim_region"]["Region"]):
+    for region in sorted(api.get_entities()["dim_region"]["Region"]):
         flags = [m["isReal"] for m in api.demand_region(region)["demand"]]
         first_real = flags.index(True) if True in flags else len(flags)
         assert all(flags[i] for i in range(first_real, len(flags))), \
@@ -1608,7 +1608,7 @@ def test_request_volume_does_not_jump_where_the_real_data_starts():
     """
     import statistics
 
-    for region in sorted(api.get_ontology()["dim_region"]["Region"]):
+    for region in sorted(api.get_entities()["dim_region"]["Region"]):
         ms = api.demand_region(region)["demand"]
         gen = [m["tickets"] for m in ms if not m["isReal"]]
         rec = [m["tickets"] for m in ms if m["isReal"]]
@@ -1637,8 +1637,8 @@ def test_a_facility_is_not_described_with_its_regions_utilisation():
     the assistant reported a regional figure as though it belonged to one
     building. The regional figure is now simply not there, which is stronger
     than naming it carefully -- it cannot be misread if it is absent."""
-    onto = api.get_ontology()
-    dim = {str(r["DatacentreId"]): r for _, r in onto["dim_datacentre"].iterrows()}
+    entities = api.get_entities()
+    dim = {str(r["DatacentreId"]): r for _, r in entities["dim_datacentre"].iterrows()}
     sites = api.get_snapshot()["datacentres"]
     assert sites
     for s in sites:
@@ -1653,9 +1653,9 @@ def test_the_assistant_sees_every_facility_not_only_the_busy_ones():
     threshold, the assistant answered from the 45 sites with activity while the
     region page listed all ten. A building over its line with nothing yet failed
     is exactly the one worth asking about, and it was invisible by construction."""
-    onto = api.get_ontology()
+    entities = api.get_entities()
     sites = api.get_snapshot()["datacentres"]
-    assert len(sites) == len(onto["dim_datacentre"])
+    assert len(sites) == len(entities["dim_datacentre"])
     by_region = {}
     for s in sites:
         by_region.setdefault(s["region"], []).append(s)

@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 
 import module1
-import ontology
+import dimensional
 from module1.threshold import (
     STATUS_APPROACHING,
     STATUS_BREACHED,
@@ -25,8 +25,8 @@ from tests.conftest import WORKBOOK
 
 
 @pytest.fixture(scope="module")
-def onto():
-    return ontology.build(WORKBOOK, "data/synthetic")
+def entities():
+    return dimensional.build(WORKBOOK, "data/synthetic")
 
 
 def _fake_onto(util_start, util_end, days=60, deployed=1000.0):
@@ -58,9 +58,9 @@ def _fake_onto(util_start, util_end, days=60, deployed=1000.0):
 # --- the core rule --------------------------------------------------------
 
 
-def test_the_act_by_date_is_the_crossing_minus_the_decision_window(onto):
-    for region in onto["dim_region"]["Region"]:
-        f = project_region(onto, region)
+def test_the_act_by_date_is_the_crossing_minus_the_decision_window(entities):
+    for region in entities["dim_region"]["Region"]:
+        f = project_region(entities, region)
         if f.cross_date and f.act_by_date and f.status != STATUS_BREACHED:
             cross = date.fromisoformat(f.cross_date)
             act = date.fromisoformat(f.act_by_date)
@@ -69,8 +69,8 @@ def test_the_act_by_date_is_the_crossing_minus_the_decision_window(onto):
 
 def test_a_region_crossing_inside_the_decision_window_is_already_late():
     """70% and rising, and it crosses sooner than anyone can decide."""
-    onto = _fake_onto(60, 70)
-    f = project_region(onto, "testregion", threshold_pct=85,
+    entities = _fake_onto(60, 70)
+    f = project_region(entities, "testregion", threshold_pct=85,
                        decision_window_days=90)
     assert f.current_utilisation_pct < 71
     assert f.status == STATUS_OVERDUE
@@ -81,10 +81,10 @@ def test_the_same_curve_with_a_short_window_is_not_yet_due():
     """Identical usage. Only how long the organisation takes to decide changes
     the verdict -- which is the one thing that can change it, now that scaling
     itself is immediate everywhere."""
-    onto = _fake_onto(60, 70)
-    slow = project_region(onto, "testregion", threshold_pct=85,
+    entities = _fake_onto(60, 70)
+    slow = project_region(entities, "testregion", threshold_pct=85,
                           decision_window_days=90)
-    fast = project_region(onto, "testregion", threshold_pct=85,
+    fast = project_region(entities, "testregion", threshold_pct=85,
                           decision_window_days=5)
     assert slow.days_to_threshold == pytest.approx(fast.days_to_threshold, abs=0.5)
     assert slow.status == STATUS_OVERDUE
@@ -92,29 +92,29 @@ def test_the_same_curve_with_a_short_window_is_not_yet_due():
     assert fast.days_until_action > slow.days_until_action
 
 
-def test_the_decision_window_is_the_same_for_every_region(onto):
+def test_the_decision_window_is_the_same_for_every_region(entities):
     """It was a per-region property when it described hardware. It is a policy
     now, and a policy that varied by region would be the old model wearing a
     new name."""
-    windows = {project_region(onto, r).decision_window_days
-               for r in onto["dim_region"]["Region"]}
+    windows = {project_region(entities, r).decision_window_days
+               for r in entities["dim_region"]["Region"]}
     assert len(windows) == 1, f"regions disagree on the decision window: {windows}"
 
 
-def test_no_flag_mentions_hardware_or_a_wait(onto):
+def test_no_flag_mentions_hardware_or_a_wait(entities):
     """Fabric scales an F SKU immediately. If any of this vocabulary comes back,
     so has a model that tells a Fabric customer something untrue."""
     import re
 
     banned = re.compile(r"\b(provision\w*|lead ?time|hardware|intel|amd|order)\b",
                         re.I)
-    for region in onto["dim_region"]["Region"]:
-        f = project_region(onto, region)
+    for region in entities["dim_region"]["Region"]:
+        f = project_region(entities, region)
         hit = banned.search(f.reason)
         assert not hit, f"{region}: {hit.group(0)!r} in {f.reason!r}"
 
 
-def test_lower_utilisation_can_outrank_higher(onto):
+def test_lower_utilisation_can_outrank_higher(entities):
     """Urgency is time-to-act, so the ordering is not usage order.
 
     This used to prove it through lead time: something flagged had slower
@@ -127,7 +127,7 @@ def test_lower_utilisation_can_outrank_higher(onto):
     of the hardware: among the regions needing a decision, a less-full region
     ranks above a fuller one because it reaches its line sooner.
     """
-    df = module1.project_all(onto)
+    df = module1.project_all(entities)
     if len(df) < 2:
         pytest.skip("need at least two regions")
 
@@ -177,49 +177,49 @@ def test_a_crossing_beyond_the_horizon_is_not_a_date_to_plan_against():
 
 
 def test_due_now_lands_on_the_order_date():
-    onto = _fake_onto(60, 84)
-    f = project_region(onto, "testregion", threshold_pct=85, grace_days=3)
+    entities = _fake_onto(60, 84)
+    f = project_region(entities, "testregion", threshold_pct=85, grace_days=3)
     assert f.status in (STATUS_DUE, STATUS_OVERDUE, STATUS_BREACHED)
 
 
 # --- ranking and queue ----------------------------------------------------
 
 
-def test_project_all_covers_every_region_and_ranks_urgency_first(onto):
-    df = module1.project_all(onto)
-    assert set(df["region"]) == set(onto["dim_region"]["Region"])
+def test_project_all_covers_every_region_and_ranks_urgency_first(entities):
+    df = module1.project_all(entities)
+    assert set(df["region"]) == set(entities["dim_region"]["Region"])
     order = {STATUS_BREACHED: 0, STATUS_OVERDUE: 1, STATUS_DUE: 2,
              STATUS_APPROACHING: 3, STATUS_STABLE: 4}
     ranks = [order[s] for s in df["status"]]
     assert ranks == sorted(ranks), "actionable regions must come first"
 
 
-def test_due_requests_is_the_queue_not_the_dashboard(onto):
-    due = module1.due_requests(onto)
-    everything = module1.project_all(onto)
+def test_due_requests_is_the_queue_not_the_dashboard(entities):
+    due = module1.due_requests(entities)
+    everything = module1.project_all(entities)
     assert len(due) <= len(everything)
     assert set(due["status"]) <= {STATUS_BREACHED, STATUS_OVERDUE, STATUS_DUE}
 
 
-def test_every_flag_explains_itself(onto):
-    for f in (project_region(onto, r) for r in onto["dim_region"]["Region"]):
+def test_every_flag_explains_itself(entities):
+    for f in (project_region(entities, r) for r in entities["dim_region"]["Region"]):
         assert len(f.reason) > 30
         if f.is_actionable():
             assert str(f.decision_window_days) in f.reason
 
 
-def test_threshold_is_a_parameter_not_a_constant(onto):
-    strict = module1.due_requests(onto, threshold_pct=60)
-    lax = module1.due_requests(onto, threshold_pct=95)
+def test_threshold_is_a_parameter_not_a_constant(entities):
+    strict = module1.due_requests(entities, threshold_pct=60)
+    lax = module1.due_requests(entities, threshold_pct=95)
     assert len(strict) >= len(lax)
 
 
-def test_unknown_region_is_rejected(onto):
+def test_unknown_region_is_rejected(entities):
     with pytest.raises(KeyError):
-        project_region(onto, "marsnorth1")
+        project_region(entities, "marsnorth1")
 
 
-def test_a_flag_names_the_rule_that_actually_fired(onto):
+def test_a_flag_names_the_rule_that_actually_fired(entities):
     """The due_now branch fires on the review cycle, not the decision window.
 
     It said "inside the 7-day decision window" against a region crossing in 28
@@ -228,8 +228,8 @@ def test_a_flag_names_the_rule_that_actually_fired(onto):
     """
     from module1.threshold import DEFAULT_REVIEW_DAYS
 
-    for region in onto["dim_region"]["Region"]:
-        f = project_region(onto, region)
+    for region in entities["dim_region"]["Region"]:
+        f = project_region(entities, region)
         if f.status != STATUS_DUE or f.days_until_action is None:
             continue
         if f.days_until_action > f.decision_window_days:
@@ -240,7 +240,7 @@ def test_a_flag_names_the_rule_that_actually_fired(onto):
         assert f.days_until_action <= DEFAULT_REVIEW_DAYS
 
 
-def test_a_flag_states_how_far_off_the_decision_is(onto):
+def test_a_flag_states_how_far_off_the_decision_is(entities):
     """"Due now" against a date three weeks away is not a date problem, it is a
     wording one, and it was on screen.
 
@@ -249,8 +249,8 @@ def test_a_flag_states_how_far_off_the_decision_is(onto):
     days away it is, and the reader is not left to subtract two dates from an
     as-of they cannot see.
     """
-    for region in onto["dim_region"]["Region"]:
-        f = project_region(onto, region)
+    for region in entities["dim_region"]["Region"]:
+        f = project_region(entities, region)
         if f.status != STATUS_DUE or f.days_until_action is None:
             continue
         assert f.act_by_date and f.act_by_date in f.reason
@@ -259,7 +259,7 @@ def test_a_flag_states_how_far_off_the_decision_is(onto):
             f"{int(f.days_until_action)} days away — {f.reason!r}")
 
 
-def test_the_forecast_says_it_is_about_the_region_not_about_who_is_refused(onto):
+def test_the_forecast_says_it_is_about_the_region_not_about_who_is_refused(entities):
     """The reason sits in a table beside a count of capacities refusing work.
 
     westeurope is projected to reach its line on 2026-02-25 and is refusing
@@ -269,8 +269,8 @@ def test_the_forecast_says_it_is_about_the_region_not_about_who_is_refused(onto)
     to hit 90% on 2026-02-25" next to "11 of 24 refusing work" reads as a
     contradiction unless it says what it is forecasting.
     """
-    for region in onto["dim_region"]["Region"]:
-        f = project_region(onto, region)
+    for region in entities["dim_region"]["Region"]:
+        f = project_region(entities, region)
         if f.status in (STATUS_STABLE, STATUS_BREACHED):
             continue
         assert "region's utilisation" in f.reason, (

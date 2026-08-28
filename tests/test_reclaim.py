@@ -26,9 +26,9 @@ from planning import reclaim as reclaim_mod  # noqa: E402
 
 @pytest.fixture(scope="module")
 def recs():
-    onto = api.get_ontology()
+    entities = api.get_entities()
     priced = api._ticket_rows(api.get_module5().priced, slice(None))
-    return reclaim_mod.reclaim(onto, priced)
+    return reclaim_mod.reclaim(entities, priced)
 
 
 # --------------------------------------------------------------------------
@@ -65,8 +65,8 @@ def test_a_capacity_using_more_than_the_rung_below_is_never_offered():
     only step down and 32 < 40, so nothing is reclaimable however much of the
     64 looks unused."""
     options = reclaim_mod._idle_with_room  # noqa: SLF001 -- the unit under test
-    onto = api.get_ontology()
-    for idle in options(onto, 30):
+    entities = api.get_entities()
+    for idle in options(entities, 30):
         used = idle["capacityUnits"] * idle["meanPct"] / 100.0
         assert used < idle["stepToUnits"], (
             f"{idle['capacityId']} uses {used:.0f} CU but is offered a step to "
@@ -159,7 +159,7 @@ def test_it_is_ranked_by_what_it_unblocks_not_by_capacity_units(recs):
 
 
 def test_every_capacity_has_a_holder():
-    caps = api.get_ontology()["dim_capacity"]
+    caps = api.get_entities()["dim_capacity"]
     assert "SubscriptionId" in caps.columns
     assert (caps["SubscriptionId"].astype(str).str.len() > 0).all()
 
@@ -167,9 +167,9 @@ def test_every_capacity_has_a_holder():
 def test_holders_are_real_subscriptions_from_the_extract():
     """The allocation is generated; the accounts are not. A capacity held by an
     account that does not exist would be an invention on top of an invention."""
-    onto = api.get_ontology()
-    real = set(onto["dim_subscription"]["SubscriptionId"].astype(str))
-    held = set(onto["dim_capacity"]["SubscriptionId"].astype(str))
+    entities = api.get_entities()
+    real = set(entities["dim_subscription"]["SubscriptionId"].astype(str))
+    held = set(entities["dim_capacity"]["SubscriptionId"].astype(str))
     assert held <= real, sorted(held - real)[:5]
 
 
@@ -177,11 +177,11 @@ def test_an_account_only_holds_capacity_where_it_has_asked_for_some():
     """Weighting by a region's own request history is what makes the generated
     allocation resemble the real link. An account holding capacity in a region
     it has never touched would not."""
-    onto = api.get_ontology()
-    fact = onto["fact_capacity_request"]
+    entities = api.get_entities()
+    fact = entities["fact_capacity_request"]
     asked = {(str(s), str(r)) for s, r in
              zip(fact["SubscriptionId"], fact["Region"])}
-    caps = onto["dim_capacity"]
+    caps = entities["dim_capacity"]
     regions_with_requests = set(fact["Region"].astype(str))
     for c in caps.itertuples():
         if str(c.Region) not in regions_with_requests:
@@ -194,6 +194,6 @@ def test_an_account_only_holds_capacity_where_it_has_asked_for_some():
 def test_adding_holders_moved_no_existing_figure():
     """The owner column was added to a table every capacity screen reads. If it
     changed a total, every reviewed number in the product moved with it."""
-    caps = api.get_ontology()["dim_capacity"]
+    caps = api.get_entities()["dim_capacity"]
     assert len(caps) == 317
     assert int(caps["CapacityUnits"].sum()) == 9662

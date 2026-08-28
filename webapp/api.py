@@ -1,6 +1,6 @@
 """Backend for the Capacity Intelligence app.
 
-The ontology is built once at startup and held in memory -- it is 1,800 rows,
+The dimensional model is built once at startup and held in memory -- it is 1,800 rows,
 and rebuilding per request would make the threshold slider feel broken.
 
 Two kinds of endpoint, and the distinction matters for what "interactive"
@@ -39,8 +39,8 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import assistant  # noqa: E402
 import module1, module2, module3, module4, module6  # noqa: E402
-import ontology  # noqa: E402
-from ontology import attribution  # noqa: E402
+import dimensional  # noqa: E402
+from dimensional import attribution  # noqa: E402
 import riskindex  # noqa: E402
 import remediation  # noqa: E402
 import forecast  # noqa: E402
@@ -86,13 +86,13 @@ async def _lifespan(_app: FastAPI):
         # than one opaque wait.
         #
         # Warming only the forecast was not enough. On a 0.5-CPU container the
-        # first /api/overview still took 144 seconds, because the ontology and
+        # first /api/overview still took 144 seconds, because the dimensional model and
         # the module 5 pipeline were built on that request while the forecast
         # thread competed for the same core. The health probe had already passed,
         # so the platform reported the app ready while the first real visitor
         # waited over two minutes.
         for label, fn in (
-            ("ontology", get_ontology),
+            ("dimensional model", get_entities),
             ("module5", get_module5),
             ("anomalies", get_anomalies),
             ("overview", overview),
@@ -142,8 +142,8 @@ PUBLIC = {"/login", "/logout", "/health"}
 
 
 @lru_cache(maxsize=1)
-def get_ontology():
-    return ontology.build(TICKETS, SYNTH, REFERENCE)
+def get_entities():
+    return dimensional.build(TICKETS, SYNTH, REFERENCE)
 
 
 @lru_cache(maxsize=1)
@@ -166,7 +166,7 @@ def get_risk_weights():
 
 @lru_cache(maxsize=1)
 def get_demand():
-    return module3.demand_by_period(get_ontology(), "M")
+    return module3.demand_by_period(get_entities(), "M")
 
 
 def _clean(value):
@@ -291,7 +291,7 @@ def _partial_grants() -> dict:
     computed from the extract and every published failure figure derives from
     them; adding an invented sixth would move numbers that have been reviewed.
     """
-    pg = get_ontology()["fact_partial_grant"]
+    pg = get_entities()["fact_partial_grant"]
     if pg.empty:
         return {"count": 0, "units": 0, "shortfallUnits": 0, "regions": [],
                 "note": "No partial fulfilment recorded."}
@@ -309,15 +309,15 @@ def _partial_grants() -> dict:
 
 @app.get("/api/overview")
 def overview():
-    onto, m5 = get_ontology(), get_module5()
+    entities, m5 = get_entities(), get_module5()
     summary = m5.finding["summary"]
     exposure = {r["Region"]: r for r in m5.finding["regions"]}
     growth = {r["Region"]: r for r in _records(module3.growth_ranking(get_demand()))}
-    coverage = {r["Region"]: r for r in _records(module6.region_summary(onto))}
-    flags = _records(module1.project_all(onto, crossing_for=_forecast_crossing))
-    spikes = module4.explain_anomalies(get_demand(), onto["fact_event"])
+    coverage = {r["Region"]: r for r in _records(module6.region_summary(entities))}
+    flags = _records(module1.project_all(entities, crossing_for=_forecast_crossing))
+    spikes = module4.explain_anomalies(get_demand(), entities["fact_event"])
 
-    causes = _failure_causes(onto)
+    causes = _failure_causes(entities)
     throttling = _region_throttling()
     regions = []
     for f in flags:
@@ -368,26 +368,26 @@ def overview():
         # Review feedback: the page jumped from "11 regions" straight to "60
         # requests" with nothing joining them. This is the missing layer --
         # which region the demand actually came from.
-        "regionDistribution": _region_distribution(onto),
-        "reasons": _reason_breakdown(onto),
+        "regionDistribution": _region_distribution(entities),
+        "reasons": _reason_breakdown(entities),
         "regions": regions,
         # The F-SKUs actually deployed, not the Intel/AMD hardware classes the
         # first module shipped. Fabric never exposes the hardware, and the
         # overview was counting five vendor classes nothing else in the product
         # mentions. Read in one place: the "Regions monitored" sub-label.
-        "skus": sorted(onto["dim_capacity"]["FabricSku"].unique(),
+        "skus": sorted(entities["dim_capacity"]["FabricSku"].unique(),
                        key=lambda s: admission.F_SKUS.get(s, 0)),
-        "provenance": _records(ontology.sources(onto.tables)),
+        "provenance": _records(dimensional.sources(entities.tables)),
     }
 
 
-def _region_distribution(onto) -> list[dict]:
+def _region_distribution(entities) -> list[dict]:
     """Requests per region, so 60 can be traced back to 11.
 
     Sorted by volume: "which region is our highest-request region" was the
     question, and the answer should be the first row.
     """
-    fact = onto["fact_capacity_request"]
+    fact = entities["fact_capacity_request"]
     total = len(fact) or 1
     rows = []
     for region, grp in fact.groupby("Region"):
@@ -428,7 +428,7 @@ def _failed_rows(fact):
 CAPACITY_CAUSES = frozenset({"Insufficient capacity", "Threshold reached"})
 
 
-def _failure_causes(onto) -> dict[str, dict]:
+def _failure_causes(entities) -> dict[str, dict]:
     """Per region: why its requests failed, and whether capacity was the reason.
 
     This exists because of a question the Overview could not answer. Regions
@@ -446,9 +446,9 @@ def _failure_causes(onto) -> dict[str, dict]:
     So the table now says which it was, because "add capacity here" is the
     wrong answer to most of them.
     """
-    fact = onto["fact_capacity_request"]
+    fact = entities["fact_capacity_request"]
     failed = _failed_rows(fact)
-    sites = onto["dim_datacentre"].set_index("DatacentreId")
+    sites = entities["dim_datacentre"].set_index("DatacentreId")
 
     out: dict[str, dict] = {}
     for region, grp in failed.groupby("Region"):
@@ -489,14 +489,14 @@ def _failure_causes(onto) -> dict[str, dict]:
     return out
 
 
-def _reason_breakdown(onto, region: str | None = None) -> list[dict]:
+def _reason_breakdown(entities, region: str | None = None) -> list[dict]:
     """Why requests failed, and what can be done about each.
 
     Counts failures only. "westeurope has 4 failures" tells an engineer
     nothing; "3 hit the capacity ceiling, 1 was hardware" tells them which fix
     to reach for -- but only if the 4 is the same 4 shown everywhere else.
     """
-    fact = onto["fact_capacity_request"]
+    fact = entities["fact_capacity_request"]
     if region:
         fact = fact[fact["Region"] == region]
     denied = _failed_rows(fact)
@@ -520,10 +520,10 @@ def _reason_breakdown(onto, region: str | None = None) -> list[dict]:
     return sorted(rows, key=lambda r: -r["count"])
 
 
-def _region_context(onto):
+def _region_context(entities):
     """Utilisation, threshold and lead time per region -- the inputs the risk
     index needs that do not live on a ticket."""
-    flags = {f["region"]: f for f in _records(module1.project_all(onto, crossing_for=_forecast_crossing))}
+    flags = {f["region"]: f for f in _records(module1.project_all(entities, crossing_for=_forecast_crossing))}
     return {
         name: {
             "utilisation": float(f.get("current_utilisation_pct") or 0),
@@ -536,12 +536,12 @@ def _region_context(onto):
 
 @lru_cache(maxsize=1)
 def _region_thresholds() -> dict:
-    """Each region's own safety threshold, from the ontology.
+    """Each region's own safety threshold, from the dimensional model.
 
     Derived there as the capacity-weighted mean of its facilities' thresholds,
     so a region cannot advertise a safety line its buildings are not holding.
     """
-    dim = get_ontology()["dim_region"]
+    dim = get_entities()["dim_region"]
     if "ThresholdPct" not in dim.columns:
         return {}
     return {str(r.Region): float(r.ThresholdPct) for r in dim.itertuples()
@@ -585,11 +585,11 @@ def _fleet_failure_rate() -> float:
     `_failed_incident_ids()` everything else uses, so the baseline and the
     entity rates being compared with it are the same measurement.
     """
-    fact = get_ontology()["fact_capacity_request"]
+    fact = get_entities()["fact_capacity_request"]
     return (len(_failed_rows(fact)) / len(fact)) if len(fact) else 0.0
 
 
-def _throttling_share(onto, datacentre_id: str | None) -> float:
+def _throttling_share(entities, datacentre_id: str | None) -> float:
     """How much of one building is actively delaying or refusing work.
 
     A share of its own capacities rather than a count, so a four-capacity site
@@ -599,7 +599,7 @@ def _throttling_share(onto, datacentre_id: str | None) -> float:
     """
     if not datacentre_id:
         return 0.0
-    counts = _site_capacity_counts(onto, str(datacentre_id))
+    counts = _site_capacity_counts(entities, str(datacentre_id))
     total = counts["capacityCount"]
     return (counts["throttling"] / total) if total else 0.0
 
@@ -628,13 +628,13 @@ def _score_group(grp, ctx, busiest_unresolved, throttling_share: float = 0.0) ->
 def datacentres():
     """Every datacentre, scored. The review's point: a region tells you which
     country to worry about, a datacentre tells you which building."""
-    onto = get_ontology()
-    fact = onto["fact_capacity_request"]
-    ctx = _region_context(onto)
+    entities = get_entities()
+    fact = entities["fact_capacity_request"]
+    ctx = _region_context(entities)
     priced = {str(r["incidentId"]): r for r in _ticket_rows(get_module5().priced, slice(None))}
 
     sites_by_id = {str(r["DatacentreId"]): r
-                   for _, r in onto["dim_datacentre"].iterrows()}
+                   for _, r in entities["dim_datacentre"].iterrows()}
     groups = list(fact.groupby("DatacentreId"))
     busiest = max((int((g["NewLimitCapacity"] < g["RequestedCapacity"]).sum())
                    for _, g in groups), default=1) or 1
@@ -656,7 +656,7 @@ def datacentres():
             # What this building holds, in Fabric's terms. Was `hardware`, which
             # served the region's vendor class ("Intel-highmem") and printed it
             # beside a provisioning lead time on a page that lists F SKUs.
-            **_site_capacity_counts(onto, str(dc)),
+            **_site_capacity_counts(entities, str(dc)),
             # This facility's own safety line and how full it actually is. The
             # region page prints both in its table, but neither reached the
             # assistant, so asked what the "80%" and "over" against
@@ -672,7 +672,7 @@ def datacentres():
             "topReason": (denied["DenialReason"].mode().iloc[0] if len(denied) else ""),
             "utilisation": ctx.get(region, {}).get("utilisation", 0),
             "risk": _score_group(grp, ctx.get(region, {}), busiest,
-                                 _throttling_share(onto, str(dc))),
+                                 _throttling_share(entities, str(dc))),
             # Flagged rather than smoothed away: a 100% failure rate over one
             # request is arithmetic, not evidence, and the reader should see
             # which it is before acting on the ranking.
@@ -684,26 +684,26 @@ def datacentres():
         # Only sites that have seen a request appear. Saying how many did not
         # keeps the count honest -- otherwise the view looks like the whole
         # estate when it is the active part of it.
-        "totalSites": int(len(onto["dim_datacentre"])),
+        "totalSites": int(len(entities["dim_datacentre"])),
         "withActivity": len(rows),
         "weights": get_risk_weights(),
         "componentLabels": riskindex.COMPONENT_LABELS,
     }
 
 
-def _site_capacity_counts(onto, datacentre_id: str) -> dict:
+def _site_capacity_counts(entities, datacentre_id: str) -> dict:
     """Just the counts, for a row in a list.
 
     `_site_fabric_position` computes the same thing and more, but it prices
     every rung of the ladder for every capacity, and the data-centre list has
     eighty-nine rows. This is the cheap read.
     """
-    caps = onto["dim_capacity"]
+    caps = entities["dim_capacity"]
     here = caps[caps["DatacentreId"].astype(str) == datacentre_id]
     if here.empty:
         return {"capacityCount": 0, "capacityUnits": 0, "throttling": 0}
 
-    health = recommend._health(onto).set_index("CapacityId")
+    health = recommend._health(entities).set_index("CapacityId")
     ids = [c for c in here["CapacityId"].astype(str) if c in health.index]
     throttling = int((health.loc[ids, "ThrottledDays"] > 0).sum()) if ids else 0
     return {
@@ -713,7 +713,7 @@ def _site_capacity_counts(onto, datacentre_id: str) -> dict:
     }
 
 
-def _site_fabric_position(onto, datacentre_id: str) -> dict:
+def _site_fabric_position(entities, datacentre_id: str) -> dict:
     """What one building actually holds, in the only terms Fabric has.
 
     Replaces `_migration_options`, which listed every alternative hardware class
@@ -725,13 +725,13 @@ def _site_fabric_position(onto, datacentre_id: str) -> dict:
     So: the capacities, what they are running at, how many are throttling, and
     for each one that is short, the rung to move it to.
     """
-    caps = onto["dim_capacity"]
+    caps = entities["dim_capacity"]
     here = caps[caps["DatacentreId"].astype(str) == datacentre_id]
     if here.empty:
         return {"capacities": [], "capacityCount": 0, "capacityUnits": 0,
                 "throttling": 0, "skuMix": {}, "freeViewerCapable": 0}
 
-    health = recommend._health(onto).set_index("CapacityId")
+    health = recommend._health(entities).set_index("CapacityId")
 
     rows, throttling, free_viewers = [], 0, 0
     for _, row in here.iterrows():
@@ -786,14 +786,14 @@ def _site_fabric_position(onto, datacentre_id: str) -> dict:
     }
 
 
-def _threshold_remediation(onto, datacentre_id: str) -> dict:
+def _threshold_remediation(entities, datacentre_id: str) -> dict:
     """What a threshold denial at this facility actually needs.
 
     Two levers, both quantified: how many cores the current safety line is
     holding back, and how much a higher line would release. Neither is a
     hardware change, so offering one would be answering a different question.
     """
-    dim = onto["dim_datacentre"]
+    dim = entities["dim_datacentre"]
     row = dim[dim["DatacentreId"].astype(str) == datacentre_id]
     if row.empty:
         return {}
@@ -831,18 +831,18 @@ def datacentre_detail(datacentre_id: str):
     view loses their place and throws away the level of detail they just asked
     for.
     """
-    onto = get_ontology()
-    dim = onto["dim_datacentre"]
+    entities = get_entities()
+    dim = entities["dim_datacentre"]
     row = dim[dim["DatacentreId"].astype(str) == datacentre_id]
     if row.empty:
         raise HTTPException(404, f"unknown datacentre {datacentre_id!r}")
 
     site = row.iloc[0]
     region = str(site["Region"])
-    fact = onto["fact_capacity_request"]
+    fact = entities["fact_capacity_request"]
     here = fact[fact["DatacentreId"].astype(str) == datacentre_id]
 
-    ctx = _region_context(onto).get(region, {})
+    ctx = _region_context(entities).get(region, {})
     busiest = max(
         (int((g["NewLimitCapacity"] < g["RequestedCapacity"]).sum())
          for _, g in fact.groupby("DatacentreId")), default=1) or 1
@@ -869,7 +869,7 @@ def datacentre_detail(datacentre_id: str):
             float(priced_by_id.get(i, {}).get("exposure", 0)) for i in ids)
 
     reasons = []
-    for rec in remediation.for_site(onto, datacentre_id, denied, loss_by_reason,
+    for rec in remediation.for_site(entities, datacentre_id, denied, loss_by_reason,
                                    crossing_for=_forecast_crossing):
         entry = rec.to_dict()
         entry["detail"] = attribution.REASONS.get(rec.reason, {}).get("detail", "")
@@ -890,7 +890,7 @@ def datacentre_detail(datacentre_id: str):
         # Was `hardware` ("Intel-highmem") and `leadTimeDays` (45). Fabric
         # exposes neither, and the page printed both above a table of F SKUs.
         # What a building actually holds is capacities, so that is what it says.
-        "fabric": _site_fabric_position(onto, datacentre_id),
+        "fabric": _site_fabric_position(entities, datacentre_id),
         "deployedUnits": _clean(row.iloc[0].get("DeployedUnits")),
         "utilisation": ctx.get("utilisation", 0),
         "threshold": ctx.get("threshold", 85),
@@ -899,7 +899,7 @@ def datacentre_detail(datacentre_id: str):
         "customers": int(here["SubscriptionId"].nunique()),
         "revenueLoss": round(sum(float(x["exposure"]) for x in tickets), 2),
         "risk": _score_group(here, ctx, busiest,
-                             _throttling_share(onto, datacentre_id)),
+                             _throttling_share(entities, datacentre_id)),
         "lowEvidence": bool(len(here) < 3),
         "reasons": reasons,
         "tickets": tickets,
@@ -922,14 +922,14 @@ def incidents():
 @app.get("/api/reasons")
 def reasons():
     """The problem view: each cause, where it bites, and what to do."""
-    onto = get_ontology()
-    fact = onto["fact_capacity_request"]
+    entities = get_entities()
+    fact = entities["fact_capacity_request"]
     priced = {str(r["incidentId"]): r for r in _ticket_rows(get_module5().priced, slice(None))}
     denied = _failed_rows(fact)
     denied = denied[denied["DenialReason"] != ""]
 
     rows = []
-    for r in _reason_breakdown(onto):
+    for r in _reason_breakdown(entities):
         here = denied[denied["DenialReason"] == r["reason"]]
         by_region = (here.groupby("Region").size()
                      .sort_values(ascending=False).head(5).items())
@@ -965,8 +965,8 @@ def _forecast_crossing(region: str, threshold_pct: float):
 @lru_cache(maxsize=1)
 def get_anomalies():
     """Outliers per region, and the dates the forecast must not train on."""
-    onto = get_ontology()
-    return anomaly.detect_all(onto["fact_usage_daily"], onto["fact_event"])
+    entities = get_entities()
+    return anomaly.detect_all(entities["fact_usage_daily"], entities["fact_event"])
 
 
 @app.get("/api/anomalies")
@@ -1013,10 +1013,10 @@ FORECAST_HORIZON_DAYS = int(module1.threshold.MAX_PROJECTION_DAYS)
 
 @lru_cache(maxsize=64)
 def _forecast(region: str, threshold: float):
-    onto = get_ontology()
+    entities = get_entities()
     excluded = get_anomalies().get(region)
     return forecast.forecast_region(
-        onto["fact_usage_daily"], region, threshold_pct=threshold,
+        entities["fact_usage_daily"], region, threshold_pct=threshold,
         horizon_days=FORECAST_HORIZON_DAYS,
         exclude_anomalies=excluded.excluded_dates if excluded else None,
         force_model=_forced_model(),
@@ -1030,9 +1030,9 @@ def forecast_all(threshold: Annotated[float | None, Query(ge=50.0, le=99.0)] = N
     `threshold` omitted uses each region's own line, which is what the Regions
     tab does -- the two must agree or the same region shows two crossing dates.
     """
-    onto = get_ontology()
+    entities = get_entities()
     out = []
-    for region in sorted(onto["dim_region"]["Region"]):
+    for region in sorted(entities["dim_region"]["Region"]):
         out.append(_trim_for_plotting(_clean(
             _forecast(region, _region_threshold(region, threshold)).to_dict())))
     # Soonest crossing first; regions already past the line lead.
@@ -1112,8 +1112,8 @@ def _trim_for_plotting(d: dict, trim: bool = True) -> dict:
 def forecast_one(region: str,
                  threshold: Annotated[float | None, Query(ge=50.0, le=99.0)] = None,
                  full: Annotated[bool, Query()] = False):
-    onto = get_ontology()
-    if region not in set(onto["dim_region"]["Region"]):
+    entities = get_entities()
+    if region not in set(entities["dim_region"]["Region"]):
         raise HTTPException(404, f"unknown region {region!r}")
     d = _trim_for_plotting(_clean(
         _forecast(region, _region_threshold(region, threshold)).to_dict()),
@@ -1144,8 +1144,8 @@ def capacity_policy(
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
-    onto = get_ontology()
-    sims = admission.simulate_all(onto, reserve, failed_ids=_failed_incident_ids())
+    entities = get_entities()
+    sims = admission.simulate_all(entities, reserve, failed_ids=_failed_incident_ids())
     rows = [_clean(s.to_dict()) for s in sims.values()]
     rows.sort(key=lambda r: -r["wouldHavePrevented"])
     return {
@@ -1161,7 +1161,7 @@ def capacity_policy(
         # Without SKUClass: the pool table printed a vendor class in the
         # column beside its own "Equivalent Fabric SKU".
         "pools": [{k: v for k, v in r.items() if k != "SKUClass"}
-                  for r in _records(onto["dim_capacity_pool"])],
+                  for r in _records(entities["dim_capacity_pool"])],
         "skuLadder": admission.F_SKUS,
         "unitsPerCu": admission.UNITS_PER_CU,
     }
@@ -1179,13 +1179,13 @@ def trend(region: str | None = None):
 
 @app.get("/api/spikes")
 def spikes(region: str | None = None):
-    found = module4.explain_anomalies(get_demand(), get_ontology()["fact_event"])
+    found = module4.explain_anomalies(get_demand(), get_entities()["fact_event"])
     if region:
         found = [a for a in found if a.region == region]
     return {"spikes": [{k: _clean(v) for k, v in a.to_dict().items()} for a in found]}
 
 
-#: The planning engines are pure functions over the ontology and the ontology
+#: The planning engines are pure functions over the dimensional model and the dimensional model
 #: is cached, so their output is too. Recomputing incident rates across three
 #: hundred capacities on every map hover is work nobody asked for.
 @lru_cache(maxsize=1)
@@ -1193,16 +1193,16 @@ def _recommendations() -> list:
     from planning import recommend as planning_recommend
     from planning import reclaim as planning_reclaim
 
-    onto = get_ontology()
-    recs = planning_recommend.all_recommendations(onto)
+    entities = get_entities()
+    recs = planning_recommend.all_recommendations(entities)
 
     # Composed here rather than inside all_recommendations, which is a pure
-    # function of the ontology. Reclaim is the one engine that needs priced
+    # function of the dimensional model. Reclaim is the one engine that needs priced
     # tickets too -- it ranks by the revenue a region refused, not by CU -- and
     # pushing module 5's output down into the planner would tie the two
     # together for the sake of one caller.
     reclaims = planning_reclaim.reclaim(
-        onto, _ticket_rows(get_module5().priced, slice(None)))
+        entities, _ticket_rows(get_module5().priced, slice(None)))
     recs.extend(r.to_dict() for r in reclaims)
     recs.sort(key=lambda r: -r["urgency"])
     return recs
@@ -1247,10 +1247,10 @@ def _region_throttling() -> dict[str, dict]:
 def _capacity_health():
     from planning import capacity_health
 
-    onto = get_ontology()
-    return capacity_health(onto["dim_capacity"],
-                           onto["fact_capacity_cu_daily"],
-                           onto["fact_throttling_event"])
+    entities = get_entities()
+    return capacity_health(entities["dim_capacity"],
+                           entities["fact_capacity_cu_daily"],
+                           entities["fact_throttling_event"])
 
 
 def _availability(region: str) -> dict:
@@ -1261,7 +1261,7 @@ def _availability(region: str) -> dict:
     distinction matters because a region can support "all Fabric workloads" and
     still be missing pieces of two of them.
     """
-    avail = get_ontology()["bridge_region_fabric_availability"].set_index("Region")
+    avail = get_entities()["bridge_region_fabric_availability"].set_index("Region")
     if region not in avail.index:
         return {"allFabricWorkloads": None, "powerBIOnly": None,
                 "workloadsAvailable": [], "workloadsPartlyAffected": [],
@@ -1302,14 +1302,14 @@ def capacity_map():
     availability. Everything else on the marker is generated, which is why the
     payload says which is which rather than presenting one flat set of numbers.
     """
-    onto = get_ontology()
-    geo = onto["dim_region_geography"].set_index("Region")
-    avail = onto["bridge_region_fabric_availability"].set_index("Region")
-    caps = onto["dim_capacity"]
+    entities = get_entities()
+    geo = entities["dim_region_geography"].set_index("Region")
+    avail = entities["bridge_region_fabric_availability"].set_index("Region")
+    caps = entities["dim_capacity"]
     recs = _recommendations()
 
     flags = {f["region"]: f for f in _records(
-        module1.project_all(onto, crossing_for=_forecast_crossing))}
+        module1.project_all(entities, crossing_for=_forecast_crossing))}
     exposure = {r["Region"]: r for r in get_module5().finding["regions"]}
     throttling_by_region = _region_throttling()
 
@@ -1325,7 +1325,7 @@ def capacity_map():
     )
 
     points = []
-    for region in sorted(onto["dim_region"]["Region"]):
+    for region in sorted(entities["dim_region"]["Region"]):
         f = flags.get(region, {})
         e = exposure.get(region, {})
         g = geo.loc[region] if region in geo.index else None
@@ -1365,7 +1365,7 @@ def capacity_map():
         })
     return {
         "points": points,
-        "asOf": str(onto["fact_usage_daily"]["Date"].max()),
+        "asOf": str(entities["fact_usage_daily"]["Date"].max()),
         "provenance": {
             "coordinates": "REAL - Azure Resource Manager region metadata",
             "featureAvailability": "REAL - Microsoft Learn Fabric region availability",
@@ -1384,26 +1384,26 @@ def map_region(region: str):
     and why. Kept out of `/api/map` so the map itself stays a small payload --
     eleven of these would be most of the fleet.
     """
-    onto = get_ontology()
-    if region not in set(onto["dim_region"]["Region"]):
+    entities = get_entities()
+    if region not in set(entities["dim_region"]["Region"]):
         raise HTTPException(404, f"unknown region {region!r}")
 
     from planning import STAGE_LABEL
 
     health = _capacity_health()
     mine = health[health["Region"] == region]
-    sites_dim = onto["dim_datacentre"]
+    sites_dim = entities["dim_datacentre"]
     sites_dim = sites_dim[sites_dim["Region"] == region]
 
     flags = {x["region"]: x for x in _records(
-        module1.project_all(onto, crossing_for=_forecast_crossing))}
+        module1.project_all(entities, crossing_for=_forecast_crossing))}
     f = flags.get(region, {})
     fc = _trim_for_plotting(_clean(
         _forecast(region, _region_threshold(region)).to_dict()), trim=True)
 
-    ws = onto["dim_workspace"]
+    ws = entities["dim_workspace"]
     ws_count = ws.groupby("DatacentreId").size().to_dict() if "DatacentreId" in ws.columns \
-        else ws.merge(onto["dim_capacity"][["CapacityId", "DatacentreId"]],
+        else ws.merge(entities["dim_capacity"][["CapacityId", "DatacentreId"]],
                       on="CapacityId").groupby("DatacentreId").size().to_dict()
 
     sites = []
@@ -1463,8 +1463,8 @@ def map_region(region: str):
             "sites": len(sites),
             "capacities": int(len(mine)),
             "capacityUnits": int(mine["CapacityUnits"].sum()) if len(mine) else 0,
-            "workspaces": int(len(onto["dim_workspace"][
-                onto["dim_workspace"]["Region"] == region])),
+            "workspaces": int(len(entities["dim_workspace"][
+                entities["dim_workspace"]["Region"] == region])),
             "skuMix": {sku: int(n) for sku, n in
                        sorted(mine["FabricSku"].value_counts().items())} if len(mine) else {},
             "throttlingCapacities": int((mine["ThrottledDays"] > 0).sum()) if len(mine) else 0,
@@ -1534,7 +1534,7 @@ def capacities(region: Annotated[str | None, Query()] = None,
 
     from planning import STAGE_LABEL
 
-    ws = get_ontology()["dim_workspace"]
+    ws = get_entities()["dim_workspace"]
     ws_count = ws.groupby("CapacityId").size().to_dict()
     rows = []
     for c in health.itertuples():
@@ -1596,19 +1596,19 @@ def capacity_detail(capacity_id: str):
     """One capacity: how it consumed CU, and every time it throttled."""
     from planning import STAGE_LABEL
 
-    onto = get_ontology()
+    entities = get_entities()
     health = _capacity_health()
     row = health[health["CapacityId"] == capacity_id]
     if row.empty:
         raise HTTPException(404, f"unknown capacity {capacity_id!r}")
     c = row.iloc[0]
 
-    cu = onto["fact_capacity_cu_daily"]
+    cu = entities["fact_capacity_cu_daily"]
     series = cu[cu["CapacityId"] == capacity_id].sort_values("Date")
-    ev = onto["fact_throttling_event"]
+    ev = entities["fact_throttling_event"]
     mine = (ev[ev["CapacityId"] == capacity_id].sort_values("Date", ascending=False)
             if len(ev) else ev)
-    ws = onto["dim_workspace"]
+    ws = entities["dim_workspace"]
     here = ws[ws["CapacityId"] == capacity_id].sort_values(
         "ShareOfCapacityPct", ascending=False)
 
@@ -1647,14 +1647,14 @@ def capacity_detail(capacity_id: str):
 
 @app.get("/api/features")
 def features(region: str | None = None):
-    onto = get_ontology()
-    bridge = onto["bridge_feature_region"]
+    entities = get_entities()
+    bridge = entities["bridge_feature_region"]
     if region:
         bridge = bridge[bridge["Region"] == region]
     return {
         "cells": _records(bridge[["Feature", "Region", "Status"]]),
-        "features": sorted(onto["dim_feature"]["Feature"]),
-        "regions": sorted(onto["dim_region"]["Region"]),
+        "features": sorted(entities["dim_feature"]["Feature"]),
+        "regions": sorted(entities["dim_region"]["Region"]),
     }
 
 
@@ -1705,7 +1705,7 @@ def _working_out(t, arr: float, share: float, days: float) -> str:
 def _customer_names() -> dict:
     """SubscriptionId -> display name. Review: an id beside an incident id of
     the same shape forces the reader to work out which is which first."""
-    dim = get_ontology()["dim_subscription"]
+    dim = get_entities()["dim_subscription"]
     return dict(zip(dim["SubscriptionId"].astype(str), dim["CustomerName"], strict=True))
 
 
@@ -1714,12 +1714,12 @@ def _ticket_attributes() -> dict:
     """Datacentre and denial reason, keyed by incident.
 
     Module 5 loads tickets through its own ingest path, so its priced frame has
-    never seen the two columns the ontology adds. Reading them off `priced` with
+    never seen the two columns the dimensional model adds. Reading them off `priced` with
     getattr silently returned "" for every row -- the site column was blank and
     every reason showed as a dash, while the panel directly above listed the
     same reasons correctly. Joined here so every view gets them from one place.
     """
-    fact = get_ontology()["fact_capacity_request"]
+    fact = get_entities()["fact_capacity_request"]
     return {
         str(r.IncidentId): {
             "datacentre": str(getattr(r, "DatacentreId", "") or ""),
@@ -1731,7 +1731,7 @@ def _ticket_attributes() -> dict:
 
 @lru_cache(maxsize=1)
 def _pool_sku() -> dict:
-    pool = get_ontology()["dim_capacity_pool"]
+    pool = get_entities()["dim_capacity_pool"]
     return dict(zip(pool["Region"], pool["EquivalentSKU"], strict=True))
 
 
@@ -1838,9 +1838,9 @@ def customers():
     # is not just the region advice repeated: the useful thing to tell an
     # account team is where this customer already has room, not what to do to
     # a datacentre they have never heard of.
-    onto = get_ontology()
-    fact = onto["fact_capacity_request"]
-    ctx = _region_context(onto)
+    entities = get_entities()
+    fact = entities["fact_capacity_request"]
+    ctx = _region_context(entities)
     busiest = max(
         (int((g["NewLimitCapacity"] < g["RequestedCapacity"]).sum())
          for _, g in fact.groupby("SubscriptionId")), default=1) or 1
@@ -1928,16 +1928,16 @@ def customer_detail(subscription_id: str):
 
 @app.get("/api/region/{name}")
 def region_detail(name: str):
-    onto, m5 = get_ontology(), get_module5()
-    if name not in set(onto["dim_region"]["Region"]):
+    entities, m5 = get_entities(), get_module5()
+    if name not in set(entities["dim_region"]["Region"]):
         raise HTTPException(404, f"unknown region {name!r}")
 
     rows = _ticket_rows(m5.priced, m5.priced["Region"] == name)
 
-    flag = module1.project_region(onto, name, crossing_for=_forecast_crossing)
-    check = module6.check_expansion(onto, name)
+    flag = module1.project_region(entities, name, crossing_for=_forecast_crossing)
+    check = module6.check_expansion(entities, name)
     found = [a.to_dict() for a in
-             module4.explain_anomalies(get_demand(), onto["fact_event"])
+             module4.explain_anomalies(get_demand(), entities["fact_event"])
              if a.region == name]
     growth = module3.growth_ranking(get_demand())
     row = growth[growth["Region"] == name]
@@ -1946,9 +1946,9 @@ def region_detail(name: str):
     # it on `features` and `spikes` made this endpoint 500 for any region whose
     # anomaly rows carried a NaN -- a whole region's detail panel dead, from one
     # unserialisable float buried two levels down.
-    fact = onto["fact_capacity_request"]
+    fact = entities["fact_capacity_request"]
     here = fact[fact["Region"] == name]
-    sites = onto["dim_datacentre"]
+    sites = entities["dim_datacentre"]
     sites = sites[sites["Region"] == name].set_index("DatacentreId")
     priced_here = {r["incidentId"]: r for r in rows}
 
@@ -2000,7 +2000,7 @@ def region_detail(name: str):
             # that from a cause alone.
             "recommendations": [
                 r.to_dict() for r in remediation.for_site(
-                    onto, str(dc), denied, crossing_for=_forecast_crossing)
+                    entities, str(dc), denied, crossing_for=_forecast_crossing)
             ],
             "capacityUnits": _clean(meta["DeployedUnits"]) if meta is not None else None,
             "capacityUnitsFree": _clean(meta["FreeUnits"]) if meta is not None else None,
@@ -2011,7 +2011,7 @@ def region_detail(name: str):
     datacentres.sort(key=lambda d: (not d["overThreshold"], -d["failed"],
                                     -d["revenueLoss"], d["datacentre"]))
 
-    all_sites = onto["dim_datacentre"]
+    all_sites = entities["dim_datacentre"]
     all_sites = all_sites[all_sites["Region"] == name]
 
     return {
@@ -2024,7 +2024,7 @@ def region_detail(name: str):
         "capacityUnitsFree": _clean(all_sites["FreeUnits"].sum()),
         "failedCount": len([r for r in rows if r["isFlagged"]]),
         "revenueLoss": round(sum(float(r["exposure"]) for r in rows), 2),
-        "reasons": _reason_breakdown(onto, name),
+        "reasons": _reason_breakdown(entities, name),
         # Same enrichment the region table carries, so the row and the page it
         # opens cannot show different figures for the same region.
         "threshold": {
@@ -2053,7 +2053,7 @@ def threshold(pct: Annotated[float | None, Query(ge=50.0, le=99.0)] = None,
     it forces all regions to the same figure, which is what the what-if control
     on the Regions tab does and is a recalculation, not a filter.
     """
-    flags = _records(module1.project_all(get_ontology(), threshold_pct=pct,
+    flags = _records(module1.project_all(get_entities(), threshold_pct=pct,
                                          trend_days=trend_days,
                                          crossing_for=_forecast_crossing))
     # Review asked the region table to answer "how many cores are still owed"
@@ -2092,7 +2092,7 @@ def threshold(pct: Annotated[float | None, Query(ge=50.0, le=99.0)] = None,
 def convert(region: str, to_sku: str, mode: str = "same_footprint"):
     """Re-run Module 2 for a chosen target. The calculator, live."""
     try:
-        result = module2.migrate_region(get_ontology(), region, to_sku, mode=mode)
+        result = module2.migrate_region(get_entities(), region, to_sku, mode=mode)
         result["conversion"] = {k: _clean(v) for k, v in result["conversion"].items()}
         return {k: (_clean(v) if not isinstance(v, dict) else v) for k, v in result.items()}
     except KeyError as exc:
@@ -2110,9 +2110,9 @@ def scale_options_index():
     Ordered worst first: the list exists to be acted on, and a capacity refusing
     queries should not be somewhere on page two.
     """
-    onto = get_ontology()
-    caps = onto["dim_capacity"]
-    health = recommend._health(onto).set_index("CapacityId")
+    entities = get_entities()
+    caps = entities["dim_capacity"]
+    health = recommend._health(entities).set_index("CapacityId")
 
     rows = []
     for _, row in caps.iterrows():
@@ -2158,13 +2158,13 @@ def scale_capacity(capacity: str, to_sku: str | None = None):
     could spare the site while the work ran -- and Fabric has no answer to give
     because there is no outage: the scale applies immediately.
     """
-    onto = get_ontology()
-    caps = onto["dim_capacity"]
+    entities = get_entities()
+    caps = entities["dim_capacity"]
     row = caps[caps["CapacityId"].astype(str) == capacity]
     if row.empty:
         raise HTTPException(404, f"unknown capacity {capacity!r}")
 
-    health = recommend._health(onto).set_index("CapacityId")
+    health = recommend._health(entities).set_index("CapacityId")
     if capacity not in health.index:
         raise HTTPException(404, f"no consumption recorded for {capacity!r}")
 
@@ -2192,12 +2192,12 @@ def region_recommendation(region: str):
     produced advice nobody owned. Everything here is computed from the region's
     own numbers -- no sentence is written in advance.
     """
-    onto = get_ontology()
-    if region not in set(onto["dim_region"]["Region"]):
+    entities = get_entities()
+    if region not in set(entities["dim_region"]["Region"]):
         raise HTTPException(404, f"unknown region {region!r}")
 
-    flag = module1.project_region(onto, region, crossing_for=_forecast_crossing)
-    dim = onto["dim_region"]
+    flag = module1.project_region(entities, region, crossing_for=_forecast_crossing)
+    dim = entities["dim_region"]
     row = dim[dim["Region"] == region].iloc[0]
     deployed = float(row["DeployedUnits"])
     used = float(_clean(flag.to_dict()).get("used_units") or 0.0)
@@ -2220,7 +2220,7 @@ def region_recommendation(region: str):
             "coversPending": bool(releases >= pending),
         })
 
-    sites = onto["dim_datacentre"]
+    sites = entities["dim_datacentre"]
     sites = sites[sites["Region"] == region]
     covering = next((o for o in options if o["coversPending"]), None)
 
@@ -2260,8 +2260,8 @@ def region_recommendation(region: str):
         "options": options,
         "siteCount": int(len(sites)),
         "sitesWithActivity": int(len({
-            str(d) for d in onto["fact_capacity_request"]
-            .loc[onto["fact_capacity_request"]["Region"] == region, "DatacentreId"]})),
+            str(d) for d in entities["fact_capacity_request"]
+            .loc[entities["fact_capacity_request"]["Region"] == region, "DatacentreId"]})),
     }
 
 
@@ -2355,13 +2355,13 @@ def _extend_demand_history(observed: list, rows, key_col: str, key: str) -> list
     contributes a tenth of theirs to the fill.
     """
     try:
-        demand = get_ontology()["fact_customer_demand_monthly"]
+        demand = get_entities()["fact_customer_demand_monthly"]
     except KeyError:
         return observed
     if demand is None or not len(demand):
         return observed
 
-    fact = get_ontology()["fact_capacity_request"]
+    fact = get_entities()["fact_capacity_request"]
     mine = fact[fact[key_col].astype(str) == str(key)]
     if mine.empty:
         return observed
@@ -2491,7 +2491,7 @@ def _threshold_series(region: str, threshold_pct: float) -> list:
     """
     import pandas as pd
 
-    usage = get_ontology()["fact_usage_daily"]
+    usage = get_entities()["fact_usage_daily"]
     here = usage[usage["Region"] == region].copy()
     if here.empty:
         return []
@@ -2511,11 +2511,11 @@ def _threshold_series(region: str, threshold_pct: float) -> list:
 
 @app.get("/api/demand/region/{name}")
 def demand_region(name: str):
-    onto = get_ontology()
-    if name not in set(onto["dim_region"]["Region"]):
+    entities = get_entities()
+    if name not in set(entities["dim_region"]["Region"]):
         raise HTTPException(404, f"unknown region {name!r}")
     line = _region_threshold(name)
-    d = _demand_series(onto["fact_capacity_request"], onto["fact_event"], "Region", name)
+    d = _demand_series(entities["fact_capacity_request"], entities["fact_event"], "Region", name)
     return {
         "scope": "region", "id": name, **d, **_project_demand(d["demand"]),
         "thresholdPct": line,
@@ -2526,12 +2526,12 @@ def demand_region(name: str):
 
 @app.get("/api/demand/datacentre/{datacentre_id}")
 def demand_datacentre(datacentre_id: str):
-    onto = get_ontology()
-    sites = onto["dim_datacentre"]
+    entities = get_entities()
+    sites = entities["dim_datacentre"]
     row = sites[sites["DatacentreId"].astype(str) == str(datacentre_id)]
     if row.empty:
         raise HTTPException(404, f"unknown datacentre {datacentre_id!r}")
-    d = _demand_series(onto["fact_capacity_request"], onto["fact_event"],
+    d = _demand_series(entities["fact_capacity_request"], entities["fact_event"],
                        "DatacentreId", datacentre_id)
     return {
         "scope": "datacentre", "id": str(datacentre_id),
@@ -2558,9 +2558,9 @@ def demand_customer(subscription_id: str):
     real or synthesised and the response says so at the top. Months the extract
     does cover use the real figures.
     """
-    onto = get_ontology()
+    entities = get_entities()
     try:
-        demand = onto["fact_customer_demand_monthly"]
+        demand = entities["fact_customer_demand_monthly"]
     except KeyError:
         raise HTTPException(404, "no customer demand history was built") from None
     if demand is None or not len(demand):
@@ -2586,7 +2586,7 @@ def demand_customer(subscription_id: str):
     fc = _project_demand(months)
     projection, model, note = fc["projection"], fc["model"], fc["note"]
 
-    sub = onto["dim_subscription"]
+    sub = entities["dim_subscription"]
     row = sub[sub["SubscriptionId"].astype(str) == str(subscription_id)]
     return {
         "scope": "customer",
@@ -2630,7 +2630,7 @@ def conversion_plan(
     """
     try:
         plan = module2.plan_conversion(
-            get_ontology(), region, to_sku,
+            get_entities(), region, to_sku,
             datacentres=datacentres,
             convert_datacentres=convert_datacentres,
             safety_margin_pct=safety_margin_pct,
@@ -2725,7 +2725,7 @@ def list_decisions():
 @app.get("/api/methodology")
 def methodology():
     """Every number a reviewer might argue with, as the current run used it."""
-    onto, finding = get_ontology(), get_module5().finding
+    entities, finding = get_entities(), get_module5().finding
     cfg = finding["config"]
     ev = finding["classifier_evaluation"]
     return {
@@ -2746,7 +2746,7 @@ def methodology():
         "dataQuality": {k: (len(v) if isinstance(v, list) else _clean(v))
                         for k, v in finding["data_quality"].items()
                         if k != "summary_lines"},
-        "provenance": _records(ontology.sources(onto.tables)),
+        "provenance": _records(dimensional.sources(entities.tables)),
     }
 
 
@@ -2795,7 +2795,7 @@ for _deep in DEEP:
 # --------------------------------------------------------------------------
 
 
-def _conversion_readiness(onto):
+def _conversion_readiness(entities):
     """Per region: is there room to take a datacentre offline at all.
 
     Target-independent -- headroom is what gates the work, and it is the same
@@ -2803,9 +2803,9 @@ def _conversion_readiness(onto):
     afterwards, which /api/conversion-plan answers on demand.
     """
     out = []
-    for region in sorted(onto["dim_region"]["Region"]):
-        current = str(onto["dim_region"].set_index("Region").loc[region, "SKUClass"])
-        plan = module2.plan_conversion(onto, region, current)
+    for region in sorted(entities["dim_region"]["Region"]):
+        current = str(entities["dim_region"].set_index("Region").loc[region, "SKUClass"])
+        plan = module2.plan_conversion(entities, region, current)
         out.append({
             "region": region,
             "currentHardware": current,
@@ -2828,10 +2828,10 @@ def _snapshot_datacentres() -> list:
     nothing yet failed is exactly the one worth asking about, and it was
     invisible to the assistant by construction.
     """
-    onto = get_ontology()
+    entities = get_entities()
     scored = {r["datacentre"]: r for r in datacentres()["datacentres"]}
     out = []
-    for row in onto["dim_datacentre"].itertuples():
+    for row in entities["dim_datacentre"].itertuples():
         dc = str(row.DatacentreId)
         dep, used = float(row.DeployedUnits), float(row.UsedUnits)
         thr = float(row.ThresholdPct)
@@ -2875,17 +2875,17 @@ def _snapshot_datacentres() -> list:
 
 def get_snapshot():
     """Everything the assistant may know, rebuilt only when the app restarts."""
-    onto, m5 = get_ontology(), get_module5()
+    entities, m5 = get_entities(), get_module5()
     return assistant.build_snapshot(
-        onto=onto,
+        entities=entities,
         m5=m5,
-        flags=_records(module1.project_all(onto, crossing_for=_forecast_crossing)),
+        flags=_records(module1.project_all(entities, crossing_for=_forecast_crossing)),
         growth=_records(module3.growth_ranking(get_demand())),
-        coverage=_records(module6.region_summary(onto)),
-        spikes=module4.explain_anomalies(get_demand(), onto["fact_event"]),
-        provenance=_records(ontology.sources(onto.tables)),
+        coverage=_records(module6.region_summary(entities)),
+        spikes=module4.explain_anomalies(get_demand(), entities["fact_event"]),
+        provenance=_records(dimensional.sources(entities.tables)),
         customers=customers()["customers"],
-        conversions=_conversion_readiness(onto),
+        conversions=_conversion_readiness(entities),
         # Asked "which data centres in eastus2 are in risk", the assistant
         # correctly said it could not tell -- the snapshot held regions and
         # incidents but never the facilities, so a question the Data centres tab

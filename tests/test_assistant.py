@@ -79,17 +79,17 @@ def test_snapshot_carries_a_raw_number_for_every_displayed_figure():
     bug, not a formatting choice."""
     from module5 import pipeline
     from tests.conftest import WORKBOOK
-    import assistant, module1, module3, module4, module6, ontology
+    import assistant, module1, module3, module4, module6, dimensional
 
-    onto = ontology.build(WORKBOOK)
+    entities = dimensional.build(WORKBOOK)
     m5 = pipeline.run(WORKBOOK, write_outputs=False)
     snap = assistant.build_snapshot(
-        onto=onto, m5=m5,
-        flags=module1.project_all(onto).to_dict("records"),
-        growth=module3.growth_ranking(module3.demand_by_period(onto, "M")).to_dict("records"),
-        coverage=module6.region_summary(onto).to_dict("records"),
-        spikes=module4.explain_anomalies(module3.demand_by_period(onto, "M"), onto["fact_event"]),
-        provenance=ontology.sources(onto.tables).to_dict("records"),
+        entities=entities, m5=m5,
+        flags=module1.project_all(entities).to_dict("records"),
+        growth=module3.growth_ranking(module3.demand_by_period(entities, "M")).to_dict("records"),
+        coverage=module6.region_summary(entities).to_dict("records"),
+        spikes=module4.explain_anomalies(module3.demand_by_period(entities, "M"), entities["fact_event"]),
+        provenance=dimensional.sources(entities.tables).to_dict("records"),
     )
 
     def check(node, path=""):

@@ -11,34 +11,34 @@ import pandas as pd
 import pytest
 
 import module3
-import ontology
+import dimensional
 from module3.forecast import moving_average, _slope
 from tests.conftest import WORKBOOK
 
 
 @pytest.fixture(scope="module")
-def onto():
-    return ontology.build(WORKBOOK, "data/synthetic")
+def entities():
+    return dimensional.build(WORKBOOK, "data/synthetic")
 
 
 @pytest.fixture(scope="module")
-def demand(onto):
-    return module3.demand_by_period(onto, "M")
+def demand(entities):
+    return module3.demand_by_period(entities, "M")
 
 
 # --- the series -----------------------------------------------------------
 
 
-def test_every_region_has_every_period(onto, demand):
+def test_every_region_has_every_period(entities, demand):
     """Zero-filled: a month with no requests is a zero, not a missing row."""
-    regions = onto["dim_region"]["Region"].nunique()
+    regions = entities["dim_region"]["Region"].nunique()
     periods = demand["Period"].nunique()
     assert len(demand) == regions * periods
-    assert set(demand["Region"]) == set(onto["dim_region"]["Region"])
+    assert set(demand["Region"]) == set(entities["dim_region"]["Region"])
 
 
-def test_totals_reconcile_with_the_tickets(onto, demand):
-    fact = onto["fact_capacity_request"]
+def test_totals_reconcile_with_the_tickets(entities, demand):
+    fact = entities["fact_capacity_request"]
     assert demand["RequestCount"].sum() == len(fact)
     assert demand["RequestedUnits"].sum() == fact["AdditionalLimitCapacity"].sum()
 
@@ -47,8 +47,8 @@ def test_the_demand_signal_is_labelled_as_real(demand):
     assert set(demand["Source"]) == {"ICM extract"}
 
 
-def test_usage_signal_is_labelled_as_generated(onto):
-    usage = module3.usage_by_period(onto, "M")
+def test_usage_signal_is_labelled_as_generated(entities):
+    usage = module3.usage_by_period(entities, "M")
     assert set(usage["Source"]) == {"generated"}
     assert usage["UtilisationPct"].between(0, 100).all()
 
@@ -116,9 +116,9 @@ def test_horizon_and_periods_are_contiguous(demand):
 # --- the ranking ----------------------------------------------------------
 
 
-def test_growth_ranking_covers_every_region(onto, demand):
+def test_growth_ranking_covers_every_region(entities, demand):
     g = module3.growth_ranking(demand)
-    assert set(g["Region"]) == set(onto["dim_region"]["Region"])
+    assert set(g["Region"]) == set(entities["dim_region"]["Region"])
     assert g["Rank"].tolist() == list(range(1, len(g) + 1))
 
 
@@ -142,7 +142,7 @@ def test_confidence_is_reported_per_region(demand):
     assert (g["PeriodsWithDemand"] <= demand["Period"].nunique()).all()
 
 
-def test_weekly_grain_also_works(onto):
-    weekly = module3.demand_by_period(onto, "W")
+def test_weekly_grain_also_works(entities):
+    weekly = module3.demand_by_period(entities, "W")
     assert weekly["Period"].nunique() > 15
     assert module3.forecast_demand(weekly)["Forecast"].ge(0).all()

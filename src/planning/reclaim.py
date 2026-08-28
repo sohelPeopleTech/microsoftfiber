@@ -64,7 +64,7 @@ from planning import recommend
 MIN_COVERAGE_PCT = 10.0
 
 
-def _idle_with_room(onto, window_days: int) -> list[dict]:
+def _idle_with_room(entities, window_days: int) -> list[dict]:
     """Capacities one whole rung too big, and what stepping down would release.
 
     Deliberately the same conditions `scale_down` uses, read from the same
@@ -73,7 +73,7 @@ def _idle_with_room(onto, window_days: int) -> list[dict]:
     capacity away from something that needs it -- so anything that throttled in
     the window is refused however idle its average looks.
     """
-    health = recommend._health(onto, window_days)
+    health = recommend._health(entities, window_days)
     out = []
     for c in health.itertuples():
         if c.ThrottledDays > 0 or c.MeanUtilisationPct >= IDLE_PCT:
@@ -104,14 +104,14 @@ def _idle_with_room(onto, window_days: int) -> list[dict]:
     return out
 
 
-def _unmet_demand(onto, priced_rows) -> dict[str, dict]:
+def _unmet_demand(entities, priced_rows) -> dict[str, dict]:
     """What each region refused: how much, to whom, and what it cost.
 
     Counted on the same failed-request definition the rest of the product uses.
     An earlier module in this project carried its own and reported 45 where
     every other screen reported 30.
     """
-    fact = onto["fact_capacity_request"]
+    fact = entities["fact_capacity_request"]
     # Flagged rows only. Keying on every priced ticket counted the ones handled
     # inside SLA too, and reported six refusals in eastus2 where every other
     # screen reports five -- the exact defect this module's own docstring warns
@@ -136,7 +136,7 @@ def _unmet_demand(onto, priced_rows) -> dict[str, dict]:
     return out
 
 
-def reclaim(onto, priced_rows, window_days: int = IDLE_DAYS) -> list[Recommendation]:
+def reclaim(entities, priced_rows, window_days: int = IDLE_DAYS) -> list[Recommendation]:
     """Regions holding idle capacity while refusing requests.
 
     Both halves have to be true. Idle capacity in a region that refused nobody
@@ -144,20 +144,20 @@ def reclaim(onto, priced_rows, window_days: int = IDLE_DAYS) -> list[Recommendat
     region with nothing spare is a scale-up and `scale_up` already tells that.
     This is only the overlap, which is the case neither of them can see.
     """
-    demand = _unmet_demand(onto, priced_rows)
-    caps = onto["dim_capacity"]
+    demand = _unmet_demand(entities, priced_rows)
+    caps = entities["dim_capacity"]
     holders = (caps.set_index("CapacityId")["SubscriptionId"].astype(str).to_dict()
                if "SubscriptionId" in caps.columns else {})
 
     names = {}
-    if "dim_subscription" in getattr(onto, "tables", {}):
-        sub = onto["dim_subscription"]
+    if "dim_subscription" in getattr(entities, "tables", {}):
+        sub = entities["dim_subscription"]
         if "CustomerName" in sub.columns:
             names = dict(zip(sub["SubscriptionId"].astype(str),
                              sub["CustomerName"].astype(str)))
 
     out: list[Recommendation] = []
-    for idle in _idle_with_room(onto, window_days):
+    for idle in _idle_with_room(entities, window_days):
         need = demand.get(idle["region"])
         if not need or not need["shortfallUnits"]:
             continue

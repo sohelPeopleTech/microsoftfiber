@@ -80,7 +80,7 @@ If asked what to do, ground the recommendation in a figure from the data."""
 # --------------------------------------------------------------------------
 
 
-def build_snapshot(onto, m5, flags, growth, coverage, spikes, provenance,
+def build_snapshot(entities, m5, flags, growth, coverage, spikes, provenance,
                    customers=None, incidents=None, conversions=None,
                    datacentres=None, cores_pending=None) -> dict:
     """Everything the assistant is allowed to know, in one object."""

@@ -205,7 +205,7 @@ def simulate_region(requests: pd.DataFrame, capacity: float,
     return result
 
 
-def simulate_all(onto, reserve: dict | None = None,
+def simulate_all(entities, reserve: dict | None = None,
                  failed_ids: frozenset | set | None = None) -> dict:
     """Every region, under one reserve policy.
 
@@ -217,8 +217,8 @@ def simulate_all(onto, reserve: dict | None = None,
     this simulator report 45 failures while every other screen reported 30, and
     a reviewer comparing two tabs would have found two answers to one question.
     """
-    fact = onto["fact_capacity_request"]
-    regions = onto["dim_region"].set_index("Region")
+    fact = entities["fact_capacity_request"]
+    regions = entities["dim_region"].set_index("Region")
 
     out = {}
     for region, grp in fact.groupby("Region"):

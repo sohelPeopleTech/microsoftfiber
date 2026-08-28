@@ -2442,7 +2442,7 @@ PAGES["/methodology"] = async (view) => {
       { what: "Controls and provenance", is: "the data quality controls applied on ingest, and the origin of each field." },
     ],
     next: "Any of these settings can be changed without a code change, and every run records the configuration it executed with.",
-    sources: "the configuration file, the classifier validation result, and per-field provenance from the ontology.",
+    sources: "the configuration file, the classifier validation result, and per-field provenance from the dimensional model.",
   }) + title("Methodology", "Where every number on this site comes from") + `
 
   ${panel("Calculation methodology", `

@@ -35,15 +35,15 @@ from . import (
 )
 
 
-def _health(onto, window_days: int = 30) -> pd.DataFrame:
-    return capacity_health(onto["dim_capacity"], onto["fact_capacity_cu_daily"],
-                           onto["fact_throttling_event"], window_days)
+def _health(entities, window_days: int = 30) -> pd.DataFrame:
+    return capacity_health(entities["dim_capacity"], entities["fact_capacity_cu_daily"],
+                           entities["fact_throttling_event"], window_days)
 
 
 # --------------------------------------------------------------------------
 
 
-def scale_up(onto, window_days: int = 30) -> list[Recommendation]:
+def scale_up(entities, window_days: int = 30) -> list[Recommendation]:
     """Capacities throttling, or with no headroom left for the next surge.
 
     Two cases, and the difference matters to whoever reads it. A capacity that
@@ -56,7 +56,7 @@ def scale_up(onto, window_days: int = 30) -> list[Recommendation]:
     takes effect immediately -- so the recommendation carries no order date,
     because there is no order.
     """
-    health = _health(onto, window_days)
+    health = _health(entities, window_days)
     out: list[Recommendation] = []
     for c in health.itertuples():
         throttling = c.ThrottledDays >= THROTTLED_DAYS_FOR_SCALE
@@ -133,7 +133,7 @@ def scale_up(onto, window_days: int = 30) -> list[Recommendation]:
 # --------------------------------------------------------------------------
 
 
-def load_balance(onto, window_days: int = 30) -> list[Recommendation]:
+def load_balance(entities, window_days: int = 30) -> list[Recommendation]:
     """Throttling capacities where one workspace is most of the consumption.
 
     Microsoft names load balancing across capacities alongside scaling, and it
@@ -144,8 +144,8 @@ def load_balance(onto, window_days: int = 30) -> list[Recommendation]:
     same region with room for the workspace. Advice to move something nowhere is
     not advice.
     """
-    health = _health(onto, window_days)
-    ws = onto["dim_workspace"]
+    health = _health(entities, window_days)
+    ws = entities["dim_workspace"]
     out: list[Recommendation] = []
 
     by_cap = {c.CapacityId: c for c in health.itertuples()}
@@ -216,7 +216,7 @@ def load_balance(onto, window_days: int = 30) -> list[Recommendation]:
 # --------------------------------------------------------------------------
 
 
-def scale_down(onto, window_days: int = IDLE_DAYS) -> list[Recommendation]:
+def scale_down(entities, window_days: int = IDLE_DAYS) -> list[Recommendation]:
     """Capacities paying for compute nobody uses.
 
     The recommendation the old model could not make at all, because it only ever
@@ -228,7 +228,7 @@ def scale_down(onto, window_days: int = IDLE_DAYS) -> list[Recommendation]:
     looks on average: a capacity that is quiet six days a week and overloaded on
     the seventh is sized for the seventh.
     """
-    health = _health(onto, window_days)
+    health = _health(entities, window_days)
     out: list[Recommendation] = []
     for c in health.itertuples():
         if c.ThrottledDays > 0 or c.MeanUtilisationPct >= IDLE_PCT:
@@ -280,7 +280,7 @@ def scale_down(onto, window_days: int = IDLE_DAYS) -> list[Recommendation]:
 # --------------------------------------------------------------------------
 
 
-def licensing(onto, window_days: int = 30) -> list[Recommendation]:
+def licensing(entities, window_days: int = 30) -> list[Recommendation]:
     """Capacities one rung below the licence that pays for itself.
 
     F64 is where Power BI content becomes readable on a Free licence; below it
@@ -288,8 +288,8 @@ def licensing(onto, window_days: int = 30) -> list[Recommendation]:
     buying a hundred Pro licences to avoid one SKU step, which is a commercial
     decision no amount of utilisation monitoring will surface.
     """
-    caps = onto["dim_capacity"]
-    ws = onto["dim_workspace"]
+    caps = entities["dim_capacity"]
+    ws = entities["dim_workspace"]
     out: list[Recommendation] = []
     for cap in caps.itertuples():
         step = next_sku(cap.FabricSku)
@@ -335,13 +335,13 @@ def licensing(onto, window_days: int = 30) -> list[Recommendation]:
 # --------------------------------------------------------------------------
 
 
-def all_recommendations(onto, window_days: int = 30) -> list[dict]:
+def all_recommendations(entities, window_days: int = 30) -> list[dict]:
     """Every recommendation, most urgent first, kinds interleaved.
 
     Not grouped by kind: a planner wants the most pressing thing, and which of
     the four engines produced it is a detail of how this was computed.
     """
-    recs = (scale_up(onto, window_days) + load_balance(onto, window_days)
-            + scale_down(onto) + licensing(onto, window_days))
+    recs = (scale_up(entities, window_days) + load_balance(entities, window_days)
+            + scale_down(entities) + licensing(entities, window_days))
     recs.sort(key=lambda r: -r.urgency)
     return [r.to_dict() for r in recs]

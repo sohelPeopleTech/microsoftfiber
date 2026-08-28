@@ -7,24 +7,24 @@ import pytest
 
 import module3
 import module4
-import ontology
+import dimensional
 from module4.anomaly import Z_REPORTING_CAP, detect_anomalies, match_events
 from tests.conftest import WORKBOOK
 
 
 @pytest.fixture(scope="module")
-def onto():
-    return ontology.build(WORKBOOK, "data/synthetic")
+def entities():
+    return dimensional.build(WORKBOOK, "data/synthetic")
 
 
 @pytest.fixture(scope="module")
-def demand(onto):
-    return module3.demand_by_period(onto, "M")
+def demand(entities):
+    return module3.demand_by_period(entities, "M")
 
 
 @pytest.fixture(scope="module")
-def found(onto, demand):
-    return module4.explain_anomalies(demand, onto["fact_event"])
+def found(entities, demand):
+    return module4.explain_anomalies(demand, entities["fact_event"])
 
 
 def _series(region, values, start="2025-09"):

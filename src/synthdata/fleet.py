@@ -185,7 +185,7 @@ def assign_capacity_owners(capacities: pd.DataFrame,
     rng = _rng(29)
     # The raw extract carries AdditionalLimitCapacity -- how much extra the
     # account asked for. RequestedCapacity is a derived name that appears later
-    # in the ontology, so it cannot be read here.
+    # in the dimensional model, so it cannot be read here.
     asked_col = next((c for c in ("AdditionalLimitCapacity", "RequestedCapacity")
                       if c in tickets.columns), None)
     needed = {"SubscriptionId", "TenantId", "Region"}

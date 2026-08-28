@@ -52,7 +52,7 @@ def _logistic(x):
 
 
 def simulate_requests(
-    onto,
+    entities,
     n: int = 600,
     seed: int = 20260813,
     noise: float = DEFAULT_NOISE,
@@ -62,9 +62,9 @@ def simulate_requests(
     """Generate `n` capacity requests with outcomes that follow the rules above."""
     rng = np.random.default_rng(seed)
 
-    regions = onto["dim_region"].set_index("Region")
-    subs = onto["dim_subscription"]
-    usage = onto["fact_usage_daily"]
+    regions = entities["dim_region"].set_index("Region")
+    subs = entities["dim_subscription"]
+    usage = entities["fact_usage_daily"]
     util_by_region = usage.groupby("Region")["UtilisationPct"].mean().to_dict()
 
     region_names = list(regions.index)
@@ -170,7 +170,7 @@ def summarise(df: pd.DataFrame) -> dict:
     }
 
 
-def as_fact_table(sim: pd.DataFrame, onto) -> pd.DataFrame:
+def as_fact_table(sim: pd.DataFrame, entities) -> pd.DataFrame:
     """Shape a simulated history like `fact_capacity_request`.
 
     Typed dates and the subscription tier joined on, so the propensity
@@ -181,6 +181,6 @@ def as_fact_table(sim: pd.DataFrame, onto) -> pd.DataFrame:
     for col in ("DeniedDate", "ApprovedDate"):
         out[col] = pd.to_datetime(out[col].replace("", None), utc=True, errors="coerce")
     if "SubscriptionTier" not in out.columns:
-        tiers = onto["dim_subscription"][["SubscriptionId", "SubscriptionTier"]]
+        tiers = entities["dim_subscription"][["SubscriptionId", "SubscriptionTier"]]
         out = out.merge(tiers, on="SubscriptionId", how="left")
     return out

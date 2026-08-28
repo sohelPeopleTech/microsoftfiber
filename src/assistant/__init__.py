@@ -6,7 +6,7 @@ both are avoided here deliberately:
 **It invents numbers.** A model asked "which region is worst?" will happily
 produce a plausible region and a plausible dollar figure. So this one is never
 asked to recall anything -- a complete, current snapshot of the platform is
-computed from the ontology and handed to it with every question, and the answer
+computed from the dimensional model and handed to it with every question, and the answer
 is then checked: any money figure, region name or incident ID that is not in
 that snapshot fails the answer, and the user gets the deterministic reply
 instead.

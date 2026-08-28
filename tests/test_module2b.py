@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-import ontology
+import dimensional
 from module2 import plan_conversion
 from module2.conversion import (
     DEFAULT_DATACENTRES,
@@ -22,37 +22,37 @@ from tests.conftest import WORKBOOK
 
 
 @pytest.fixture(scope="module")
-def onto():
-    return ontology.build(WORKBOOK, "data/synthetic")
+def entities():
+    return dimensional.build(WORKBOOK, "data/synthetic")
 
 
 # --- the finding the module exists for ------------------------------------
 
 
-def test_a_region_running_hot_cannot_convert(onto):
+def test_a_region_running_hot_cannot_convert(entities):
     """southcentralus: 806 of 826 units in use. 20 spare, a datacentre is 83."""
-    plan = plan_conversion(onto, "southcentralus", "AMD-standard")
+    plan = plan_conversion(entities, "southcentralus", "AMD-standard")
     assert plan.feasible is False
     assert plan.can_convert_a_whole_datacentre is False
     assert plan.max_offline_units == 0.0
     assert "cannot convert" in plan.summary
 
 
-def test_the_blocker_says_which_numbers_caused_it(onto):
+def test_the_blocker_says_which_numbers_caused_it(entities):
     """A no is only useful if it names the constraint."""
-    plan = plan_conversion(onto, "southcentralus", "AMD-standard")
+    plan = plan_conversion(entities, "southcentralus", "AMD-standard")
     assert "806" in plan.blocker and "826" in plan.blocker
 
 
-def test_an_infeasible_plan_offers_what_would_change_it(onto):
-    plan = plan_conversion(onto, "southcentralus", "AMD-standard")
+def test_an_infeasible_plan_offers_what_would_change_it(entities):
+    plan = plan_conversion(entities, "southcentralus", "AMD-standard")
     blocks = {o["blocks_on"] for o in plan.options}
     assert blocks == {"procurement", "demand", "time"}
 
 
-def test_a_feasible_plan_offers_no_options(onto):
+def test_a_feasible_plan_offers_no_options(entities):
     """Nothing needs unblocking, so there is nothing to suggest."""
-    plan = plan_conversion(onto, "westeurope", "AMD-standard")
+    plan = plan_conversion(entities, "westeurope", "AMD-standard")
     assert plan.feasible is True
     assert plan.options == []
 
@@ -60,15 +60,15 @@ def test_a_feasible_plan_offers_no_options(onto):
 # --- headroom arithmetic --------------------------------------------------
 
 
-def test_headroom_is_deployed_minus_used(onto):
-    plan = plan_conversion(onto, "westeurope", "AMD-standard")
+def test_headroom_is_deployed_minus_used(entities):
+    plan = plan_conversion(entities, "westeurope", "AMD-standard")
     assert plan.headroom_units == pytest.approx(
         plan.deployed_units - plan.used_units, abs=0.11
     )
 
 
-def test_the_safety_margin_is_held_back_from_what_can_go_offline(onto):
-    plan = plan_conversion(onto, "westeurope", "AMD-standard")
+def test_the_safety_margin_is_held_back_from_what_can_go_offline(entities):
+    plan = plan_conversion(entities, "westeurope", "AMD-standard")
     assert plan.safety_margin_units == pytest.approx(
         plan.deployed_units * DEFAULT_SAFETY_MARGIN_PCT / 100, abs=0.11
     )
@@ -77,15 +77,15 @@ def test_the_safety_margin_is_held_back_from_what_can_go_offline(onto):
     )
 
 
-def test_dropping_the_safety_margin_frees_capacity(onto):
+def test_dropping_the_safety_margin_frees_capacity(entities):
     """Not a recommendation -- a check that the margin is what it claims to be."""
-    tight = plan_conversion(onto, "westeurope", "AMD-standard")
-    loose = plan_conversion(onto, "westeurope", "AMD-standard", safety_margin_pct=0)
+    tight = plan_conversion(entities, "westeurope", "AMD-standard")
+    loose = plan_conversion(entities, "westeurope", "AMD-standard", safety_margin_pct=0)
     assert loose.max_offline_units > tight.max_offline_units
 
 
-def test_a_region_with_zero_headroom_gets_no_tranche(onto):
-    plan = plan_conversion(onto, "southcentralus", "AMD-standard")
+def test_a_region_with_zero_headroom_gets_no_tranche(entities):
+    plan = plan_conversion(entities, "southcentralus", "AMD-standard")
     assert plan.tranche_size == 0.0
     assert plan.tranche_count == 0
     assert plan.tranches == []
@@ -94,9 +94,9 @@ def test_a_region_with_zero_headroom_gets_no_tranche(onto):
 # --- tranching ------------------------------------------------------------
 
 
-def test_every_tranche_leaves_enough_capacity_for_current_load(onto):
+def test_every_tranche_leaves_enough_capacity_for_current_load(entities):
     """The definition of feasible. If any step dips below load, it is a no."""
-    plan = plan_conversion(onto, "westeurope", "AMD-standard")
+    plan = plan_conversion(entities, "westeurope", "AMD-standard")
     assert plan.tranches
     for step in plan.tranches:
         assert step["available_during"] >= step["required"]
@@ -104,79 +104,79 @@ def test_every_tranche_leaves_enough_capacity_for_current_load(onto):
         assert step["safe"] is True
 
 
-def test_tranches_add_up_to_the_units_being_converted(onto):
-    plan = plan_conversion(onto, "westeurope", "AMD-standard", convert_datacentres=2)
+def test_tranches_add_up_to_the_units_being_converted(entities):
+    plan = plan_conversion(entities, "westeurope", "AMD-standard", convert_datacentres=2)
     total = sum(t["units_out"] for t in plan.tranches)
     assert total == pytest.approx(plan.units_per_datacentre * 2, abs=0.11)
 
 
-def test_converting_more_datacentres_takes_more_passes(onto):
+def test_converting_more_datacentres_takes_more_passes(entities):
     """Headroom caps how much is offline at once, so more work means more passes,
     not bigger ones."""
-    one = plan_conversion(onto, "westeurope", "AMD-standard", convert_datacentres=1)
-    three = plan_conversion(onto, "westeurope", "AMD-standard", convert_datacentres=3)
+    one = plan_conversion(entities, "westeurope", "AMD-standard", convert_datacentres=1)
+    three = plan_conversion(entities, "westeurope", "AMD-standard", convert_datacentres=3)
     assert one.tranche_count == 1, "one datacentre fits inside the headroom"
     assert three.tranche_count > one.tranche_count
     assert three.tranche_size <= three.max_offline_units + 1e-9
 
 
-def test_a_tranche_never_exceeds_what_can_safely_go_offline(onto):
+def test_a_tranche_never_exceeds_what_can_safely_go_offline(entities):
     for n in (1, 2, 5, 10):
-        plan = plan_conversion(onto, "westeurope", "AMD-standard", convert_datacentres=n)
+        plan = plan_conversion(entities, "westeurope", "AMD-standard", convert_datacentres=n)
         assert plan.tranche_size <= plan.max_offline_units + 1e-9
 
 
 # --- what the conversion buys ---------------------------------------------
 
 
-def test_moving_to_less_capable_hardware_loses_capacity_and_saves_cost(onto):
+def test_moving_to_less_capable_hardware_loses_capacity_and_saves_cost(entities):
     """GPU-class -> AMD-standard. Cheaper per unit, less work per unit."""
-    plan = plan_conversion(onto, "westeurope", "AMD-standard")
+    plan = plan_conversion(entities, "westeurope", "AMD-standard")
     assert plan.capacity_delta < 0
     assert plan.cost_delta_pct < 0
 
 
-def test_holding_capacity_flat_can_need_more_racks_than_came_out(onto):
+def test_holding_capacity_flat_can_need_more_racks_than_came_out(entities):
     """The constraint a cost comparison never shows."""
-    plan = plan_conversion(onto, "westeurope", "AMD-standard")
+    plan = plan_conversion(entities, "westeurope", "AMD-standard")
     assert plan.units_to_hold_capacity_flat > plan.units_per_datacentre
     assert plan.footprint_multiple > 1.0
     assert plan.fits_in_footprint is False
     assert "rack space" in plan.summary
 
 
-def test_converting_to_the_same_class_changes_nothing(onto):
-    same = str(onto["dim_region"].set_index("Region").loc["westeurope", "SKUClass"])
-    plan = plan_conversion(onto, "westeurope", same)
+def test_converting_to_the_same_class_changes_nothing(entities):
+    same = str(entities["dim_region"].set_index("Region").loc["westeurope", "SKUClass"])
+    plan = plan_conversion(entities, "westeurope", same)
     assert plan.capacity_delta == 0.0
     assert plan.cost_delta_pct == 0.0
     assert plan.footprint_multiple == 1.0
     assert plan.fits_in_footprint is True
 
 
-def test_the_lead_time_is_the_targets_not_the_sources(onto):
+def test_the_lead_time_is_the_targets_not_the_sources(entities):
     """Replacement hardware has to arrive before the old comes out."""
-    plan = plan_conversion(onto, "westeurope", "AMD-standard")
-    target = onto["dim_sku"].set_index("SKUClass").loc["AMD-standard", "LeadTimeDays"]
+    plan = plan_conversion(entities, "westeurope", "AMD-standard")
+    target = entities["dim_sku"].set_index("SKUClass").loc["AMD-standard", "LeadTimeDays"]
     assert plan.lead_time_days == int(target)
 
 
 # --- the datacentre-count assumption --------------------------------------
 
 
-def test_the_datacentre_split_is_stated_not_hidden(onto):
+def test_the_datacentre_split_is_stated_not_hidden(entities):
     """The whole answer scales with it, so it travels with the answer."""
-    plan = plan_conversion(onto, "westeurope", "AMD-standard")
+    plan = plan_conversion(entities, "westeurope", "AMD-standard")
     assert plan.datacentres == DEFAULT_DATACENTRES
     assert plan.units_per_datacentre == pytest.approx(
         plan.deployed_units / plan.datacentres, abs=0.11
     )
 
 
-def test_fewer_larger_datacentres_are_harder_to_convert(onto):
+def test_fewer_larger_datacentres_are_harder_to_convert(entities):
     """The same region, split four ways instead of ten."""
-    many = plan_conversion(onto, "westeurope", "AMD-standard", datacentres=10)
-    few = plan_conversion(onto, "westeurope", "AMD-standard", datacentres=4)
+    many = plan_conversion(entities, "westeurope", "AMD-standard", datacentres=10)
+    few = plan_conversion(entities, "westeurope", "AMD-standard", datacentres=4)
     assert few.units_per_datacentre > many.units_per_datacentre
     assert many.can_convert_a_whole_datacentre is True
     assert few.can_convert_a_whole_datacentre is False
@@ -189,18 +189,18 @@ def test_regions_without_real_inventory_fall_back_to_the_default():
 # --- rejections -----------------------------------------------------------
 
 
-def test_unknown_region_names_what_is_available(onto):
+def test_unknown_region_names_what_is_available(entities):
     with pytest.raises(KeyError, match="Known:"):
-        plan_conversion(onto, "marsnorth1", "AMD-standard")
+        plan_conversion(entities, "marsnorth1", "AMD-standard")
 
 
-def test_cannot_convert_more_datacentres_than_the_region_has(onto):
+def test_cannot_convert_more_datacentres_than_the_region_has(entities):
     with pytest.raises(ValueError, match="between 1 and 10"):
-        plan_conversion(onto, "westeurope", "AMD-standard", convert_datacentres=11)
+        plan_conversion(entities, "westeurope", "AMD-standard", convert_datacentres=11)
     with pytest.raises(ValueError, match="between 1 and 10"):
-        plan_conversion(onto, "westeurope", "AMD-standard", convert_datacentres=0)
+        plan_conversion(entities, "westeurope", "AMD-standard", convert_datacentres=0)
 
 
-def test_a_region_has_at_least_one_datacentre(onto):
+def test_a_region_has_at_least_one_datacentre(entities):
     with pytest.raises(ValueError, match="at least one"):
-        plan_conversion(onto, "westeurope", "AMD-standard", datacentres=0)
+        plan_conversion(entities, "westeurope", "AMD-standard", datacentres=0)

@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_MODULES = [
     "planning",
     "planning.recommend",
-    "ontology.build",
+    "dimensional.build",
     "synthdata.generate",
     "synthdata.fleet",
     "synthdata.fabric",

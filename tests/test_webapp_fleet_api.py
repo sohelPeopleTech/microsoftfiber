@@ -30,7 +30,7 @@ import api  # noqa: E402
 def test_map_returns_every_region_with_coordinates():
     d = api.capacity_map()
     regions = {p["region"] for p in d["points"]}
-    assert regions == set(api.get_ontology()["dim_region"]["Region"])
+    assert regions == set(api.get_entities()["dim_region"]["Region"])
     for p in d["points"]:
         assert p["lat"] is not None and p["lon"] is not None, f"{p['region']} unplaced"
         assert -90 <= p["lat"] <= 90 and -180 <= p["lon"] <= 180
@@ -217,7 +217,7 @@ def test_capacities_scope_to_a_datacentre():
 
 def test_capacities_scope_to_a_region_and_sum_to_the_site_totals():
     region = api.capacities(region="southcentralus")
-    caps = api.get_ontology()["dim_capacity"]
+    caps = api.get_entities()["dim_capacity"]
     want = caps[caps["Region"] == "southcentralus"]["CapacityUnits"].sum()
     assert region["totalCapacityUnits"] == want
 

@@ -41,7 +41,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import module1
-from ontology import attribution
+from dimensional import attribution
 # Imported as `planning.x`, not `src.planning.x`: the app puts ROOT/src on
 # sys.path and nothing else. module2 is gone from here -- it modelled hardware
 # conversions, and Fabric scales an F SKU instead.
@@ -68,8 +68,8 @@ class Remediation:
         }
 
 
-def _site(onto, datacentre_id: str):
-    dim = onto["dim_datacentre"]
+def _site(entities, datacentre_id: str):
+    dim = entities["dim_datacentre"]
     row = dim[dim["DatacentreId"].astype(str) == str(datacentre_id)]
     return None if row.empty else row.iloc[0]
 
@@ -79,7 +79,7 @@ def _site(onto, datacentre_id: str):
 # --------------------------------------------------------------------------
 
 
-def _threshold_remediation(onto, site, count: int, crossing_for=None) -> tuple[str, list]:
+def _threshold_remediation(entities, site, count: int, crossing_for=None) -> tuple[str, list]:
     """What module 1 says about this site's headroom and when to decide."""
     # Capacity Units. The variable was called `cores` and the sentences it built
     # said "184 cores with 155 committed", on a page whose every other figure
@@ -103,7 +103,7 @@ def _threshold_remediation(onto, site, count: int, crossing_for=None) -> tuple[s
     # What module 1 already knows about when the region has to be decided on.
     order_by = ""
     try:
-        flag = module1.project_region(onto, str(site["Region"]),
+        flag = module1.project_region(entities, str(site["Region"]),
                                       crossing_for=crossing_for)
         if getattr(flag, "act_by_date", None):
             order_by = (f" The region has to be decided on by "
@@ -140,7 +140,7 @@ def _threshold_remediation(onto, site, count: int, crossing_for=None) -> tuple[s
 # --------------------------------------------------------------------------
 
 
-def _scale_remediation(onto, site, reason: str, count: int) -> tuple[str, list]:
+def _scale_remediation(entities, site, reason: str, count: int) -> tuple[str, list]:
     """What to do about a capacity-shortage cause at this site, in Fabric terms.
 
     This replaced a hardware conversion. The old text read "switching its 184
@@ -156,13 +156,13 @@ def _scale_remediation(onto, site, reason: str, count: int) -> tuple[str, list]:
     it, each with the rung to move to and what that leaves them running at.
     """
     dc = str(site["DatacentreId"])
-    caps = onto["dim_capacity"]
+    caps = entities["dim_capacity"]
     here = caps[caps["DatacentreId"].astype(str) == dc]
     if here.empty:
         return (f"{count} request(s) failed at {dc} for {reason.lower()}. "
                 f"No Fabric capacities are recorded in this data centre."), []
 
-    health = recommend._health(onto).set_index("CapacityId")
+    health = recommend._health(entities).set_index("CapacityId")
 
     options = []
     for _, row in here.iterrows():
@@ -226,10 +226,10 @@ def _scale_remediation(onto, site, reason: str, count: int) -> tuple[str, list]:
 # --------------------------------------------------------------------------
 
 
-def for_site(onto, datacentre_id: str, denied, revenue_by_reason=None,
+def for_site(entities, datacentre_id: str, denied, revenue_by_reason=None,
              crossing_for=None) -> list[Remediation]:
     """A computed recommendation per distinct cause at one facility."""
-    site = _site(onto, datacentre_id)
+    site = _site(entities, datacentre_id)
     if site is None or denied is None or not len(denied):
         return []
 
@@ -242,10 +242,10 @@ def for_site(onto, datacentre_id: str, denied, revenue_by_reason=None,
         options: list = []
 
         if module == "module1":
-            action, options = _threshold_remediation(onto, site, int(count),
+            action, options = _threshold_remediation(entities, site, int(count),
                                                      crossing_for)
         elif module == "module2":
-            action, options = _scale_remediation(onto, site, reason, int(count))
+            action, options = _scale_remediation(entities, site, reason, int(count))
         else:
             # No module owns this. Name the site and the volume, then hand it
             # to a person rather than inventing a fix.

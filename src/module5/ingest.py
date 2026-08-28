@@ -5,7 +5,7 @@ Mirrors the medallion layout in Section 9 of the solution document:
   Bronze  raw rows exactly as exported, nothing coerced
   Silver  typed, trimmed, de-duplicated, with data-quality findings recorded
   Gold    Silver joined to the Subscription reference (Incident -> Subscription
-          -> Region ontology), ready for the classifier and estimator
+          -> Region dimensional model), ready for the classifier and estimator
 
 Locally the "lakehouse" is just parquet/CSV on disk. In Fabric these three
 functions become the three notebook stages against Lakehouse tables; the
@@ -219,7 +219,7 @@ def to_gold(
     subscriptions: pd.DataFrame,
     dq: DataQualityReport | None = None,
 ) -> pd.DataFrame:
-    """Join Silver tickets to subscription context (the Gold ontology)."""
+    """Join Silver tickets to subscription context (the Gold dimensional model)."""
     gold = silver.merge(subscriptions, on="SubscriptionId", how="left")
 
     unmatched = gold.loc[gold["SubscriptionTier"].isna(), "SubscriptionId"]

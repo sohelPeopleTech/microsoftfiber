@@ -118,16 +118,16 @@ def _utilisation_at(usage: pd.DataFrame, region: str, when) -> float:
     return float(earlier.sort_values("Date").iloc[-1]["UtilisationPct"])
 
 
-def build_training_frame(onto, fact: pd.DataFrame | None = None) -> pd.DataFrame:
+def build_training_frame(entities, fact: pd.DataFrame | None = None) -> pd.DataFrame:
     """One row per request, with only what was knowable at request time.
 
-    `fact` replaces the ontology's request table -- used to score a simulated
+    `fact` replaces the dimensional model's request table -- used to score a simulated
     history through exactly the same feature code as the real one, so a result
     on simulation says something about the real path.
     """
-    fact = (onto["fact_capacity_request"] if fact is None else fact).copy()
-    regions = onto["dim_region"].set_index("Region")
-    usage = onto["fact_usage_daily"]
+    fact = (entities["fact_capacity_request"] if fact is None else fact).copy()
+    regions = entities["dim_region"].set_index("Region")
+    usage = entities["fact_usage_daily"]
 
     fact["raised_at"] = fact["DeniedDate"].fillna(fact["ApprovedDate"])
     fact["additional_units"] = fact["AdditionalLimitCapacity"].astype(float)
@@ -223,9 +223,9 @@ def evaluate(frame: pd.DataFrame, folds: int = 5, seed: int = 20260813) -> dict:
     }
 
 
-def train(onto, folds: int = 5) -> PropensityModel:
+def train(entities, folds: int = 5) -> PropensityModel:
     """Fit on everything, but report performance from cross-validation."""
-    frame = build_training_frame(onto)
+    frame = build_training_frame(entities)
     metrics = evaluate(frame, folds=folds)
 
     pipe = _make_pipeline()

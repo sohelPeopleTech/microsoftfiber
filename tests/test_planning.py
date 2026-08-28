@@ -39,8 +39,8 @@ from planning import recommend  # noqa: E402
 
 
 @pytest.fixture(scope="module")
-def onto():
-    from ontology.build import build
+def entities():
+    from dimensional.build import build
     return build(ROOT / "data" / "Synthetic_ICM_Capacity_Data.xlsx",
                  ROOT / "data" / "synthetic", ROOT / "data" / "reference")
 
@@ -93,14 +93,14 @@ def test_the_slow_scaling_boundary_is_flagged():
 # --------------------------------------------------------------------------
 
 
-def test_scale_up_covers_throttling_and_no_headroom(onto):
+def test_scale_up_covers_throttling_and_no_headroom(entities):
     """Two different cases, and the copy has to tell them apart.
 
     A capacity at interactive rejection is refusing users now. One at ninety per
     cent that has never throttled is not hurting anyone yet but has nothing left
     to absorb a surge -- and Fabric's overage protection is only ten minutes.
     """
-    recs = recommend.scale_up(onto)
+    recs = recommend.scale_up(entities)
     assert recs, "nothing to scale in an estate that throttles somewhere"
     throttling = [r for r in recs if r.evidence["isThrottling"]]
     airless = [r for r in recs if not r.evidence["isThrottling"]]
@@ -112,21 +112,21 @@ def test_scale_up_covers_throttling_and_no_headroom(onto):
         assert r.evidence["meanUtilisationPct"] >= SUSTAINED_HIGH_PCT
 
 
-def test_scale_up_never_promises_an_order_date(onto):
+def test_scale_up_never_promises_an_order_date(entities):
     """Scaling an F SKU is immediate. An earlier model raised purchase orders
     against provisioning lead times, which Fabric does not have -- if an order
     date ever reappears here, the Azure model has crept back in."""
-    for r in recommend.scale_up(onto):
+    for r in recommend.scale_up(entities):
         assert r.evidence.get("immediate") is True
         assert "orderByDate" not in r.evidence
         assert "leadTime" not in str(r.evidence)
         assert "order" not in r.headline.lower()
 
 
-def test_scale_up_always_names_a_real_next_sku(onto):
+def test_scale_up_always_names_a_real_next_sku(entities):
     from planning import F_SKUS
 
-    for r in recommend.scale_up(onto):
+    for r in recommend.scale_up(entities):
         e = r.evidence
         assert e["scaleTo"] in F_SKUS
         assert e["scaleToUnits"] == F_SKUS[e["scaleTo"]]
@@ -138,8 +138,8 @@ def test_scale_up_always_names_a_real_next_sku(onto):
 # --------------------------------------------------------------------------
 
 
-def test_a_move_needs_a_dominant_workspace_and_somewhere_to_go(onto):
-    for r in recommend.load_balance(onto):
+def test_a_move_needs_a_dominant_workspace_and_somewhere_to_go(entities):
+    for r in recommend.load_balance(entities):
         e = r.evidence
         assert e["workspaceSharePct"] >= DOMINANT_WORKSPACE_PCT
         assert e["workspacesOnCapacity"] > 1, (
@@ -148,18 +148,18 @@ def test_a_move_needs_a_dominant_workspace_and_somewhere_to_go(onto):
         assert e["moveTo"] and e["moveTo"] != r.target
 
 
-def test_a_move_never_targets_a_throttling_capacity(onto):
+def test_a_move_never_targets_a_throttling_capacity(entities):
     """Rebalancing onto something already refusing operations moves the problem."""
-    health = recommend._health(onto)
+    health = recommend._health(entities)
     throttling = set(health[health["ThrottledDays"] > 0]["CapacityId"])
-    for r in recommend.load_balance(onto):
+    for r in recommend.load_balance(entities):
         assert r.evidence["moveTo"] not in throttling, (
             f"{r.target} would move onto {r.evidence['moveTo']}, which throttles")
 
 
-def test_a_move_stays_inside_the_region(onto):
-    caps = onto["dim_capacity"].set_index("CapacityId")
-    for r in recommend.load_balance(onto):
+def test_a_move_stays_inside_the_region(entities):
+    caps = entities["dim_capacity"].set_index("CapacityId")
+    for r in recommend.load_balance(entities):
         assert caps.loc[r.evidence["moveTo"], "Region"] == r.evidence["region"]
 
 
@@ -168,25 +168,25 @@ def test_a_move_stays_inside_the_region(onto):
 # --------------------------------------------------------------------------
 
 
-def test_scale_down_never_touches_anything_that_throttled(onto):
+def test_scale_down_never_touches_anything_that_throttled(entities):
     """A capacity quiet six days a week and overloaded on the seventh is sized
     for the seventh. Averages alone would recommend shrinking it."""
-    for r in recommend.scale_down(onto):
+    for r in recommend.scale_down(entities):
         assert r.evidence["throttledDays"] == 0
         assert r.evidence["meanUtilisationPct"] < IDLE_PCT
 
 
-def test_scale_down_leaves_room_for_the_observed_peak(onto):
+def test_scale_down_leaves_room_for_the_observed_peak(entities):
     """Halving a capacity whose peak would then exceed its ceiling trades a
     standing cost for a throttling incident."""
-    for r in recommend.scale_down(onto):
+    for r in recommend.scale_down(entities):
         assert r.evidence["peakAfterScaleDownPct"] < SUSTAINED_HIGH_PCT
 
 
-def test_scale_down_warns_when_it_would_cross_below_f64(onto):
+def test_scale_down_warns_when_it_would_cross_below_f64(entities):
     """Saving on compute while forcing every viewer onto a Pro licence can cost
     more than it saves, so the recommendation has to say so."""
-    for r in recommend.scale_down(onto):
+    for r in recommend.scale_down(entities):
         if r.evidence["losesFreeViewers"]:
             assert "Pro" in r.detail or "PPU" in r.detail
 
@@ -196,14 +196,14 @@ def test_scale_down_warns_when_it_would_cross_below_f64(onto):
 # --------------------------------------------------------------------------
 
 
-def test_licensing_only_flags_the_rung_below_the_cliff(onto):
-    for r in recommend.licensing(onto):
+def test_licensing_only_flags_the_rung_below_the_cliff(entities):
+    for r in recommend.licensing(entities):
         assert r.evidence["capacityUnits"] < FREE_VIEWER_CU
         assert next_sku(r.evidence["fabricSku"]) == "F64"
 
 
-def test_licensing_cites_the_rule_and_its_source(onto):
-    recs = recommend.licensing(onto)
+def test_licensing_cites_the_rule_and_its_source(entities):
+    recs = recommend.licensing(entities)
     assert recs
     for r in recs[:5]:
         assert "F64" in r.evidence["rule"]
@@ -215,42 +215,42 @@ def test_licensing_cites_the_rule_and_its_source(onto):
 # --------------------------------------------------------------------------
 
 
-def test_capacity_health_reads_a_window_not_a_day(onto):
+def test_capacity_health_reads_a_window_not_a_day(entities):
     """A single throttled day is not evidence: capacities are self-healing and
     burndown clears a surge."""
-    h = capacity_health(onto["dim_capacity"], onto["fact_capacity_cu_daily"],
-                        onto["fact_throttling_event"], window_days=30)
+    h = capacity_health(entities["dim_capacity"], entities["fact_capacity_cu_daily"],
+                        entities["fact_throttling_event"], window_days=30)
     assert (h["WindowDays"] > 1).all()
     assert (h["ThrottledDays"] <= h["WindowDays"]).all()
 
 
-def test_bursting_is_not_treated_as_a_fault(onto):
+def test_bursting_is_not_treated_as_a_fault(entities):
     """Utilisation over 100% is normal in Fabric -- it is what smoothing exists
     for. If every bursting capacity were flagged, the list would be noise."""
-    h = recommend._health(onto)
+    h = recommend._health(entities)
     bursting = h[h["PeakUtilisationPct"] > 100]
     assert len(bursting), "expected some capacities to burst"
     quiet = bursting[bursting["ThrottledDays"] == 0]
     assert len(quiet), "every bursting capacity is flagged -- bursting is not a fault"
-    flagged = {r.target for r in recommend.scale_up(onto)}
+    flagged = {r.target for r in recommend.scale_up(entities)}
     assert not (set(quiet[quiet["MeanUtilisationPct"] < SUSTAINED_HIGH_PCT]["CapacityId"])
                 & flagged)
 
 
-def test_every_recommendation_carries_its_evidence(onto):
-    for r in recommend.all_recommendations(onto):
+def test_every_recommendation_carries_its_evidence(entities):
+    for r in recommend.all_recommendations(entities):
         assert r["headline"] and r["detail"]
         assert len(r["detail"]) > 60, f"{r['target']}: detail is a stub"
         assert r["evidence"].get("region")
         assert r["kind"] in ("scale_up", "load_balance", "scale_down", "licensing")
 
 
-def test_recommendations_are_ordered_by_urgency(onto):
-    urg = [r["urgency"] for r in recommend.all_recommendations(onto)]
+def test_recommendations_are_ordered_by_urgency(entities):
+    urg = [r["urgency"] for r in recommend.all_recommendations(entities)]
     assert urg == sorted(urg, reverse=True)
 
 
-def test_no_azure_hardware_vocabulary_survives(onto):
+def test_no_azure_hardware_vocabulary_survives(entities):
     """Fabric exposes no hardware, no vendors and no lead times. If any of those
     words reappear in what a user reads, the old model has crept back."""
     import re
@@ -261,7 +261,7 @@ def test_no_azure_hardware_vocabulary_survives(onto):
     banned = ["intel", "amd", "vendor", "lead time", "provisioning",
               "node", "nodes", "poweredge", "proliant", "gpu"]
     pattern = re.compile(r"\b(" + "|".join(re.escape(w) for w in banned) + r")\b")
-    for r in recommend.all_recommendations(onto):
+    for r in recommend.all_recommendations(entities):
         text = f"{r['headline']} {r['detail']}".lower()
         hit = pattern.search(text)
         assert not hit, (
@@ -269,7 +269,7 @@ def test_no_azure_hardware_vocabulary_survives(onto):
             f"...{text[max(0, hit.start() - 50):hit.end() + 50]}...")
 
 
-def test_no_recommendation_smuggles_markup_into_its_text(onto):
+def test_no_recommendation_smuggles_markup_into_its_text(entities):
     """`detail` and `headline` are rendered by three separate templates and all
     three escape them, so a <b> placed here for emphasis arrives on screen as
     the literal characters in front of the words it was meant to emphasise.
@@ -281,7 +281,7 @@ def test_no_recommendation_smuggles_markup_into_its_text(onto):
     import re
 
     tag = re.compile(r"</?[a-zA-Z][^>]*>")
-    for r in recommend.all_recommendations(onto):
+    for r in recommend.all_recommendations(entities):
         for field in ("headline", "detail"):
             hit = tag.search(r[field])
             assert not hit, (
