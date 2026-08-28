@@ -733,7 +733,7 @@ function capacityRows(d) {
           <b class="${bad ? "t-bad" : ""}">${wants.toFixed(1)} CU</b>
           <span class="t3">has ${num(c.capacityUnits)}</span></td>
         <td class="n">${num(c.workspaces)}</td>
-        <td title="${esc(p.why)}">${bad
+        <td data-info="${esc(p.why)}" title="${esc(p.why)}">${bad
           ? `<span class="pill ${p.tone}">${p.text}</span>`
           : `<span class="t3">fine</span>`}</td>
         <td class="n ${bad ? "t-bad" : ""}">${c.throttledDays
@@ -1160,7 +1160,7 @@ function scaleTable(list, up) {
         <td class="n" title="averaged over the last ${e.windowDays} days; it peaked at ${Math.round(e.peakUtilisationPct)}%">
           <b class="${p.tone === "bad" ? "t-bad" : "t-warn"}">${wants.toFixed(1)} CU</b>
           <span class="t3">has ${num(e.capacityUnits)}</span></td>
-        <td title="${esc(p.why)}"><span class="pill ${p.tone}">${p.text}</span></td>
+        <td data-info="${esc(p.why)}" title="${esc(p.why)}"><span class="pill ${p.tone}">${p.text}</span></td>
         <td class="n">${e.throttledDays
           ? `${e.throttledDays} of ${e.windowDays} days` : `<span class="t3">not yet</span>`}</td>
         <td class="n ${rejected ? "t-bad" : ""}">${rejected ? num(rejected) : "—"}</td>

@@ -243,3 +243,24 @@ def test_every_threshold_state_has_a_label_a_reader_can_act_on():
     assert not missing, (
         f"module 1 emits {missing} and shell.js gives them no label, so they "
         f"reach the screen as the raw key")
+
+
+def test_every_explanation_uses_the_one_tooltip_mechanism():
+    """`title` alone is the browser's tooltip: about a second's delay, one
+    OS-styled line, and poor with long text -- several of these explanations run
+    past 380 characters, and a reviewer hovering one reported seeing nothing.
+
+    shell.js draws them instead, from `data-info`. Anything carrying only a
+    `title` is back on the mechanism that failed, and the reader gets two
+    different hover behaviours in one product.
+    """
+    only_title = []
+    for n, line in _reader_facing_lines():
+        if 'title="${esc(' not in line:
+            continue
+        if "data-info=" in line:
+            continue
+        only_title.append(f"pages.js:{n}: {line.strip()[:110]}")
+    assert not only_title, (
+        "these explain themselves with `title` alone, which is the slow "
+        "browser tooltip:\n  " + "\n  ".join(only_title))

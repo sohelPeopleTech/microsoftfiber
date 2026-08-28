@@ -732,3 +732,21 @@ table.caps td .t3 { display: block; color: var(--ink-3); font-size: .74rem; font
    away right now. A region can be comfortable on one and severe on the other,
    because Capacity Units do not pool. */
 .refusing { display: block; font-size: .74rem; font-weight: 600; line-height: 1.3; margin-top: .22rem; }
+
+/* The explanation behind an "i" marker.
+
+   These used the browser's own `title` tooltip, which waits about a second,
+   renders one OS-styled line, and handles three hundred characters badly --
+   several of these run past three hundred and eighty. A reviewer hovering one
+   reported seeing nothing, which is what an unreadable explanation amounts to.
+
+   Fixed to the viewport rather than a parent: these markers sit inside panels
+   that scroll and table cells that clip, and a bubble positioned against
+   either gets cut off. shell.js flips it below the marker when there is no
+   room above and clamps it to the window on both sides. */
+.info-tip {
+  position: fixed; z-index: 60; max-width: 340px;
+  background: var(--ink); color: #fff; border-radius: 5px;
+  padding: .6rem .75rem; font-size: .78rem; line-height: 1.5;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .25); pointer-events: none;
+}

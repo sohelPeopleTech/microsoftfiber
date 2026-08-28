@@ -127,9 +127,77 @@ function kpi(label, value, sub, tone = "", help = "") {
   </div>`;
 }
 
+/* The little "i" beside a figure, and the explanation behind it.
+
+   These carried only a `title` attribute, which is the browser's own tooltip:
+   it waits about a second before appearing, renders as a single OS-styled
+   line, and handles three hundred characters of prose badly. Several of these
+   explanations run past three hundred and eighty. A reviewer hovering one
+   reported seeing nothing at all, which is the honest outcome -- the
+   explanation was there and unreadable, which is the same as absent.
+
+   The text now lives in a data attribute and is drawn by wireInfo() below.
+   `title` is kept as well: if the JavaScript has not run yet, the browser
+   tooltip is still better than silence. */
 function info(text) {
-  return ` <span class="info" tabindex="0" role="img"
-    aria-label="${esc(text)}" title="${esc(text)}">i</span>`;
+  return ` <span class="info" tabindex="0" role="button" aria-label="${esc(text)}"
+    data-info="${esc(text)}" title="${esc(text)}">i</span>`;
+}
+
+/* One tooltip element, and one set of listeners on the document.
+
+   Positioned against the viewport rather than a parent, because these markers
+   sit inside panels that scroll and table cells that clip -- a bubble
+   positioned relative to either gets cut off. Flipped below the marker when
+   there is no room above, and clamped to the window on both sides so an
+   explanation on the last column is not half off the screen.
+
+   Delegated rather than bound per element. The first version walked the view
+   after each route and attached listeners, which missed everything drawn
+   afterwards: the fleet map fetches its markers once the page has already
+   rendered, so twelve of its explanations were wired to nothing while the
+   forecast's forty-four worked. Anything carrying data-info now works whenever
+   it appears, including markup that has not been written yet. */
+function wireInfo() {
+  if (document.__infoWired) return;
+  document.__infoWired = true;
+
+  const tip = document.createElement("div");
+  tip.id = "info-tip";
+  tip.className = "info-tip";
+  tip.hidden = true;
+  document.body.appendChild(tip);
+
+  const hide = () => { tip.hidden = true; };
+  const show = (el) => {
+    const text = el.dataset.info;
+    if (!text) return;
+    tip.textContent = text;
+    tip.hidden = false;
+    const m = el.getBoundingClientRect();
+    const t = tip.getBoundingClientRect();
+    const pad = 8;
+    let left = m.left + m.width / 2 - t.width / 2;
+    left = Math.max(pad, Math.min(left, window.innerWidth - t.width - pad));
+    let top = m.top - t.height - 10;
+    if (top < pad) top = m.bottom + 10;          // no room above: sit below
+    tip.style.left = `${Math.round(left)}px`;
+    tip.style.top = `${Math.round(top)}px`;
+  };
+
+  const find = (ev) => ev.target instanceof Element
+    ? ev.target.closest("[data-info]") : null;
+
+  document.addEventListener("mouseover", (ev) => {
+    const el = find(ev);
+    if (el) show(el); else hide();
+  });
+  document.addEventListener("focusin", (ev) => {
+    const el = find(ev);
+    if (el) show(el);
+  });
+  document.addEventListener("focusout", hide);
+  window.addEventListener("scroll", hide, { passive: true });
 }
 
 /* Column heading with its own explanation. */
@@ -327,6 +395,7 @@ async function route() {
     $("view").innerHTML =
       `<p class="error">Could not load this page: ${esc(err.message)}</p>`;
   }
+  wireInfo();   // idempotent; listens on the document, so late markup is covered
 }
 
 /* Header badge: how many regions need an order placed. Shown app-wide because
