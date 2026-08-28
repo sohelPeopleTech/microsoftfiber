@@ -3084,12 +3084,32 @@ PAGES["/forecast"] = async (view) => {
             + `rather than shown.`)}
     </div>
     <details open style="margin-top:1rem"><summary style="cursor:pointer;color:var(--brand);font-size:.88rem">
-      All ${f.scores.length} candidates, scored — including ARIMA and SARIMA</summary>
+      All ${f.scores.length} models scored</summary>
       <div class="scroll-x" style="margin-top:.5rem"><table>
-        <thead><tr><th>Model</th><th class="n">MAPE</th><th class="n">RMSE</th>
-          <th class="n">Skill vs naive</th><th class="n">Folds</th></tr></thead>
+        <thead><tr><th>Model</th>
+          ${th("MAPE", "Mean absolute percentage error \u2014 on average, how far each "
+             + "prediction landed from what actually happened, as a percentage of the "
+             + "reading rather than in percentage points. A MAPE of 1% against a 90% "
+             + "utilisation reading is about 0.9 points. Lower is better.", "n")}
+          ${th("RMSE", "Root mean squared error, in percentage points. It squares each "
+             + "miss before averaging, so one large error counts for far more than "
+             + "several small ones \u2014 which is why the winner is chosen on this and "
+             + "not on MAPE. In capacity planning it is the single big miss that causes "
+             + "a denial, not a steady small drift.", "n")}
+          ${th("Skill vs naive", "How much better than doing nothing at all. The "
+             + "benchmark is the simplest forecast there is \u2014 carry the last "
+             + "reading forward, no model. This is the share of that benchmark's error "
+             + "the model removed. 0% means the modelling added nothing; below 0% it "
+             + "did worse than assuming no change.", "n")}
+          ${th("Folds", "How many separate stretches of the history the model was "
+             + "tested on. Each fold hides a different final period, fits on what came "
+             + "before it and marks the prediction against what happened. A model that "
+             + "failed to fit on some folds is listed with fewer, and cannot win \u2014 "
+             + "averaging only the stretches it managed would rank it against models "
+             + "that sat the whole exam.", "n")}
+        </tr></thead>
         <tbody>${f.scores.map((s, i) => `<tr>
-          <td>${i === 0 ? "<b>" : ""}${esc(s.model)}${i === 0 ? "</b> <span class=\"pill good\">chosen</span>" : ""}</td>
+          <td>${i === 0 ? `<b>${esc(s.model)}</b>` : esc(s.model)}</td>
           <td class="n">${s.mape.toFixed(2)}%</td>
           <td class="n">${s.rmse.toFixed(2)}</td>
           <td class="n" style="color:${s.skillVsNaive > 0 ? "var(--good)" : "var(--bad)"}">
