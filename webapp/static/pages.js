@@ -1511,7 +1511,7 @@ PAGES["/map"] = async (view) => {
   <section class="panel">
     <div class="body map-wrap">
       <div class="map-holder">
-        <div id="map-svg">${fleetMap(d)}</div>
+        <div id="map-svg">${globeMap(d, { lon0: -30, lat0: 22, zoom: 1 }, null)}</div>
         <div class="legend map-legend" id="map-legend">
           <span><i class="dot bad"></i>Past its safety line</span>
           <span><i class="dot warn"></i>Due to cross its line</span>
@@ -1536,9 +1536,14 @@ PAGES["/map"] = async (view) => {
      markers -- a handler bound once at page load would be attached to nodes
      that no longer exist the moment the box changes. */
   let focus = null;
-  function drawMap(next) {
+  // Where the viewer stands. The globe is rendered from this, and spinTo
+  // animates it -- so a region is reached by turning the world to it rather
+  // than by cutting to a new frame.
+  let camera = { lon0: -30, lat0: 22, zoom: 1 };
+  function drawMap(next, cam) {
     focus = next;
-    $("map-svg").innerHTML = fleetMap(d, focus);
+    if (cam) camera = cam;
+    $("map-svg").innerHTML = globeMap(d, camera, focus);
     $("map-legend").innerHTML = focus
       ? `<span><i class="dot bad"></i>Site past its own line</span>
          <span><i class="dot good"></i>Site with room</span>
@@ -1551,7 +1556,10 @@ PAGES["/map"] = async (view) => {
          <span class="t3">Marker area = Capacity Units</span>`;
     wireMarkers();
     const back = $("map-back");
-    if (back) back.onclick = (ev) => { ev.preventDefault(); drawMap(null); };
+    if (back) back.onclick = (ev) => {
+      ev.preventDefault();
+      spinTo(camera, { lon0: -30, lat0: 22, zoom: 1 }, 620, (cam) => drawMap(null, cam));
+    };
   }
 
   function wireMarkers() {
@@ -1592,7 +1600,12 @@ PAGES["/map"] = async (view) => {
     try {
       const d = await get(`/api/map/${encodeURIComponent(region)}`);
       if (pending !== token) return;
-      if (zoom) drawMap({ region, sites: d.sites || [] });
+      if (zoom) {
+        const p = byRegion[region];
+        const target = { lon0: p.lon, lat0: p.lat, zoom: 2.2 };
+        const next = { region, sites: d.sites || [] };
+        spinTo(camera, target, 620, (cam) => drawMap(next, cam));
+      }
       detail.innerHTML = mapDetail(d);
       const close = $("detail-close");
       if (close) close.onclick = (ev) => { ev.preventDefault(); detail.innerHTML = ""; };

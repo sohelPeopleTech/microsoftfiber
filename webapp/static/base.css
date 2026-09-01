@@ -771,3 +771,18 @@ table.caps td .t3 { display: block; color: var(--ink-3); font-size: .74rem; font
 .site-mk:hover, .site-mk:focus { stroke-width: 2.6px; outline: none; }
 .fleet-map.zoomed { transition: none; }
 #map-legend a { margin-left: auto; font-size: .78rem; }
+
+/* The globe. Lit from the upper left so the sphere reads as a sphere; the
+   land, graticule and rim are separate tokens so a dark theme can relight it
+   without touching the projection. */
+:root {
+  --globe-hi: #dceaf7; --globe-mid: #bcd4ea; --globe-lo: #7f9dbb;
+  --globe-land: #eef2f5; --globe-edge: #c2cdd8;
+  --globe-grat: rgba(255,255,255,.5); --globe-rim: #8fa6bd;
+}
+.globe { width: 100%; height: auto; max-height: 560px; display: block; margin: 0 auto; }
+.globe circle.mk { cursor: pointer; stroke-width: 1.5px; }
+.globe circle.mk:hover, .globe circle.mk:focus-visible { stroke: var(--ink); stroke-width: 2.4px; outline: none; }
+.globe circle.mk.on { stroke: var(--ink); stroke-width: 2.4px; }
+.globe circle.site-mk { cursor: pointer; stroke-width: 1.5px; }
+.globe circle.site-mk:hover, .globe circle.site-mk:focus-visible { stroke: var(--ink); stroke-width: 2.6px; outline: none; }

@@ -315,3 +315,53 @@ def test_the_regions_table_body_has_a_cell_for_every_heading():
     assert cells >= len(headings), (
         f"{len(headings)} headings but only {cells} cells in the row -- the "
         f"body and COLS have drifted apart")
+
+
+def test_every_script_the_page_loads_exists_and_loads_in_order():
+    """globe.js reads WORLD_PATH, so world.js has to come first.
+
+    It was written, wired into pages.js, and never added to app.html -- so
+    `globeMap` was undefined and the map page threw on render. Nothing in the
+    suite noticed: the function existed, the caller existed, and the file was
+    simply never delivered to the browser.
+    """
+    html = (ROOT / "webapp" / "static" / "app.html").read_text()
+    scripts = re.findall(r'<script src="/static/([^"]+)"', html)
+    assert scripts, "app.html loads no scripts -- update this test"
+
+    for name in scripts:
+        assert (ROOT / "webapp" / "static" / name).exists(), (
+            f"app.html loads {name}, which is not in webapp/static")
+
+    # Dependencies, as a pair of (needs, must come first).
+    for needer, dependency in [("globe.js", "world.js"), ("pages.js", "shell.js")]:
+        if needer in scripts and dependency in scripts:
+            assert scripts.index(dependency) < scripts.index(needer), (
+                f"{needer} runs before {dependency}, which it reads from")
+
+    # And every file pages.js actually calls into has to be delivered. Checking
+    # only the listed scripts cannot catch a missing one -- the list is simply
+    # shorter and still internally consistent, which is why the first version
+    # of this test passed against the very bug it was written for.
+    defined: dict[str, str] = {}
+    for f in sorted((ROOT / "webapp" / "static").glob("*.js")):
+        for name in re.findall(r"(?m)^function\s+(\w+)\s*\(", f.read_text()):
+            defined.setdefault(name, f.name)
+    called = set(re.findall(r"\b(\w+)\s*\(", JS))
+    missing = sorted({defined[n] for n in called
+                      if n in defined and defined[n] not in scripts
+                      and defined[n] != "pages.js"})
+    assert not missing, (
+        f"pages.js calls into {missing}, which app.html never loads -- the "
+        f"function exists, the caller exists, and the browser never gets it")
+
+
+def test_the_map_page_draws_the_globe():
+    """Review asked for the map to be three-dimensional. If the flat renderer
+    comes back the globe is gone, and the zoom-to-region behaviour with it."""
+    block = JS[JS.index('PAGES["/map"]'):]
+    block = block[:block.index('PAGES["/regions"]')]
+    assert "globeMap(" in block, "the map page no longer renders the globe"
+    assert "spinTo(" in block, (
+        "the globe no longer turns to a region -- review asked for it to zoom "
+        "in on click, not to cut to a new frame")
