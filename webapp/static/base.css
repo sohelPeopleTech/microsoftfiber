@@ -375,11 +375,20 @@ svg.chart text { font-family: var(--sans); }
 
 .fleet-map { border-radius: 4px; }
 .fleet-map circle.mk { cursor: pointer; transition: r .08s ease, stroke-width .08s ease; }
-.fleet-map circle.mk:hover { stroke-width: .9; }
+.fleet-map circle.mk:hover { stroke-width: 2.4px; }
 /* The selected marker keeps a ring rather than changing colour: colour is
    already carrying the region's state and must not mean two things. */
-.fleet-map circle.mk.on { stroke: var(--ink); stroke-width: 1; }
-.fleet-map circle.mk:focus-visible { outline: none; stroke: var(--ink); stroke-width: 1.1; }
+/* Stroke widths in screen pixels, not degrees.
+
+   The viewBox is degrees, so a 1-unit stroke is one degree of longitude. On
+   the world that reads as a hairline; zoomed into a sixty-degree window it is
+   six times heavier and swallowed the marker whole -- the selected region drew
+   as a black disc. non-scaling-stroke keeps the outline constant however far
+   the box is wound in. */
+.fleet-map circle.mk,
+.fleet-map circle.site-mk { vector-effect: non-scaling-stroke; stroke-width: 1.4px; }
+.fleet-map circle.mk.on { stroke: var(--ink); stroke-width: 2.4px; }
+.fleet-map circle.mk:focus-visible { outline: none; stroke: var(--ink); stroke-width: 2.6px; }
 
 .map-summary { display: flex; flex-wrap: wrap; gap: .5rem 2rem; font-size: .88rem; }
 .map-summary b { font-size: 1.05rem; }
@@ -754,3 +763,11 @@ table.caps td .t3 { display: block; color: var(--ink-3); font-size: .74rem; font
 /* "1,976 of 2,476" -- the utilised count with its denominator, after review
    asked for the separate Utilisation card to be folded into this one. */
 .kpi .kpi-of { font-size: .55em; font-weight: 400; color: var(--ink-3); }
+
+/* A data centre on the zoomed map. Sites are drawn on a ring anchored to the
+   region because their real positions are not published -- the legend says so
+   whenever the map is zoomed. */
+.site-mk { cursor: pointer; transition: r .12s ease; }
+.site-mk:hover, .site-mk:focus { stroke-width: 2.6px; outline: none; }
+.fleet-map.zoomed { transition: none; }
+#map-legend a { margin-left: auto; font-size: .78rem; }

@@ -889,7 +889,6 @@ def datacentre_detail(datacentre_id: str):
         "capacityUnitsFree": _clean(site.get("FreeUnits")),
         "thresholdPct": _clean(site.get("ThresholdPct")),
         "headroom": _clean(site.get("HeadroomToThreshold")),
-        "failedCount": len([x for x in tickets if x.get("isFlagged")]),
         "recommendations": reasons,
         # Was `hardware` ("Intel-highmem") and `leadTimeDays` (45). Fabric
         # exposes neither, and the page printed both above a table of F SKUs.
@@ -1228,6 +1227,13 @@ def _smallest_sku_covering(units: float) -> str:
     return max(admission.F_SKUS, key=lambda k: admission.F_SKUS[k])
 
 
+def _site_utilisation(site) -> float:
+    """A data centre's own utilisation, from its own deployed and used units."""
+    deployed = float(getattr(site, "DeployedUnits", 0) or 0)
+    used = float(getattr(site, "UsedUnits", 0) or 0)
+    return (used / deployed * 100.0) if deployed else 0.0
+
+
 @lru_cache(maxsize=1)
 def _region_site_rollup() -> dict[str, dict]:
     """A region read as the sum of its data centres, not as one average.
@@ -1427,7 +1433,11 @@ def capacity_map():
             "capacities": int(c["capacities"]) if c is not None else 0,
             "sites": int(c["sites"]) if c is not None else 0,
             "throttling": throttling_by_region.get(region, {}),
-            "sites": rollup_by_region.get(region, {}),
+            # Not "sites": that key already holds the count two lines up, and a
+            # second one of the same name silently replaced it -- the marker
+            # card read "27 capacities in 0 sites" because a dict reached a
+            # number formatter.
+            "sitesRollup": rollup_by_region.get(region, {}),
             "capacityUnits": int(c["cu"]) if c is not None else 0,
             "coresPending": e.get("CoresPending", 0),
             "failed": e.get("TicketsFlagged", 0),
@@ -1511,6 +1521,14 @@ def map_region(region: str):
             "interactiveRejected": int(here["InteractiveRejected"].sum()) if len(here) else 0,
             "backgroundRejected": int(here["BackgroundRejected"].sum()) if len(here) else 0,
             "freeViewerCapable": int(here["SupportsFreeViewers"].sum()) if len(here) else 0,
+            # The site's own safety line, and where it stands against it. The
+            # threshold lives on the data centre -- review was explicit -- so a
+            # site drawn on the map has to be coloured by its own line rather
+            # than inherit the region's.
+            "thresholdPct": round(float(getattr(s_, "ThresholdPct", 0) or 0), 1),
+            "utilisationPct": round(_site_utilisation(s_), 1),
+            "overThreshold": bool(_site_utilisation(s_) >
+                                  float(getattr(s_, "ThresholdPct", 0) or 0)),
         })
     sites.sort(key=lambda s: -s["capacityUnits"])
 

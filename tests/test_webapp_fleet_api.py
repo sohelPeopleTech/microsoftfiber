@@ -831,3 +831,26 @@ def test_a_region_can_look_comfortable_and_still_not_cover_its_pipeline():
         "it has been asked for -- the roll-up says nothing the average did not")
     for r in hidden:
         assert r["sites"]["shortBy"] > 0
+
+
+def test_no_endpoint_builds_a_dict_with_the_same_key_twice():
+    """Python keeps the last, so the earlier value vanishes without a word.
+
+    A roll-up was added to the map marker under "sites", which already held the
+    count of data centres. The dict replaced the number, `num()` was handed an
+    object, and the card read "27 capacities in 0 sites" -- correct syntax,
+    correct types, wrong answer, and nothing anywhere to catch it.
+    """
+    import ast
+    from pathlib import Path as _P
+
+    src = (_P(__file__).resolve().parents[1] / "webapp" / "api.py").read_text()
+    offenders = []
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Dict):
+            continue
+        names = [k.value for k in node.keys
+                 if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+        for name in {n for n in names if names.count(n) > 1}:
+            offenders.append(f"line {node.lineno}: {name!r} appears twice")
+    assert not offenders, "\n  ".join(["duplicate keys in a payload:"] + offenders)

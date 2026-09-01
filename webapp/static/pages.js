@@ -960,7 +960,34 @@ function mapTone(p) {
 
 const MAP_TONE_FILL = { bad: "var(--bad)", warn: "var(--warn)", good: "var(--good)" };
 
-function fleetMap(d) {
+/* Where a region's data centres are drawn, and the honest caveat on it.
+
+   Region coordinates are real -- Azure publishes them and they are marked REAL
+   in the model. Individual data centre locations are not published, by design,
+   so there is nothing to plot. Review asked to see the sites on the map after
+   clicking a region, and the truthful way is to anchor them on the region and
+   say plainly that the ring is a layout rather than a location. Ten invented
+   pins on a real map, at the same fidelity as the region markers, would be a
+   figure someone screenshots and quotes. */
+const SITE_RING_DEGREES = 3.4;
+
+function siteRing(cx, cy, n) {
+  if (n === 1) return [{ x: cx, y: cy - SITE_RING_DEGREES }];
+  return Array.from({ length: n }, (_, i) => {
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+    return { x: cx + Math.cos(a) * SITE_RING_DEGREES,
+             y: cy + Math.sin(a) * SITE_RING_DEGREES * 0.72 };
+  });
+}
+
+/* The fleet, or one region with its data centres.
+
+   `focus` is null for the world view. Given a region and its sites the viewBox
+   windows onto that region -- the projection is already in degrees, so zooming
+   is arithmetic on the box and needs no projection code -- and the sites are
+   drawn around it, each coloured by its own safety line rather than by the
+   region's, because the threshold lives on the data centre. */
+function fleetMap(d, focus) {
   const W = WORLD_VIEWBOX, pad = 2;
   const pts = spreadMarkers(
     d.points
@@ -975,17 +1002,31 @@ function fleetMap(d) {
   const maxUnits = Math.max(...pts.map((p) => p.capacityUnits), 1);
   const radius = (u) => 1.6 + 2.9 * Math.sqrt(u / maxUnits);
 
-  return `<svg class="chart fleet-map" viewBox="${W.x} ${W.y - pad} ${W.w} ${W.h + pad * 2}"
-      role="img" aria-label="Capacity by region, on a world map">
-    <rect x="${W.x}" y="${W.y - pad}" width="${W.w}" height="${W.h + pad * 2}" fill="var(--map-sea)"/>
+  // Zoomed, the box is a window on the region; otherwise it is the world.
+  const hit = focus && pts.find((p) => p.region === focus.region);
+  const span = 30;
+  const box = hit
+    ? { x: hit.mx - span, y: hit.my - span * 0.42, w: span * 2, h: span * 0.84 }
+    : { x: W.x, y: W.y - pad, w: W.w, h: W.h + pad * 2 };
+  const k = box.w / W.w;              // shrink strokes and labels with the box
+
+  return `<svg class="chart fleet-map${hit ? " zoomed" : ""}"
+      viewBox="${box.x.toFixed(2)} ${box.y.toFixed(2)} ${box.w.toFixed(2)} ${box.h.toFixed(2)}"
+      role="img" aria-label="${hit ? `Data centres in ${esc(focus.region)}`
+                                  : "Capacity by region, on a world map"}">
+    <rect x="${box.x.toFixed(2)}" y="${box.y.toFixed(2)}" width="${box.w.toFixed(2)}"
+      height="${box.h.toFixed(2)}" fill="var(--map-sea)"/>
     <path d="${WORLD_PATH}" fill="var(--map-land)" stroke="var(--map-edge)" stroke-width=".25"/>
     ${pts.map((p) => {
       const tone = mapTone(p);
-      const r = radius(p.capacityUnits);
+      // Radii are in degrees, and the box shrinks by k when zoomed -- so a
+      // marker sized for a 360-degree world is six times too big inside a
+      // 60-degree window. It filled the frame.
+      const r = radius(p.capacityUnits) * k;
       return `
       ${p.moved ? `<line x1="${(p.lon + 180).toFixed(2)}" y1="${(90 - p.lat).toFixed(2)}"
         x2="${p.mx.toFixed(2)}" y2="${p.my.toFixed(2)}"
-        stroke="var(--ink-3)" stroke-width=".2" opacity=".55"/>` : ""}
+        stroke="var(--ink-3)" stroke-width="${(0.2 * k).toFixed(3)}" opacity=".55"/>` : ""}
       <circle class="mk" data-region="${esc(p.region)}"
         cx="${p.mx.toFixed(2)}" cy="${p.my.toFixed(2)}" r="${r.toFixed(2)}"
         fill="${MAP_TONE_FILL[tone]}" fill-opacity=".85"
@@ -994,6 +1035,26 @@ function fleetMap(d) {
         <title>${esc(p.region)} — ${p.utilisation}% used</title>
       </circle>`;
     }).join("")}
+    ${hit && focus.sites && focus.sites.length ? (() => {
+      const ring = siteRing(hit.mx, hit.my, focus.sites.length);
+      return focus.sites.map((st, i) => {
+        const at = ring[i], full = st.overThreshold;
+        return `
+        <line x1="${hit.mx.toFixed(2)}" y1="${hit.my.toFixed(2)}"
+          x2="${at.x.toFixed(2)}" y2="${at.y.toFixed(2)}"
+          stroke="var(--ink-3)" stroke-width="${(0.22 * k).toFixed(3)}" opacity=".4"/>
+        <circle class="site-mk${full ? " full" : ""}" data-dc="${esc(st.datacentre)}"
+          cx="${at.x.toFixed(2)}" cy="${at.y.toFixed(2)}" r="${(2.0 * k).toFixed(2)}"
+          fill="${full ? MAP_TONE_FILL.bad : MAP_TONE_FILL.good}" fill-opacity=".9"
+          stroke="#fff" stroke-width="${(0.5 * k).toFixed(3)}" tabindex="0" role="button"
+          aria-label="${esc(st.datacentre)}, ${st.utilisationPct}% of its own ${st.thresholdPct}% line">
+          <title>${esc(st.datacentre)} — ${st.utilisationPct}% of its own ${st.thresholdPct}% line, ${num(st.capacityUnits)} CU</title>
+        </circle>
+        <text x="${at.x.toFixed(2)}" y="${(at.y + 4.6 * k).toFixed(2)}" text-anchor="middle"
+          font-size="${(2.2 * k).toFixed(2)}" fill="var(--ink-2)"
+          style="pointer-events:none">${esc(st.datacentre.split("-").pop())}</text>`;
+      }).join("");
+    })() : ""}
   </svg>`;
 }
 
@@ -1449,8 +1510,9 @@ PAGES["/map"] = async (view) => {
 
   <section class="panel">
     <div class="body map-wrap">
-      <div class="map-holder">${fleetMap(d)}
-        <div class="legend map-legend">
+      <div class="map-holder">
+        <div id="map-svg">${fleetMap(d)}</div>
+        <div class="legend map-legend" id="map-legend">
           <span><i class="dot bad"></i>Past its safety line</span>
           <span><i class="dot warn"></i>Due to cross its line</span>
           <span><i class="dot good"></i>Inside its line</span>
@@ -1468,15 +1530,59 @@ PAGES["/map"] = async (view) => {
   const byRegion = Object.fromEntries(d.points.map((p) => [p.region, p]));
   const side = $("map-side");
 
+  /* Redraw the map, zoomed on a region or back out to the world.
+
+     The SVG is replaced rather than mutated, so every redraw rewires its own
+     markers -- a handler bound once at page load would be attached to nodes
+     that no longer exist the moment the box changes. */
+  let focus = null;
+  function drawMap(next) {
+    focus = next;
+    $("map-svg").innerHTML = fleetMap(d, focus);
+    $("map-legend").innerHTML = focus
+      ? `<span><i class="dot bad"></i>Site past its own line</span>
+         <span><i class="dot good"></i>Site with room</span>
+         <span class="t3">Positions are a layout, not locations \u2014 Microsoft does
+           not publish where individual data centres are</span>
+         <a href="#" id="map-back">\u2190 all regions</a>`
+      : `<span><i class="dot bad"></i>Past its safety line</span>
+         <span><i class="dot warn"></i>Due to cross its line</span>
+         <span><i class="dot good"></i>Inside its line</span>
+         <span class="t3">Marker area = Capacity Units</span>`;
+    wireMarkers();
+    const back = $("map-back");
+    if (back) back.onclick = (ev) => { ev.preventDefault(); drawMap(null); };
+  }
+
+  function wireMarkers() {
+    view.querySelectorAll("circle.mk").forEach((c) => {
+      c.classList.toggle("on", !!focus && c.dataset.region === focus.region);
+      c.addEventListener("click", () => select(c.dataset.region));
+      c.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(c.dataset.region); }
+      });
+    });
+    // A site opens the data centre, which is where its own KPIs already live.
+    view.querySelectorAll("circle.site-mk").forEach((c) => {
+      const go = () => navigate(`/datacentre/${encodeURIComponent(c.dataset.dc)}`);
+      c.addEventListener("click", go);
+      c.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); }
+      });
+    });
+  }
+
   const detail = $("map-detail");
   let pending = null;
 
-  async function select(region) {
+  /* `zoom` is false for the selection made on arrival. The page opens on
+     whatever is worst so it says something before anyone clicks, but opening
+     zoomed into that region would throw away the fleet view -- which is the
+     whole point of the landing screen. Zooming is a thing a reader asks for. */
+  async function select(region, { zoom = true } = {}) {
     const p = byRegion[region];
     if (!p) return;
     side.innerHTML = mapCard(p);
-    view.querySelectorAll("circle.mk").forEach((c) =>
-      c.classList.toggle("on", c.dataset.region === region));
 
     // The drill-down is a second request, so a slow one must not paint over a
     // marker picked after it. Only the newest selection is allowed to render.
@@ -1486,6 +1592,7 @@ PAGES["/map"] = async (view) => {
     try {
       const d = await get(`/api/map/${encodeURIComponent(region)}`);
       if (pending !== token) return;
+      if (zoom) drawMap({ region, sites: d.sites || [] });
       detail.innerHTML = mapDetail(d);
       const close = $("detail-close");
       if (close) close.onclick = (ev) => { ev.preventDefault(); detail.innerHTML = ""; };
@@ -1501,18 +1608,12 @@ PAGES["/map"] = async (view) => {
     a.addEventListener("click", (ev) => { ev.preventDefault(); select(a.dataset.region); });
   });
 
-  view.querySelectorAll("circle.mk").forEach((c) => {
-    c.addEventListener("click", () => select(c.dataset.region));
-    // Keyboard: the markers are focusable, so they have to answer to a key.
-    c.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(c.dataset.region); }
-    });
-  });
+  wireMarkers();
 
   // Open on whatever is worst, so the page is useful before anyone clicks.
   const worst = [...d.points].sort((a, b) =>
     (b.utilisation ?? 0) - (a.utilisation ?? 0))[0];
-  if (worst) select(worst.region);
+  if (worst) select(worst.region, { zoom: false });
 };
 
 PAGES["/regions"] = async (view) => {
