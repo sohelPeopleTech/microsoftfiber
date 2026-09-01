@@ -1061,8 +1061,6 @@ function fleetMap(d, focus) {
 /* What a marker says when you land on it. Deliberately the four questions that
    were four tabs, in the order a planner asks them. */
 function mapCard(p) {
-  const gaps = p.unavailableFeatures || [];
-  const recs = p.recommendations || {};
   const tone = mapTone(p);
   return `
   <div class="map-card">
@@ -1080,38 +1078,16 @@ function mapCard(p) {
       <div><span>Current capacity usage</span><b class="${tone === "bad" ? "t-bad" : tone === "warn" ? "t-warn" : ""}">
         ${p.utilisation != null ? pct(p.utilisation, 1) : "—"}
         <span class="t3">of a ${p.thresholdPct != null ? pct(p.thresholdPct, 1) : "—"} line</span></b></div>
-      <div><span>Crosses</span><b class="${p.status === "breached" ? "t-bad" : ""}">${p.crossingDate ? esc(p.crossingDate)
-        : (p.status === "breached" ? "already past it" : "not within the year")}</b></div>
-      <div><span>Fleet</span><b>${num(p.capacities)} capacities in ${num(p.sites)} sites
-        <span class="t3">· ${num(p.capacityUnits)} CU</span></b></div>
-      <div><span>Capacity</span><b>${num(p.capacityUnits || 0)} CU
-        <span class="t3">across ${num(p.capacities)} Fabric capacities</span></b></div>
+      ${/* Crosses, Fleet, Capacity and Workloads used to sit here, and the
+            recommendation counts under them. All four are on the panel that
+            opens below the map the moment a region is picked, and the region
+            page states them again -- so beside the globe they were a third
+            copy competing with the thing the reader clicked to see. What is
+            left is the one figure the marker's colour is derived from, and the
+            two links out. */ ""}
       ${p.coresPending ? `<div><span>Owed</span><b>${num(p.coresPending)} CU pending
         <span class="t3">· ${num(p.failed)} failed requests</span></b></div>` : ""}
-      ${/* One line here, the breakdown below the map. This card was carrying
-            the whole availability block -- both lists and every missing feature
-            named -- and the panel underneath said it again in full. One of the
-            two had to be a summary, and the card is the one that has to fit
-            beside a map. */ ""}
-      ${/* "6 of 9 fully available" was the first wording and it was wrong in
-            the way that matters: it reads as three workloads being absent, when
-            all nine run and only named features inside three of them do not.
-            Lead with what runs; the gap is the qualifier, not the headline. */ ""}
-      <div><span>Workloads</span><b>${p.powerBIOnly
-        ? `Power BI only <span class="t3">· Fabric workloads do not run here</span>`
-        : `All ${p.workloadCount || 9} run here
-           <span class="t3">${(p.workloadsPartlyAffected || []).length
-             ? `· ${(p.workloadsPartlyAffected || []).length} missing a feature`
-             : "· nothing missing"}</span>`}</b></div>
     </div>
-
-    ${(recs.scale_up || recs.load_balance || recs.scale_down || recs.licensing) ? `
-      <p class="acts">
-        ${recs.scale_up ? `<a href="/recommendations?region=${encodeURIComponent(p.region)}&kind=scale_up" class="warn">${recs.scale_up} to scale up</a>` : ""}
-        ${recs.load_balance ? `<a href="/recommendations?region=${encodeURIComponent(p.region)}&kind=load_balance" class="warn">${recs.load_balance} to rebalance</a>` : ""}
-        ${recs.scale_down ? `<a href="/recommendations?region=${encodeURIComponent(p.region)}&kind=scale_down">${recs.scale_down} to scale down</a>` : ""}
-        ${recs.licensing ? `<a href="/recommendations?region=${encodeURIComponent(p.region)}&kind=licensing">${recs.licensing} licensing</a>` : ""}
-      </p>` : `<p class="acts t3">Nothing outstanding here.</p>`}
 
     <p class="links">
       <a href="/region/${encodeURIComponent(p.region)}">Open ${esc(p.region)}</a> ·
@@ -1475,19 +1451,19 @@ function mapDetail(d) {
 PAGES["/map"] = async (view) => {
   const d = await get("/api/map");
 
-  /* Two states count as at risk: past the safety line, and still inside it but
-     with an order already overdue. They are the red and amber markers. Naming
-     the regions rather than counting them saves a reader hunting the map for
-     which two of eleven a number meant. */
-  const past = d.points.filter((p) => p.status === "breached");
-  const late = d.points.filter((p) => p.status === "overdue" || p.status === "due_now");
+  /* The strip that used to sit above the globe -- "11 regions, 2 past their
+     safety line, 3 due to cross it" -- has gone. It restated in words what the
+     markers say in colour, directly above the thing it was describing, and it
+     pushed the globe down the page. The Regions tab carries the same counts in
+     a table that can be sorted and read properly. */
 
   view.innerHTML = howto({
     answers: "<b>Where the fleet stands, on one screen.</b> Every region as a point: how full it is against its own safety line, when it crosses, what has to be scaled, and which Fabric workloads will not run there.",
     steps: [
       { what: "Marker colour", is: "the region's state against <i>its own</i> threshold — red is past it, amber is forecast to cross it, green is inside it. The same three states the pills use elsewhere." },
       { what: "Marker size", is: "Capacity Units deployed, by area rather than radius so a region twice the size looks twice the size." },
-      { what: "Selecting one", is: "opens its card beside the map. It stays open while you pick another, because the question is usually which of two regions is worse." },
+      { what: "Turning the globe", is: "drag it. The + and − buttons wind in and out. Only the near hemisphere is drawn, so regions on the far side appear as you turn towards them." },
+      { what: "Selecting one", is: "turns the globe to that region, winds in, and shows the data centres inside it. Its card opens beside the map and the full detail opens below." },
       { what: "Overlapping points", is: "eastus and eastus2 are both in Virginia, and three European regions sit within four degrees. Markers that would cover each other are nudged apart and joined to their true position by a hairline." },
     ],
     words: [
@@ -1499,19 +1475,14 @@ PAGES["/map"] = async (view) => {
     sources: "Azure region coordinates and Microsoft Fabric regional availability are real. Capacities, their CU consumption and their throttling history are generated — every generated row carries its provenance.",
   }) + `
 
-  <section class="panel"><div class="body map-summary">
-    <span><b>${d.points.length}</b> regions</span>
-    ${past.length ? `<span><b class="t-bad">${past.length}</b> past their safety line
-      ${past.map((p) => `<a href="#" class="pick t-bad" data-region="${esc(p.region)}">${esc(p.region)}</a>`).join(" ")}</span>` : ""}
-    ${late.length ? `<span><b class="t-warn">${late.length}</b> due to cross it
-      ${late.map((p) => `<a href="#" class="pick t-warn" data-region="${esc(p.region)}">${esc(p.region)}</a>`).join(" ")}</span>` : ""}
-    ${!past.length && !late.length ? `<span class="t3">Nothing at risk.</span>` : ""}
-  </div></section>
-
   <section class="panel">
     <div class="body map-wrap">
       <div class="map-holder">
         <div id="map-svg">${globeMap(d, { lon0: -30, lat0: 22, zoom: 1 }, null)}</div>
+        <div class="map-zoom">
+          <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+          <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+        </div>
         <div class="legend map-legend" id="map-legend">
           <span><i class="dot bad"></i>Past its safety line</span>
           <span><i class="dot warn"></i>Due to cross its line</span>
@@ -1565,14 +1536,19 @@ PAGES["/map"] = async (view) => {
   function wireMarkers() {
     view.querySelectorAll("circle.mk").forEach((c) => {
       c.classList.toggle("on", !!focus && c.dataset.region === focus.region);
-      c.addEventListener("click", () => select(c.dataset.region));
+      // Not after a drag: spinning the globe with a marker under the cursor
+      // would otherwise open that region as soon as the pointer is lifted.
+      c.addEventListener("click", () => { if (!dragged) select(c.dataset.region); });
       c.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(c.dataset.region); }
       });
     });
     // A site opens the data centre, which is where its own KPIs already live.
     view.querySelectorAll("circle.site-mk").forEach((c) => {
-      const go = () => navigate(`/datacentre/${encodeURIComponent(c.dataset.dc)}`);
+      const go = () => {
+        if (dragged) return;
+        navigate(`/datacentre/${encodeURIComponent(c.dataset.dc)}`);
+      };
       c.addEventListener("click", go);
       c.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); }
@@ -1616,10 +1592,98 @@ PAGES["/map"] = async (view) => {
     }
   }
 
-  // The named regions in the strip select the same way a marker does.
-  view.querySelectorAll("a.pick").forEach((a) => {
-    a.addEventListener("click", (ev) => { ev.preventDefault(); select(a.dataset.region); });
+  /* Turning the globe by hand, and the two zoom buttons.
+
+     ZOOM
+         Bounded at both ends. Below about 0.85 the globe is a dot with eleven
+         markers stacked on it; above 4.5 the horizon is off-screen and there
+         is nothing left to orient by. Each press animates through spinTo, the
+         same easing a region selection uses, so the two do not feel like
+         different controls.
+
+     DRAG
+         Every handler is on `.map-holder` with the pointer captured, not on
+         `window`. The obvious version listens on window so the drag survives
+         the pointer leaving the element -- but route() replaces the view and
+         those listeners stay bound to a detached globe, so every visit to this
+         tab leaves another one running. Pointer capture gives the same
+         behaviour and dies with the DOM. The holder is also safe to bind to
+         because only `#map-svg`'s contents are replaced on redraw, never the
+         holder itself. */
+  const ZOOM_MIN = 0.85, ZOOM_MAX = 4.5;
+
+  function zoomBy(factor) {
+    const z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, camera.zoom * factor));
+    if (Math.abs(z - camera.zoom) < 0.001) return;
+    spinTo(camera, { ...camera, zoom: z }, 260, (cam) => drawMap(focus, cam));
+  }
+  $("zoom-in").onclick = () => zoomBy(1.4);
+  $("zoom-out").onclick = () => zoomBy(1 / 1.4);
+
+  const holder = view.querySelector(".map-holder");
+  let drag = null;
+  // Set while a drag is ending, so the click that follows a spin of the globe
+  // does not also open whichever region happened to be under the finger.
+  let dragged = false;
+
+  /* Degrees of rotation per pixel dragged.
+
+     Read off the globe as drawn rather than fixed: the SVG is a 560-unit
+     viewBox scaled to whatever width the panel has, and the sphere's radius
+     inside it grows with zoom. A constant would send the globe spinning when
+     zoomed in and feel stuck when zoomed out. */
+  function degPerPixel() {
+    const svg = holder.querySelector("svg.globe");
+    const units = 560 / (svg && svg.clientWidth ? svg.clientWidth : 560);
+    return units / (560 * 0.44 * camera.zoom) * (180 / Math.PI);
+  }
+
+  /* How far the pointer has to travel before this counts as a spin and not a
+     click. Below it, nothing is captured and nothing is redrawn. */
+  const DRAG_SLOP = 4;
+
+  holder.addEventListener("pointerdown", (ev) => {
+    if (ev.button) return;                       // primary button only
+    if (ev.target.closest(".map-zoom")) return;  // the zoom buttons are not the globe
+    // Deliberately no setPointerCapture here. Capturing on pointerdown
+    // retargets the click that follows to the holder, so every marker and both
+    // zoom buttons stopped responding -- they rendered, hovered, and did
+    // nothing. The pointer is captured in pointermove instead, once the
+    // movement is far enough that it cannot have been a click.
+    drag = { x: ev.clientX, y: ev.clientY, k: degPerPixel(),
+             lon0: camera.lon0, lat0: camera.lat0, moved: 0, held: false };
   });
+
+  holder.addEventListener("pointermove", (ev) => {
+    if (!drag) return;
+    const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+    drag.moved = Math.max(drag.moved, Math.abs(dx) + Math.abs(dy));
+    if (drag.moved <= DRAG_SLOP) return;
+    if (!drag.held) {
+      drag.held = true;
+      holder.setPointerCapture(ev.pointerId);
+      holder.classList.add("dragging");
+    }
+    drawMap(focus, {
+      lon0: drag.lon0 - dx * drag.k,
+      // Clamped short of the poles: at exactly +/-90 the projection's cos(lat0)
+      // is zero, the graticule collapses and the land stops drawing.
+      lat0: Math.max(-85, Math.min(85, drag.lat0 + dy * drag.k)),
+      zoom: camera.zoom,
+    });
+  });
+
+  function endDrag(ev) {
+    if (!drag) return;
+    dragged = drag.moved > DRAG_SLOP;
+    drag = null;
+    holder.classList.remove("dragging");
+    if (holder.hasPointerCapture(ev.pointerId)) holder.releasePointerCapture(ev.pointerId);
+    // Cleared after the click that this pointerup is about to produce.
+    setTimeout(() => { dragged = false; }, 0);
+  }
+  holder.addEventListener("pointerup", endDrag);
+  holder.addEventListener("pointercancel", endDrag);
 
   wireMarkers();
 

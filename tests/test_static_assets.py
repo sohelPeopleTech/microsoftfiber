@@ -365,3 +365,85 @@ def test_the_map_page_draws_the_globe():
     assert "spinTo(" in block, (
         "the globe no longer turns to a region -- review asked for it to zoom "
         "in on click, not to cut to a new frame")
+
+
+def _code_only(js: str) -> str:
+    """The JavaScript with its comments removed.
+
+    These checks assert that a name is absent from a block, and the comment
+    explaining why it was removed contains that very name -- so both of the
+    tests below passed against the bug and failed against the fix until the
+    prose was taken out first.
+    """
+    js = re.sub(r"/\*.*?\*/", "", js, flags=re.S)
+    return re.sub(r"(?m)(^|\s)//.*$", r"\1", js)
+
+
+def test_the_globe_can_be_turned_and_zoomed():
+    """Review asked for the globe to be draggable with zoom controls."""
+    block = JS[JS.index('PAGES["/map"]'):]
+    block = block[:block.index('PAGES["/regions"]')]
+    for needed in ("zoom-in", "zoom-out", "pointerdown", "pointermove"):
+        assert needed in block, f"the map lost its {needed} handling"
+    assert "map-summary" not in block, (
+        "the counts strip is back above the globe -- it restated the marker "
+        "colours in words and pushed the map down the page")
+
+
+def test_the_globe_does_not_capture_the_pointer_before_a_drag_starts():
+    """Capturing on pointerdown silently kills every click on the map.
+
+    setPointerCapture retargets the click that follows to the capturing
+    element, so with the capture taken in pointerdown the region markers, the
+    site markers and both zoom buttons rendered, hovered, and did nothing at
+    all -- no error, no console warning, just a dead map. The capture has to
+    wait until the pointer has moved far enough that it cannot be a click.
+    """
+    block = _code_only(JS[JS.index('PAGES["/map"]'):])
+    block = block[:block.index('PAGES["/regions"]')]
+    down = block[block.index('addEventListener("pointerdown"'):]
+    down = down[:down.index('addEventListener("pointermove"')]
+    assert "setPointerCapture" not in down, (
+        "the pointer is captured on pointerdown again -- every marker and both "
+        "zoom buttons will stop responding to clicks")
+    move = block[block.index('addEventListener("pointermove"'):]
+    assert "setPointerCapture" in move[:move.index("drawMap")], (
+        "the drag never captures the pointer, so it stops the moment the "
+        "cursor leaves the globe")
+
+
+def test_the_map_side_card_does_not_repeat_the_panel_below_it():
+    """Crosses, Fleet, Capacity, Workloads and the recommendation counts were
+    removed from the card beside the globe: all of them are on the detail panel
+    that opens underneath the moment a region is picked."""
+    card = _code_only(JS[JS.index("function mapCard("):])
+    card = card[:card.index("\n}\n")]
+    for gone in ("Crosses", "Fleet", "Workloads", "to scale up",
+                 "to rebalance", "licensing"):
+        assert gone not in card, (
+            f"{gone!r} is back on the map side card, where it duplicates the "
+            f"panel below the map")
+    assert "Current capacity usage" in card, (
+        "the card lost the one figure the marker's colour is derived from")
+
+
+def test_site_tie_lines_stop_short_of_the_region_marker():
+    """Drawn centre to centre, ten spokes render as a black splat.
+
+    Every site in a region is joined back to the region marker. Taking those
+    lines all the way to the centre stacks ten strokes on one point, and the
+    marker underneath disappears into a starburst -- it was on the first
+    screenshot of the zoomed globe and read as a rendering fault. `spoke()`
+    insets both ends, so the marker stays visible.
+    """
+    globe = (ROOT / "webapp" / "static" / "globe.js").read_text()
+    assert "function spoke(" in globe, (
+        "the region-to-site tie lines no longer inset their ends")
+    line = globe[globe.index("<line "):]
+    line = line[:line.index("/>")]
+    assert "spoke(" in line, (
+        "the tie line is being drawn from raw coordinates again, so every "
+        "site's stroke runs into the region marker")
+    assert "hit.x" not in line and "hit.y" not in line, (
+        "the tie line starts at the region centre rather than outside its "
+        "marker -- the marker will be buried under the spokes again")

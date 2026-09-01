@@ -129,6 +129,23 @@ function graticule(lon0, lat0, r, cx, cy) {
   }).join("");
 }
 
+/* A tie line from a region to one of its sites, stopping short at both ends.
+
+   Drawn centre to centre, ten of these converge on one point and render as a
+   black starburst that buries the region marker underneath it -- which reads
+   as a drawing fault rather than as ten sites. Starting each line outside the
+   region marker and stopping it before the site leaves both visible. */
+function spoke(s, hit, markerR) {
+  const dx = s.x - hit.x, dy = s.y - hit.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const near = Math.min(markerR + 4, len * 0.42);
+  const far = Math.min(9, len * 0.42);
+  return `x1="${(hit.x + (dx / len) * near).toFixed(1)}" `
+       + `y1="${(hit.y + (dy / len) * near).toFixed(1)}" `
+       + `x2="${(s.x - (dx / len) * far).toFixed(1)}" `
+       + `y2="${(s.y - (dy / len) * far).toFixed(1)}"`;
+}
+
 /* The globe, with regions on it and optionally one region's data centres.
 
    `view` carries where the viewer is (lon0, lat0) and how far in (zoom), so
@@ -187,9 +204,8 @@ function globeMap(d, view, focus) {
         <title>${esc(p.region)} — ${p.utilisation}% used</title>
       </circle>`).join("")}
     ${sitePts.filter((s) => s.front > 0).map((s) => `
-      <line x1="${hit.x.toFixed(1)}" y1="${hit.y.toFixed(1)}"
-        x2="${s.x.toFixed(1)}" y2="${s.y.toFixed(1)}"
-        stroke="var(--globe-rim)" stroke-width=".8" opacity=".55"/>
+      <line ${spoke(s, hit, radius(hit.capacityUnits))}
+        stroke="var(--globe-rim)" stroke-width=".8" opacity=".4"/>
       <circle class="site-mk${s.st.overThreshold ? " full" : ""}"
         data-dc="${esc(s.st.datacentre)}" cx="${s.x.toFixed(1)}" cy="${s.y.toFixed(1)}" r="6"
         fill="${s.st.overThreshold ? MAP_TONE_FILL.bad : MAP_TONE_FILL.good}"
