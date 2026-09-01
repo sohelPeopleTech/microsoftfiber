@@ -1007,7 +1007,7 @@ function mapCard(p) {
   <div class="map-card">
     <header>
       <b>${esc(p.region)}</b>
-      <span class="pill ${tone}">${esc(p.status || "—")}</span>
+      ${statusPill(p.status)}
     </header>
     <p class="where">${esc(p.displayName)}${p.city ? ` · ${esc(p.city)}` : ""}</p>
 
@@ -1016,7 +1016,7 @@ function mapCard(p) {
             markers and the pills. Only the rows that can be alarming carry it:
             a fleet count is never a danger, and colouring it would make the
             colour mean nothing. */ ""}
-      <div><span>How full</span><b class="${tone === "bad" ? "t-bad" : tone === "warn" ? "t-warn" : ""}">
+      <div><span>Current capacity usage</span><b class="${tone === "bad" ? "t-bad" : tone === "warn" ? "t-warn" : ""}">
         ${p.utilisation != null ? pct(p.utilisation, 1) : "—"}
         <span class="t3">of a ${p.thresholdPct != null ? pct(p.thresholdPct, 1) : "—"} line</span></b></div>
       <div><span>Crosses</span><b class="${p.status === "breached" ? "t-bad" : ""}">${p.crossingDate ? esc(p.crossingDate)
@@ -1074,8 +1074,10 @@ function whenBlock(d) {
   return `
   <div class="when">
     <div class="when-rows">
-      <div><span>Runs at</span><b class="${d.utilisation >= d.thresholdPct ? "t-bad" : ""}">${pct(d.utilisation, 1)}</b>
-        <i>against its own ${pct(d.thresholdPct, 1)} safety line</i></div>
+      <div><span>Current capacity usage</span><b class="${d.utilisation >= d.thresholdPct ? "t-bad" : ""}">${pct(d.utilisation, 1)}</b>
+        <i>${d.utilisation >= d.thresholdPct
+              ? `${pct(d.utilisation - d.thresholdPct, 1)} past its ${pct(d.thresholdPct, 1)} safety line`
+              : `${pct(d.thresholdPct - d.utilisation, 1)} below its ${pct(d.thresholdPct, 1)} safety line`}</i></div>
       <div><span>Crosses the line</span>
         <b class="${t.alreadyBreached ? "t-bad" : ""}">${t.alreadyBreached
           ? "already past it"
@@ -1083,9 +1085,7 @@ function whenBlock(d) {
         <i>${t.crossingEarliest && !t.alreadyBreached
           ? `somewhere between ${esc(t.crossingEarliest)} and ${esc(t.crossingLatest)}, on ${esc(t.model || "the fitted model")}`
           : ""}</i></div>
-      <div><span>Completely full</span>
-        <b class="${t.saturationDate && t.alreadyBreached ? "t-bad" : ""}">${t.saturationDate ? esc(t.saturationDate) : "not within the year"}</b>
-        <i>${t.note ? esc(t.note) : ""}</i></div>
+
       ${/* No order-by date. Scaling an F SKU takes effect immediately, so the
             question is not when to raise an order but whether the capacities in
             this region are already throttling. */ ""}
@@ -1372,8 +1372,7 @@ function mapDetail(d) {
   <section class="panel detail">
     <header>
       <b>${esc(d.region)}</b>
-      <span class="pill ${d.status === "breached" ? "bad"
-        : (d.status === "overdue" || d.status === "due_now") ? "warn" : "good"}">${esc(d.status || "—")}</span>
+      ${statusPill(d.status)}
       <!-- capacityUnits/workspaces, not units/nodes: those two were left over
            from the Azure model, are not on this payload, and rendered as a
            confident "0 units - 0 nodes" in the header of every region. -->
@@ -1685,36 +1684,28 @@ PAGES["/region"] = async (view, name, showAll = false) => {
       <div class="kpis" style="margin:1rem 0">
         ${kpi("Total CU", num(Math.round(r.capacityUnits)),
               `${num(Math.round(r.capacityUnitsFree))} free across ${r.siteCount} sites`, "ink",
-              "Compute deployed across every facility in this region.")}
-        ${kpi("Utilised CU", num(used),
-              `of ${num(Math.round(r.capacityUnits))} deployed`, atRisk ? "bad" : "ink")}
-        ${kpi("Utilisation", pct(t.current_utilisation_pct, 1),
-              `against a ${pct(t.threshold_pct, 0)} safety threshold`,
-              atRisk ? "bad" : "good")}
-        ${kpi("Safety threshold", pct(t.threshold_pct, 0),
-              atRisk
-                ? `threshold utilised by ${pct(t.current_utilisation_pct - t.threshold_pct, 1)}`
-                : `${pct(t.threshold_pct - t.current_utilisation_pct, 1)} still available`,
-              atRisk ? "bad" : "good",
-              `The share of this region's ${num(Math.round(r.capacityUnits))} CU at which it is treated as at risk. `
-              + `${pct(t.threshold_pct, 0)} of ${num(Math.round(r.capacityUnits))} is `
-              + `${num(Math.round(r.capacityUnits * t.threshold_pct / 100))} CU. Utilisation past that point `
-              + `is consuming the margin the threshold exists to protect.`)}
-      </div>
-      <div class="kpis" style="margin:0 0 1rem">
-        ${kpi("Threshold status", atRisk ? "In risk" : "Not in risk",
-              atRisk ? `utilisation is past the ${pct(t.threshold_pct, 0)} threshold`
-                     : `utilisation is inside the ${pct(t.threshold_pct, 0)} threshold`,
-              atRisk ? "bad" : "good")}
-        ${kpi("CU pending", num(Math.round(t.cores_pending || 0)),
-              `owed to ${t.customers_waiting || 0} customer(s)`,
+              "Capacity Units deployed across every data centre in this region.")}
+        ${/* Utilised CU and Utilisation were two cards saying one thing: review
+              asked for them consolidated, so the count leads and the share of
+              deployed capacity sits under it. */ ""}
+        ${kpi("Utilised CU", `${num(used)} <span class="kpi-of">of ${num(Math.round(r.capacityUnits))}</span>`,
+              `${pct(t.current_utilisation_pct, 1)} of deployed capacity`,
+              atRisk ? "bad" : "ink",
+              "Capacity Units currently in use, and what share of the region's deployed "
+              + "total that is.")}
+        ${/* Safety threshold and Threshold status were both removed on review.
+              The threshold is a fixed policy figure that does not move, and its
+              status is already stated in words at the top of this panel -- three
+              cards for one unchanging number. The line each data centre holds is
+              in the table below, which is where review said the threshold
+              belongs. */ ""}
+        ${kpi("Requested new capacity", num(Math.round(t.cores_pending || 0)),
+              `in pipeline from ${t.customers_waiting || 0} customer(s)`,
               t.cores_pending ? "bad" : "good",
-              "Capacity requested and not yet delivered. This is what the region owes, not how many tickets failed.")}
-        ${kpi("Revenue loss", r.revenueLoss ? money(r.revenueLoss) : "—",
-              "attributed to failures in this region", r.revenueLoss ? "bad" : "good")}
-        ${kpi("Failed requests", num(r.failedCount), `of ${r.tickets.length} raised in this region`,
-              r.failedCount ? "bad" : "good",
-              "Requests that breached their SLA before being granted, or were never granted at all. Requests denied and then approved inside SLA are normal turnaround and are not counted.")}
+              "Capacity Units asked for and not yet delivered \u2014 the pipeline for this "
+              + "region, not a count of tickets. Requests are raised against a specific "
+              + "SKU; this total does not yet say which, so it cannot tell you whether the "
+              + "region holds the SKUs the requests actually need.")}
       </div>
 
       <h4 style="margin:1.25rem 0 .4rem;font-size:.9rem">Every data centre in this region</h4>

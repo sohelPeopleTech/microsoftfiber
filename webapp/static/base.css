@@ -750,3 +750,7 @@ table.caps td .t3 { display: block; color: var(--ink-3); font-size: .74rem; font
   padding: .6rem .75rem; font-size: .78rem; line-height: 1.5;
   box-shadow: 0 6px 20px rgba(0, 0, 0, .25); pointer-events: none;
 }
+
+/* "1,976 of 2,476" -- the utilised count with its denominator, after review
+   asked for the separate Utilisation card to be folded into this one. */
+.kpi .kpi-of { font-size: .55em; font-weight: 400; color: var(--ink-3); }

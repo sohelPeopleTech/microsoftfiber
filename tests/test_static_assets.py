@@ -264,3 +264,37 @@ def test_every_explanation_uses_the_one_tooltip_mechanism():
     assert not only_title, (
         "these explain themselves with `title` alone, which is the slow "
         "browser tooltip:\n  " + "\n  ".join(only_title))
+
+
+def test_no_region_status_is_shown_to_a_reader_as_breached():
+    """"Breached is a security term" -- review, bluntly, and it was the word on
+    the pill for any region past its safety line.
+
+    A region using the capacity it holds has not violated anything. The label is
+    now "past its line". This checks the labels the shell defines rather than
+    every string in the app, because "SLA breached" on the outcomes funnel is a
+    different and correct use: a service level agreement genuinely is breached.
+    """
+    shell = (ROOT / "webapp" / "static" / "shell.js").read_text()
+    block = shell[shell.index("const STATUS_LABEL"):shell.index("function statusPill")]
+    labels = re.findall(r':\s*"([^"]+)"', block)
+    assert labels, "STATUS_LABEL is empty -- update this test"
+    offenders = [x for x in labels if "breach" in x.lower()]
+    assert not offenders, f"a region status still reads as a breach: {offenders}"
+
+
+def test_status_is_never_printed_raw():
+    """Two places interpolated the status key straight into a pill, so the
+    shell's labels were bypassed and the raw word reached the screen -- which is
+    how "breached" survived being renamed everywhere else."""
+    raw = re.findall(r"\$\{esc\((?:[a-z]\.)?status[^)]*\)\}", JS)
+    assert not raw, (
+        f"a status key is interpolated without going through statusPill(): {raw}")
+
+
+def test_the_saturation_date_is_not_presented_as_a_fact():
+    """Review: "let's not put that number ... it can happen in the next two
+    hours". A single workload landing moves it, and for a region already past
+    its line the date printed was in the past."""
+    assert "Completely full" not in JS, (
+        "the 100% saturation date is back on the region drill-down")
