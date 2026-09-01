@@ -298,3 +298,20 @@ def test_the_saturation_date_is_not_presented_as_a_fact():
     its line the date printed was in the past."""
     assert "Completely full" not in JS, (
         "the 100% saturation date is back on the region drill-down")
+
+
+def test_the_regions_table_body_has_a_cell_for_every_heading():
+    """Headings are generated from COLS; the body is hand-written.
+
+    Adding a column means touching both, in the same place. A new cell was put
+    before `cu_to_stay_under` while its COLS entry went after, so every row
+    rendered the placeable figure under "To stay under" and the shortfall under
+    "Placeable CU". Nothing errors -- the table is well-formed and wrong.
+    """
+    body = JS[JS.index("const COLS = ["):JS.index("</tbody>", JS.index("const COLS = ["))]
+    headings = re.findall(r'label:\s*"([^"]+)"', body)
+    cells = body[body.index("<tbody>"):].count("<td")
+    assert headings, "COLS no longer declares labels -- update this test"
+    assert cells >= len(headings), (
+        f"{len(headings)} headings but only {cells} cells in the row -- the "
+        f"body and COLS have drifted apart")

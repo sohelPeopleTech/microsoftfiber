@@ -319,6 +319,7 @@ def overview():
 
     causes = _failure_causes(entities)
     throttling = _region_throttling()
+    rollup = _region_site_rollup()
     regions = []
     for f in flags:
         name = f["region"]
@@ -341,6 +342,9 @@ def overview():
             # Whether anyone in the region is being refused *now*, which the
             # utilisation average cannot say because CU does not pool.
             "throttling": throttling.get(name, {}),
+            # The region as the sum of its sites, which is where its
+            # threshold actually lives.
+            "sites": rollup.get(name, {}),
         })
 
     return {
@@ -1225,6 +1229,65 @@ def _smallest_sku_covering(units: float) -> str:
 
 
 @lru_cache(maxsize=1)
+def _region_site_rollup() -> dict[str, dict]:
+    """A region read as the sum of its data centres, not as one average.
+
+    Review's objection: "the threshold should be part of a data centre, not at
+    a region level. First look at a data centre, then roll it up." A region
+    holding ten sites where one is full is not a constrained region -- the work
+    goes to one of the other nine, and the customer, who only ever picks a
+    region, never notices. His analogy: no Home Depot in Bellevue is not a
+    problem while Redmond has one. It becomes a problem when the whole of
+    Washington is out.
+
+    So the figure that matters is not the region's average utilisation. It is
+    how much room is left in the sites that still have any -- capacity in a
+    site already over its own line cannot be handed out, and capacity in a site
+    with room can. That is `placeableCu`, and set against what the region has
+    been asked for it answers the only question a region-level view should:
+    can this region still take the work in front of it.
+
+    westeurope is the case that shows why. It averages 83.1% against a 90%
+    line and reads comfortable, while two of its ten sites are over their own
+    lines and only 125 CU remain placeable against 365 CU of pipeline.
+    """
+    onto = get_entities()
+    sites = onto["dim_datacentre"]
+    pending = _cores_pending_by_region()
+
+    out: dict[str, dict] = {}
+    for region, group in sites.groupby("Region"):
+        over, placeable, full_names = 0, 0.0, []
+        for s in group.itertuples():
+            deployed = float(getattr(s, "DeployedUnits", 0) or 0)
+            used = float(getattr(s, "UsedUnits", 0) or 0)
+            line = float(getattr(s, "ThresholdPct", 0) or 0)
+            if not deployed:
+                continue
+            if used / deployed * 100.0 > line:
+                over += 1
+                full_names.append(str(s.DatacentreId))
+            else:
+                # Room up to this site's own line, not to its physical ceiling.
+                # The margin past the line is the margin the line exists to
+                # protect, and handing it out is what the threshold forbids.
+                placeable += max(0.0, deployed * line / 100.0 - used)
+        asked = float(pending.get(str(region), 0.0))
+        out[str(region)] = {
+            "sites": int(len(group)),
+            "sitesOverLine": over,
+            "sitesWithRoom": int(len(group)) - over,
+            "placeableCu": round(placeable, 1),
+            "pendingCu": round(asked, 1),
+            # The region-level question, answered at region level for once.
+            "canAbsorbPipeline": bool(placeable >= asked),
+            "shortBy": round(max(0.0, asked - placeable), 1),
+            "fullSites": full_names[:5],
+        }
+    return out
+
+
+@lru_cache(maxsize=1)
 def _region_throttling() -> dict[str, dict]:
     """How many capacities in each region are refusing work right now.
 
@@ -1328,6 +1391,7 @@ def capacity_map():
         module1.project_all(entities, crossing_for=_forecast_crossing))}
     exposure = {r["Region"]: r for r in get_module5().finding["regions"]}
     throttling_by_region = _region_throttling()
+    rollup_by_region = _region_site_rollup()
 
     by_region_kind: dict[tuple, int] = {}
     for r in recs:
@@ -1363,6 +1427,7 @@ def capacity_map():
             "capacities": int(c["capacities"]) if c is not None else 0,
             "sites": int(c["sites"]) if c is not None else 0,
             "throttling": throttling_by_region.get(region, {}),
+            "sites": rollup_by_region.get(region, {}),
             "capacityUnits": int(c["cu"]) if c is not None else 0,
             "coresPending": e.get("CoresPending", 0),
             "failed": e.get("TicketsFlagged", 0),
@@ -2036,6 +2101,9 @@ def region_detail(name: str):
         "siteCount": int(len(all_sites)),
         "sitesWithActivity": sum(1 for d in datacentres if d["requests"] > 0),
         "sitesOverThreshold": sum(1 for d in datacentres if d["overThreshold"]),
+        # The region read as the sum of its sites, which is where its threshold
+        # actually lives. Same computation the region tables use.
+        "sitesRollup": _region_site_rollup().get(name, {}),
         "capacityUnits": _clean(all_sites["DeployedUnits"].sum()),
         "capacityUnitsFree": _clean(all_sites["FreeUnits"].sum()),
         "failedCount": len([r for r in rows if r["isFlagged"]]),
@@ -2078,6 +2146,7 @@ def threshold(pct: Annotated[float | None, Query(ge=50.0, le=99.0)] = None,
     pending = _cores_pending_by_region()
     customers = _waiting_customers_by_region()
     throttling = _region_throttling()
+    rollup = _region_site_rollup()
     for f in flags:
         region = str(f["region"])
         f["cores_pending"] = round(pending.get(region, 0.0), 1)
@@ -2086,6 +2155,7 @@ def threshold(pct: Annotated[float | None, Query(ge=50.0, le=99.0)] = None,
         # beside it is an average and cannot say: CU does not pool, so a region
         # inside its line can hold a capacity at 182% refusing every day.
         f["throttling"] = throttling.get(region, {})
+        f["sites_rollup"] = rollup.get(region, {})
         f["free_units"] = round(float(f["deployed_units"]) - float(f["used_units"]), 1)
 
         # "How much should I raise in order to be within that capacity range?"

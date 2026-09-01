@@ -1528,6 +1528,7 @@ PAGES["/regions"] = async (view) => {
     ],
     words: [
       { term: "Threshold status", means: "Whether the region is <b>in risk</b> — utilisation has moved past its safety threshold — or not. It is a state, not a fault: a region using the capacity it holds has done nothing wrong." },
+      { term: "Placeable CU", means: "The Capacity Units this region can still hand out \u2014 the room left under each <b>data centre\u2019s own</b> safety line, added across the sites that still have some. Capacity in a site already over its line cannot be given away, so this is lower than the region\u2019s free total. It is the region-level question answered properly: a region with ten data centres where one is full is not constrained, because the work goes to one of the other nine and a customer picks a region rather than a building. It is constrained when there is nowhere left in it to put the work." },
       { term: "Hits threshold in", means: "How long until this region reaches the threshold on its current trend, from the same backtested forecast the Forecast tab uses. Move the slider above and this moves with it \u2014 the point of the control is to ask <i>when would we cross a line we have not set yet</i>." },
       { term: "To stay under", means: "The Capacity Units this region would have to add for its <b>current</b> usage to sit under the threshold. Utilisation is usage over deployed capacity, so the region needs usage \u00d7 100 \u00f7 threshold deployed, and this is the gap. It is a floor, not a purchase order: Capacity Units are not bought loose, so the SKU beneath is the smallest single one that covers the gap \u2014 and the real answer needs the SKU mix of the requests themselves, which this extract does not carry." },
       { term: "CU pending", means: "Capacity requested by customers and not yet delivered. This is what the region owes, not how many tickets failed \u2014 one ticket can be worth hundreds of CU." },
@@ -1601,6 +1602,13 @@ PAGES["/regions"] = async (view) => {
       // to be within that capacity range?"
       { key: "hits", label: "Hits threshold in",
         get: (r) => (r.days_to_threshold == null ? 1e9 : r.days_to_threshold), numeric: true },
+      // The region as the sum of its sites. A region with ten data centres
+      // where one is full is not constrained; one with nowhere left to place
+      // the work is, whatever its average says. Ordered before the shortfall
+      // because it reads as a pair: what the region can still hand out, then
+      // what it would have to add.
+      { key: "placeable", label: "Placeable CU",
+        get: (r) => (r.sites_rollup || {}).placeableCu ?? 0, numeric: true },
       { key: "shortfall", label: "To stay under",
         get: (r) => r.cu_to_stay_under ?? 0, numeric: true },
       { key: "pending", label: "CU pending", get: (r) => r.cores_pending, numeric: true },
@@ -1634,6 +1642,14 @@ PAGES["/regions"] = async (view) => {
           <td class="n">${r.days_to_threshold == null ? "—"
             : r.days_to_threshold <= 0 ? `<b class="t-bad">already there</b>`
             : `<b>${num(Math.round(r.days_to_threshold))}</b> <span class="t3">days</span>`}</td>
+          <td class="n">${(() => { const sr = r.sites_rollup || {};
+            if (!sr.sites) return `<span class="t3">—</span>`;
+            return sr.canAbsorbPipeline
+              ? `<b class="t-good">${num(Math.round(sr.placeableCu))}</b>
+                 <br><span class="t3">${num(sr.sitesWithRoom)} of ${num(sr.sites)} sites</span>`
+              : `<b class="t-bad">${num(Math.round(sr.placeableCu))}</b>
+                 <br><span class="t3">${num(Math.round(sr.shortBy))} short of the ask</span>`;
+          })()}</td>
           <td class="n">${r.cu_to_stay_under
             ? `<b class="t-warn">${num(Math.round(r.cu_to_stay_under))}</b>
                <br><span class="t3">buy an ${esc(r.smallest_sku_step)}</span>`
@@ -1728,6 +1744,30 @@ PAGES["/region"] = async (view, name, showAll = false) => {
               cards for one unchanging number. The line each data centre holds is
               in the table below, which is where review said the threshold
               belongs. */ ""}
+        ${/* Review: "the threshold should be part of a data centre, not at a
+              region level. First look at a data centre, then roll it up." A
+              region with ten sites where one is full is not constrained -- the
+              work goes to one of the other nine. What is constrained is a
+              region with nowhere left to put it, so this is the room remaining
+              in the sites that still have any, set against what has been
+              asked for. */ ""}
+        ${(() => { const sr = r.sitesRollup || {};
+          if (!sr.sites) return "";
+          return kpi("Placeable capacity", num(Math.round(sr.placeableCu)),
+            sr.canAbsorbPipeline
+              ? `across ${num(sr.sitesWithRoom)} of ${num(sr.sites)} sites with room`
+              : `${num(Math.round(sr.shortBy))} CU short of the ${num(Math.round(sr.pendingCu))} requested`,
+            sr.canAbsorbPipeline ? "good" : "bad",
+            `Capacity Units that can still be handed out in this region: the room left `
+            + `under each data centre's own safety line, added up across the `
+            + `${num(sr.sitesWithRoom)} sites that still have some. Capacity in a site `
+            + `already over its line cannot be given away, which is why this is lower `
+            + `than the region's free total. ${sr.sitesOverLine
+                ? `${num(sr.sitesOverLine)} of ${num(sr.sites)} sites here are over their own line.`
+                : "No site here is over its own line."} `
+            + `A region is only short when there is nowhere left in it to place the `
+            + `work \u2014 a customer picks a region, not a building.`);
+        })()}
         ${kpi("Requested new capacity", num(Math.round(t.cores_pending || 0)),
               `in pipeline from ${t.customers_waiting || 0} customer(s)`,
               t.cores_pending ? "bad" : "good",

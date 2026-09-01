@@ -769,3 +769,65 @@ def test_the_shortfall_is_quoted_as_a_sku_that_can_be_bought():
             assert F_SKUS[k] < r["cu_to_stay_under"], (
                 f"{r['region']}: {k} would also cover the gap, so {step} is not "
                 f"the smallest")
+
+
+# --------------------------------------------------------------------------
+# a region is the sum of its data centres
+# --------------------------------------------------------------------------
+
+
+def test_a_region_reports_the_room_left_in_the_sites_that_have_any():
+    """Review: "the threshold should be part of a data centre, not at a region
+    level. First look at a data centre, then roll it up."
+
+    A region with ten sites where one is full is not constrained -- the work
+    goes to one of the other nine, and a customer picks a region rather than a
+    building. So the figure that matters is the room left under each site's own
+    line, added across the sites that still have some. Capacity inside a site
+    already over its line cannot be handed out and must not be counted.
+    """
+    sites = api.get_entities()["dim_datacentre"]
+    for r in api.overview()["regions"]:
+        sr = r["sites"]
+        group = sites[sites["Region"] == r["region"]]
+        assert sr["sites"] == len(group), r["region"]
+        assert sr["sitesOverLine"] + sr["sitesWithRoom"] == sr["sites"], r["region"]
+
+        want, over = 0.0, 0
+        for s in group.itertuples():
+            dep, used = float(s.DeployedUnits or 0), float(s.UsedUnits or 0)
+            line = float(s.ThresholdPct or 0)
+            if not dep:
+                continue
+            if used / dep * 100.0 > line:
+                over += 1
+            else:
+                want += max(0.0, dep * line / 100.0 - used)
+        assert sr["sitesOverLine"] == over, r["region"]
+        assert sr["placeableCu"] == pytest.approx(want, abs=0.15), r["region"]
+
+
+def test_placeable_capacity_is_never_more_than_the_region_has_free():
+    """Room under a site's own line is a subset of that site's free capacity.
+    Exceeding the region's free total would mean handing out the margin the
+    thresholds exist to protect."""
+    for r in api.overview()["regions"]:
+        d = api.region_detail(r["region"])
+        assert r["sites"]["placeableCu"] <= d["capacityUnitsFree"] + 0.5, r["region"]
+
+
+def test_a_region_can_look_comfortable_and_still_not_cover_its_pipeline():
+    """The case a region average cannot show, and the reason this exists.
+
+    westeurope averages 83.1% against a 90% line and reads as not in risk,
+    while two of its ten sites are over their own lines and what remains
+    placeable does not cover what has been asked for.
+    """
+    hidden = [r for r in api.overview()["regions"]
+              if r["status"] not in ("breached", "overdue")
+              and not r["sites"]["canAbsorbPipeline"]]
+    assert hidden, (
+        "no region is inside its own line while unable to place the capacity "
+        "it has been asked for -- the roll-up says nothing the average did not")
+    for r in hidden:
+        assert r["sites"]["shortBy"] > 0
