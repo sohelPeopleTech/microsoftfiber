@@ -1208,6 +1208,22 @@ def _recommendations() -> list:
     return recs
 
 
+def _smallest_sku_covering(units: float) -> str:
+    """The smallest F SKU that covers a shortfall, or "" when there is none.
+
+    Capacity Units are not bought loose. A region short by 110 CU cannot buy
+    110; the ladder doubles and it takes an F128. Saying so stops a CU figure
+    being read as a purchase order -- though the honest answer needs the SKU
+    mix of the requests themselves, which this extract does not carry.
+    """
+    if units <= 0:
+        return ""
+    for sku, cu in admission.F_SKUS.items():
+        if cu >= units:
+            return sku
+    return max(admission.F_SKUS, key=lambda k: admission.F_SKUS[k])
+
+
 @lru_cache(maxsize=1)
 def _region_throttling() -> dict[str, dict]:
     """How many capacities in each region are refusing work right now.
@@ -2071,6 +2087,26 @@ def threshold(pct: Annotated[float | None, Query(ge=50.0, le=99.0)] = None,
         # inside its line can hold a capacity at 182% refusing every day.
         f["throttling"] = throttling.get(region, {})
         f["free_units"] = round(float(f["deployed_units"]) - float(f["used_units"]), 1)
+
+        # "How much should I raise in order to be within that capacity range?"
+        # -- the second half of the what-if, and the half the slider could not
+        # answer. Moving the threshold said when a region would cross it and
+        # never what it would take not to.
+        #
+        # Utilisation is used over deployed, so to sit at or under T% the region
+        # needs used * 100 / T deployed. What it is short by is that less what
+        # it already has. Zero when it is already under the line, because a
+        # region with headroom needs nothing.
+        used = float(f["used_units"])
+        deployed = float(f["deployed_units"])
+        target = float(f["threshold_pct"])
+        needed = (used * 100.0 / target) if target > 0 else deployed
+        f["cu_to_stay_under"] = round(max(0.0, needed - deployed), 1)
+        # Stated in whole SKUs as well, because Capacity Units are not bought
+        # loose: the ladder doubles and the smallest step is an F2. This is the
+        # floor -- the real answer needs the SKU mix, which the extract does not
+        # carry.
+        f["smallest_sku_step"] = _smallest_sku_covering(f["cu_to_stay_under"])
         # "Breached by 12.2%" was rejected in review: a breach reads as a fault,
         # and the capacity consumed past the line is still the region's own, not
         # something extra. The agreed phrasing is that the threshold itself has

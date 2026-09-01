@@ -1528,6 +1528,8 @@ PAGES["/regions"] = async (view) => {
     ],
     words: [
       { term: "Threshold status", means: "Whether the region is <b>in risk</b> — utilisation has moved past its safety threshold — or not. It is a state, not a fault: a region using the capacity it holds has done nothing wrong." },
+      { term: "Hits threshold in", means: "How long until this region reaches the threshold on its current trend, from the same backtested forecast the Forecast tab uses. Move the slider above and this moves with it \u2014 the point of the control is to ask <i>when would we cross a line we have not set yet</i>." },
+      { term: "To stay under", means: "The Capacity Units this region would have to add for its <b>current</b> usage to sit under the threshold. Utilisation is usage over deployed capacity, so the region needs usage \u00d7 100 \u00f7 threshold deployed, and this is the gap. It is a floor, not a purchase order: Capacity Units are not bought loose, so the SKU beneath is the smallest single one that covers the gap \u2014 and the real answer needs the SKU mix of the requests themselves, which this extract does not carry." },
       { term: "CU pending", means: "Capacity requested by customers and not yet delivered. This is what the region owes, not how many tickets failed \u2014 one ticket can be worth hundreds of CU." },
       { term: "Why there is no hardware here", means: "Fabric is a SaaS platform \u2014 a customer never sees a server. What sits under a region is Fabric <b>capacities</b>, each with an F-SKU and a number of Capacity Units, and those are on the Fleet map and the data-centre pages. There is nothing to take offline and nothing to provision." },
     ],
@@ -1593,6 +1595,14 @@ PAGES["/regions"] = async (view) => {
       { key: "util", label: "Utilisation", get: (r) => r.current_utilisation_pct, numeric: true },
       { key: "thr", label: "Threshold", get: (r) => r.threshold_pct, numeric: true },
       { key: "status", label: "Threshold status", get: (r) => (r.at_risk ? 1 : 0), numeric: true },
+      // The two halves of the what-if. Moving the slider said when a region
+      // would cross a threshold and never what it would take not to, which is
+      // the question review actually asked: "how much should I raise in order
+      // to be within that capacity range?"
+      { key: "hits", label: "Hits threshold in",
+        get: (r) => (r.days_to_threshold == null ? 1e9 : r.days_to_threshold), numeric: true },
+      { key: "shortfall", label: "To stay under",
+        get: (r) => r.cu_to_stay_under ?? 0, numeric: true },
       { key: "pending", label: "CU pending", get: (r) => r.cores_pending, numeric: true },
       { key: "exposure", label: "Revenue loss",
         get: (r) => (exposureByRegion[r.region] || {}).exposure ?? 0, numeric: true },
@@ -1621,6 +1631,13 @@ PAGES["/regions"] = async (view) => {
           <td class="n"><b style="color:${r.at_risk ? "var(--bad)" : "inherit"}">${pct(r.current_utilisation_pct, 1)}</b></td>
           <td class="n">${pct(r.threshold_pct, 0)}</td>
           <td>${thresholdPill(r)}</td>
+          <td class="n">${r.days_to_threshold == null ? "—"
+            : r.days_to_threshold <= 0 ? `<b class="t-bad">already there</b>`
+            : `<b>${num(Math.round(r.days_to_threshold))}</b> <span class="t3">days</span>`}</td>
+          <td class="n">${r.cu_to_stay_under
+            ? `<b class="t-warn">${num(Math.round(r.cu_to_stay_under))}</b>
+               <br><span class="t3">buy an ${esc(r.smallest_sku_step)}</span>`
+            : `<span class="t3">nothing</span>`}</td>
           <td class="n">${r.cores_pending ? `<b>${num(Math.round(r.cores_pending))}</b>` : "—"}</td>
           <td class="n">${money(e.exposure)}</td>
           <td class="n">${r.customers_waiting || "—"}</td>
@@ -1653,7 +1670,19 @@ PAGES["/regions"] = async (view) => {
     $("thr-wrap").style.display = $("thr-override").checked ? "" : "none";
     draw();
   };
-  $("thr").oninput = () => { $("thr-val").textContent = `${$("thr").value}%`; draw(); };
+  /* The label follows the slider immediately; the redraw waits until it stops.
+
+     `oninput` fires on every step, and each redraw refits nine forecast models
+     across eleven regions -- about nine seconds. Dragging from 85 to 70 queued
+     fifteen of those, so the answer arrived long after the question and out of
+     order, the last response to land winning rather than the last one asked
+     for. */
+  let thrTimer = null;
+  $("thr").oninput = () => {
+    $("thr-val").textContent = `${$("thr").value}%`;
+    clearTimeout(thrTimer);
+    thrTimer = setTimeout(draw, 350);
+  };
   $("win").onchange = draw;
   await draw();
 };

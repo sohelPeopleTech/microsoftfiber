@@ -710,3 +710,62 @@ def test_the_three_region_views_report_the_same_throttling():
     for region, seen in ov.items():
         assert th[region] == seen, region
         assert mp[region] == seen, region
+
+
+# --------------------------------------------------------------------------
+# the what-if answers both halves
+# --------------------------------------------------------------------------
+
+
+def test_the_threshold_whatif_says_what_it_would_take_not_to_cross():
+    """Review asked for both halves and the control only had one.
+
+    Moving the threshold said when a region would reach it. It never said what
+    the region would have to add not to -- "how much should I raise in order
+    for me to be within that capacity range?"
+    """
+    for r in api.threshold()["regions"]:
+        used, deployed = float(r["used_units"]), float(r["deployed_units"])
+        target = float(r["threshold_pct"])
+        want = max(0.0, used * 100.0 / target - deployed)
+        assert r["cu_to_stay_under"] == pytest.approx(want, abs=0.15), r["region"]
+        # A region inside its line needs nothing, and must not be told otherwise.
+        if used / deployed * 100.0 <= target:
+            assert r["cu_to_stay_under"] == 0, r["region"]
+
+
+def test_a_lower_threshold_demands_more_capacity():
+    """The control is a what-if, so the answer has to move with it. Holding a
+    region to 70% cannot ask less of it than holding it to its own line."""
+    own = {r["region"]: r for r in api.threshold()["regions"]}
+    strict = {r["region"]: r for r in api.threshold(pct=70.0)["regions"]}
+    moved = 0
+    for region, s in strict.items():
+        o = own[region]
+        if o["threshold_pct"] > 70.0:
+            assert s["cu_to_stay_under"] >= o["cu_to_stay_under"], region
+            if s["cu_to_stay_under"] > o["cu_to_stay_under"]:
+                moved += 1
+    assert moved, "no region asks for more capacity at 70% than at its own line"
+
+
+def test_the_shortfall_is_quoted_as_a_sku_that_can_be_bought():
+    """Capacity Units are not sold loose. A region short by 110 CU cannot buy
+    110 -- the ladder doubles and it takes an F128. A bare CU figure reads as a
+    purchase order for something that is not on the price list."""
+    from planning import F_SKUS
+
+    for r in api.threshold()["regions"]:
+        step = r["smallest_sku_step"]
+        if not r["cu_to_stay_under"]:
+            assert step == "", r["region"]
+            continue
+        assert step in F_SKUS, f"{r['region']}: {step!r} is not on the ladder"
+        assert F_SKUS[step] >= r["cu_to_stay_under"], (
+            f"{r['region']}: {step} is {F_SKUS[step]} CU but the gap is "
+            f"{r['cu_to_stay_under']}")
+        smaller = [k for k, v in F_SKUS.items() if v < F_SKUS[step]]
+        for k in smaller:
+            assert F_SKUS[k] < r["cu_to_stay_under"], (
+                f"{r['region']}: {k} would also cover the gap, so {step} is not "
+                f"the smallest")
