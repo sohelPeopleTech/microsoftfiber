@@ -6,6 +6,8 @@ the thing people get wrong when they join two facts together and double a total.
 
 from __future__ import annotations
 
+import hashlib
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -255,6 +257,56 @@ def build_dim_datacentre(dim_region, usage=None, capacities=None,
     return dim
 
 
+#: How far a data centre may sit from its region's published point. Azure gives
+#: one coordinate per region -- itself an approximate central point -- and none
+#: per building, so the sites are scattered within a metro-sized radius of it.
+#: 75 km keeps every region's sites on the right landmass while still giving the
+#: map something to separate them by.
+SITE_SPREAD_KM = 75.0
+
+
+def attach_datacentre_coordinates(dim: pd.DataFrame, geo: pd.DataFrame) -> pd.DataFrame:
+    """Give every data centre a latitude and longitude.
+
+    The extract has none: a data centre in this model is a generated name under
+    a region. `dim_region_geography` carries a real coordinate per *region*
+    (`az account list-locations`), but nothing per building, so each site is
+    placed at its region's point plus a small deterministic offset -- a bearing
+    and a distance from a hash of its id. Deterministic so the position is
+    stable between runs and no two sites coincide; the distance is sqrt-weighted
+    so the scatter fills a disc rather than bunching at the centre.
+
+    Real region point, generated within-region offset. The Provenance column
+    says exactly that.
+    """
+    point = geo.set_index("Region")[["Latitude", "Longitude"]]
+    lats, lons = [], []
+    for site in dim.itertuples():
+        if site.Region not in point.index:
+            lats.append(None)
+            lons.append(None)
+            continue
+        blat = float(point.loc[site.Region, "Latitude"])
+        blon = float(point.loc[site.Region, "Longitude"])
+        h = hashlib.sha256(f"geo:{site.DatacentreId}".encode()).hexdigest()
+        bearing = int(h[:8], 16) / 0xFFFFFFFF * 2 * math.pi
+        dist_km = SITE_SPREAD_KM * math.sqrt(int(h[8:16], 16) / 0xFFFFFFFF)
+        dlat = dist_km * math.cos(bearing) / 111.0
+        dlon = dist_km * math.sin(bearing) / (111.0 * max(math.cos(math.radians(blat)), 0.2))
+        lats.append(round(blat + dlat, 4))
+        lons.append(round(blon + dlon, 4))
+    dim = dim.copy()
+    dim["Latitude"] = lats
+    dim["Longitude"] = lons
+    if "Provenance" in dim.columns:
+        dim["Provenance"] = dim["Provenance"].astype(str) + (
+            f" Coordinates are the region's real point plus a deterministic "
+            f"offset of up to {int(SITE_SPREAD_KM)} km -- Azure publishes no "
+            f"per-building location."
+        )
+    return dim
+
+
 def build_dim_capacity_pool(dim_region) -> pd.DataFrame:
     """Grain: one Fabric capacity pool per region.
 
@@ -497,6 +549,13 @@ def build(
     )
     tables["dim_region"]["ThresholdPct"] = (
         tables["dim_region"]["Region"].map(_weighted).round(1)
+    )
+
+    # Put each data centre on the map. Needs both tables, and dim_region_geography
+    # is built above, so like the threshold roll-up this happens here rather than
+    # inside the datacentre builder.
+    tables["dim_datacentre"] = attach_datacentre_coordinates(
+        tables["dim_datacentre"], tables["dim_region_geography"]
     )
 
     # Customer demand history. Generated, and kept in its own table rather than

@@ -164,16 +164,90 @@ function globeMap(d, view, focus) {
 
   const hit = focus && pts.find((p) => p.region === focus.region);
   const sites = hit && focus.sites ? focus.sites : [];
-  // Sites sit on a small ring of true longitude and latitude around the
-  // region, so they turn with the globe like anything else on the surface.
-  const ringDeg = 4.2;
+  /* Each site now carries a real latitude and longitude -- its region's
+     published point plus a small generated offset, computed once in the
+     dimensional model (attach_datacentre_coordinates). So the placement here is
+     the true bearing and relative spacing of those coordinates, not a hash of
+     the name.
+
+     The one liberty taken is scale. A data centre sits within ~75 km of its
+     region's point, which is under a degree, and a globe cannot resolve a
+     degree without zooming past the point of a globe -- ten markers would stack
+     on the region dot. So the offset from the region is magnified by a constant
+     before it is drawn: which site is north-east of which, and which two are
+     close together, are faithful to the coordinates; the absolute distance from
+     the region marker is not. The dotted fence is a reminder that the cluster
+     is schematic.
+
+     Sites with no coordinate (should not happen, but the model can return null
+     for a region missing from the geography table) fall back to a deterministic
+     golden-angle scatter so the marker still lands somewhere stable. */
+  const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+  const siteMax = Math.max(...sites.map((st) => st.capacityUnits || 0), 1);
+  //: Real within-region offsets are sub-degree; this scales them up until the
+  //: cluster reads on a globe. Lower than it once was because a region now
+  //: zooms much closer, so less magnification covers the same screen distance.
+  const SITE_SPREAD_MAG = 5;
+
+  function jitter(name, salt) {
+    // A small deterministic hash. Not cryptographic -- it only has to be stable
+    // between redraws and different between neighbouring site names.
+    let h = 2166136261 ^ salt;
+    for (let i = 0; i < name.length; i++) {
+      h = Math.imul(h ^ name.charCodeAt(i), 16777619);
+    }
+    return ((h >>> 0) % 10000) / 10000;
+  }
+
   const sitePts = sites.map((st, i) => {
-    const a = sites.length === 1 ? -Math.PI / 2
-      : (i / sites.length) * Math.PI * 2 - Math.PI / 2;
-    const lat = hit.lat + Math.sin(a) * ringDeg;
-    const lon = hit.lon + Math.cos(a) * ringDeg / Math.max(0.25, Math.cos(hit.lat * RAD));
-    return { st, ...project(lon, lat, lon0, lat0, r, cx, cy) };
+    const name = String(st.datacentre || i);
+    let lat, lon, ringDeg;
+    if (st.lat != null && st.lon != null) {
+      // True offset from the region, magnified so it is visible.
+      const dLat = (st.lat - hit.lat) * SITE_SPREAD_MAG;
+      const dLon = (st.lon - hit.lon) * SITE_SPREAD_MAG;
+      lat = hit.lat + dLat;
+      lon = hit.lon + dLon;
+      ringDeg = Math.hypot(dLat, dLon * Math.cos(hit.lat * RAD));
+    } else {
+      const base = sites.length === 1 ? -Math.PI / 2 : i * GOLDEN - Math.PI / 2;
+      // Up to a third of the gap between neighbours, so ordering is preserved.
+      const a = base + (jitter(name, 1) - 0.5) * (Math.PI * 2 / Math.max(sites.length, 3)) * 0.66;
+      const big = Math.sqrt((st.capacityUnits || 0) / siteMax);
+      ringDeg = 2.6 + (1 - big) * 2.4 + jitter(name, 2) * 1.6;
+      lat = hit.lat + Math.sin(a) * ringDeg;
+      lon = hit.lon + Math.cos(a) * ringDeg / Math.max(0.25, Math.cos(hit.lat * RAD));
+    }
+    return { st, ringDeg, ...project(lon, lat, lon0, lat0, r, cx, cy) };
   });
+
+  /* A dotted boundary enclosing the region and everything in it.
+
+     With the sites scattered rather than ringed, nothing said where the region
+     ended -- a scattered site and an unrelated neighbouring region marker look
+     the same. The ring is drawn in true longitude and latitude, so it curves
+     and foreshortens with the globe instead of being a flat circle pasted on
+     top, and it is sized to enclose the furthest site with a margin. */
+  const boundary = (() => {
+    if (!hit || !sitePts.length) return "";
+    const span = Math.max(...sitePts.map((s) => s.ringDeg)) + 1.9;
+    const pts = [];
+    for (let k = 0; k <= 72; k++) {
+      const a = (k / 72) * Math.PI * 2;
+      const lat = hit.lat + Math.sin(a) * span;
+      const lon = hit.lon + Math.cos(a) * span / Math.max(0.25, Math.cos(hit.lat * RAD));
+      const q = project(lon, lat, lon0, lat0, r, cx, cy);
+      // Points past the horizon are dropped; the ring is closed by whatever
+      // remains, so a region near the limb shows the part of its boundary that
+      // is actually facing the reader rather than a line across the globe.
+      if (q.front > 0) pts.push(`${q.x.toFixed(1)},${q.y.toFixed(1)}`);
+    }
+    if (pts.length < 8) return "";
+    return `<polygon class="region-fence" points="${pts.join(" ")}"
+      fill="var(--brand)" fill-opacity=".05"
+      stroke="var(--brand)" stroke-width="1.4" stroke-dasharray="5 4"
+      stroke-linejoin="round" opacity=".75" pointer-events="none"/>`;
+  })();
 
   return `<svg class="chart globe" viewBox="0 0 ${S} ${S}" role="img"
       aria-label="${hit ? `Data centres in ${esc(focus.region)}, on a globe`
@@ -200,9 +274,10 @@ function globeMap(d, view, focus) {
         cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${radius(p.capacityUnits).toFixed(1)}"
         fill="${MAP_TONE_FILL[mapTone(p)]}" fill-opacity=".9" stroke="#fff"
         tabindex="0" role="button"
-        aria-label="${esc(p.region)}, ${p.utilisation}% used">
-        <title>${esc(p.region)} — ${p.utilisation}% used</title>
+        aria-label="${esc(p.region)}, ${p.utilisation}% used${
+          p.lat != null ? `, at ${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}` : ""}">
       </circle>`).join("")}
+    ${boundary}
     ${sitePts.filter((s) => s.front > 0).map((s) => `
       <line ${spoke(s, hit, radius(hit.capacityUnits))}
         stroke="var(--globe-rim)" stroke-width=".8" opacity=".4"/>
@@ -210,8 +285,8 @@ function globeMap(d, view, focus) {
         data-dc="${esc(s.st.datacentre)}" cx="${s.x.toFixed(1)}" cy="${s.y.toFixed(1)}" r="6"
         fill="${s.st.overThreshold ? MAP_TONE_FILL.bad : MAP_TONE_FILL.good}"
         fill-opacity=".95" stroke="#fff" tabindex="0" role="button"
-        aria-label="${esc(s.st.datacentre)}, ${s.st.utilisationPct}% of its own ${s.st.thresholdPct}% line">
-        <title>${esc(s.st.datacentre)} — ${s.st.utilisationPct}% of its own ${s.st.thresholdPct}% line, ${num(s.st.capacityUnits)} CU</title>
+        aria-label="${esc(s.st.datacentre)}, ${s.st.utilisationPct}% of its own ${s.st.thresholdPct}% line, ${num(s.st.capacityUnits)} CU${
+          s.st.lat != null ? `, at ${s.st.lat.toFixed(2)}, ${s.st.lon.toFixed(2)}` : ""}">
       </circle>
       <text x="${s.x.toFixed(1)}" y="${(s.y + 15).toFixed(1)}" text-anchor="middle"
         font-size="9" fill="var(--ink-2)" style="pointer-events:none">

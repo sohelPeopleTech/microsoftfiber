@@ -796,3 +796,606 @@ table.caps td .t3 { display: block; color: var(--ink-3); font-size: .74rem; font
 .globe circle.mk.on { stroke: var(--ink); stroke-width: 2.4px; }
 .globe circle.site-mk { cursor: pointer; stroke-width: 1.5px; }
 .globe circle.site-mk:hover, .globe circle.site-mk:focus-visible { stroke: var(--ink); stroke-width: 2.6px; outline: none; }
+
+/* ==========================================================================
+   v4 — visual refresh, and the merged search control
+   ==========================================================================
+
+   Review asked for a more finished, more professional surface, taking the look
+   and feel of the Partner Performance Scoring dashboard as the reference: a
+   quieter page, cards that lift off it rather than being outlined on it, more
+   air inside every container, and colour used only where it carries meaning.
+
+   This is a layer on top of the existing sheet rather than a rewrite of it, so
+   every rule below is an override of something already defined. Nothing above
+   this comment changed, which keeps the diff readable and the rollback cheap.
+   -------------------------------------------------------------------------- */
+
+:root {
+  /* A cooler, slightly lighter page so white cards separate from it clearly.
+     The old #faf9f8 was warm enough that a white card on it read as the same
+     surface at a glance. */
+  --page: #f5f6f8;
+  --card: #ffffff;
+  --rule: #e6e8ec;
+  --rule-strong: #c9ccd3;
+
+  --ink: #16181d;
+  --ink-2: #5a5f6a;
+  --ink-3: #8b909b;
+
+  --brand: #0f6cbd;
+  --brand-hover: #0c5a9e;
+  --brand-wash: #f0f6fc;
+  --brand-wash-2: #d8e8f7;
+
+  --good: #0e700e;
+  --good-wash: #e6f4e6;
+  --warn: #8a6100;
+  --warn-wash: #fdf3dd;
+  --bad: #9e2a2f;
+  --bad-wash: #fce9ea;
+
+  /* Two levels, so a card and a popover are distinguishable. */
+  --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .06);
+  --shadow-lift: 0 4px 10px rgba(16, 24, 40, .07), 0 12px 28px rgba(16, 24, 40, .07);
+  --radius: 10px;
+}
+
+body { font-size: 14px; letter-spacing: -.003em; }
+
+/* ------------------------------------------------------------------ chrome */
+
+.top {
+  background: var(--card);
+  border-bottom: 1px solid var(--rule);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04);
+}
+.sidebar { background: var(--card); border-right: 1px solid var(--rule); }
+
+.nav a { border-radius: 6px; padding: .5rem .7rem; font-size: .875rem; }
+.nav a:hover { background: var(--page); }
+.nav a.on {
+  background: var(--brand-wash); color: var(--brand); font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--brand);
+}
+
+main { padding: 1.75rem 2rem 5rem; }
+.page-title { font-size: 1.75rem; letter-spacing: -.025em; margin-bottom: .25rem; }
+.page-sub { font-size: .9rem; margin-bottom: 1.4rem; }
+
+/* ------------------------------------------------------------------- cards */
+
+.panel {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  margin-bottom: 1.4rem;
+}
+.panel > header {
+  padding: .95rem 1.15rem;
+  border-bottom: 1px solid var(--rule);
+}
+.panel > header h3 { font-size: .95rem; font-weight: 600; letter-spacing: -.01em; }
+.panel > .body { padding: 1.05rem 1.15rem; }
+.panel > .body.flush { padding: 0; }
+
+/* KPI tiles as separate cards, the way the reference lays them out, rather
+   than cells sharing one hairline grid. */
+.kpis {
+  display: grid; gap: .85rem; background: none; border: 0;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  margin-bottom: 1.4rem;
+}
+.kpi {
+  background: var(--card); border: 1px solid var(--rule);
+  border-radius: var(--radius); padding: 1rem 1.1rem; box-shadow: var(--shadow);
+}
+.kpi b { font-size: 1.8rem; font-weight: 600; letter-spacing: -.03em; }
+
+/* ------------------------------------------------------------------ tables */
+
+table { font-size: .875rem; }
+thead th {
+  background: #fbfcfd;
+  position: sticky; top: var(--header); z-index: 2;
+  font-size: .72rem; font-weight: 600; letter-spacing: .02em;
+  color: var(--ink-2); text-transform: none;
+  padding: .7rem .9rem; border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+tbody td { padding: .7rem .9rem; border-bottom: 1px solid var(--rule); }
+tbody tr:hover { background: #fafbfd; }
+tbody tr.clickable:hover { background: var(--brand-wash); }
+/* Numbers line up column to column, which is most of what makes a dense table
+   readable at a glance. */
+td.n, th.n { font-variant-numeric: tabular-nums; }
+
+.pill {
+  border-radius: 999px; padding: .16rem .6rem;
+  font-size: .74rem; font-weight: 600; letter-spacing: .01em;
+  display: inline-block; line-height: 1.5;
+}
+
+.t-bad { color: var(--bad); }
+.t-warn { color: var(--warn); }
+.t3 { color: var(--ink-3); font-size: .78rem; }
+
+/* --------------------------------------------------- "how to read" banner */
+
+/* Collapsed by default now, so it has to read as a quiet affordance rather
+   than a filled block sitting above every page. */
+.howto {
+  background: var(--card); border: 1px solid var(--rule);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  margin-bottom: 1.25rem;
+}
+.howto > summary {
+  padding: .8rem 1.1rem; font-size: .875rem; font-weight: 600;
+  color: var(--brand); cursor: pointer; list-style: none;
+  display: flex; align-items: center; gap: .5rem;
+}
+.howto > summary::-webkit-details-marker { display: none; }
+.howto > summary::before {
+  content: ""; width: 7px; height: 7px; flex: none;
+  border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor;
+  transform: rotate(-45deg); transition: transform .15s ease; margin-left: .1rem;
+}
+.howto[open] > summary::before { transform: rotate(45deg); }
+.howto[open] > summary { border-bottom: 1px solid var(--rule); }
+.howto > .body { padding: 1.1rem 1.15rem; }
+
+/* ---------------------------------------------- merged search + filter */
+
+/* One combobox doing both jobs. It used to be an input and a select side by
+   side, which let the reader set the two to contradictory things and gave no
+   hint which one would find what they were after. */
+
+.filter-bar {
+  display: flex; align-items: center; gap: .85rem; flex-wrap: wrap;
+  padding: .85rem 1.15rem; border-bottom: 1px solid var(--rule);
+}
+
+.combo { position: relative; display: flex; align-items: center; flex: 1 1 24rem; min-width: 15rem; }
+
+.combo input {
+  width: 100%; font: inherit; font-size: .875rem;
+  padding: .5rem 4.4rem .5rem 2.2rem;
+  border: 1px solid var(--rule-strong); border-radius: 8px;
+  background: var(--card); color: var(--ink);
+}
+.combo input::placeholder { color: var(--ink-3); }
+.combo input:focus {
+  outline: none; border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-wash-2);
+}
+
+.combo-icon {
+  position: absolute; left: .7rem; width: 15px; height: 15px;
+  color: var(--ink-3); pointer-events: none;
+}
+
+.combo-clear, .combo-toggle {
+  position: absolute; border: 0; background: none; cursor: pointer;
+  color: var(--ink-3); display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; padding: 0;
+}
+.combo-clear { right: 2.3rem; width: 22px; height: 22px; font-size: 1.05rem; line-height: 1; }
+.combo-toggle { right: .35rem; width: 26px; height: 26px; }
+.combo-toggle svg { width: 15px; height: 15px; }
+.combo-clear:hover, .combo-toggle:hover { background: var(--page); color: var(--ink); }
+.combo[aria-expanded="true"] .combo-toggle svg { transform: rotate(180deg); }
+
+.combo-list {
+  position: absolute; top: calc(100% + 5px); left: 0; right: 0; z-index: 30;
+  margin: 0; padding: .3rem; list-style: none;
+  max-height: 17rem; overflow-y: auto;
+  background: var(--card); border: 1px solid var(--rule);
+  border-radius: 8px; box-shadow: var(--shadow-lift);
+}
+.combo-list li {
+  padding: .45rem .6rem; border-radius: 6px;
+  font-size: .875rem; cursor: pointer;
+}
+.combo-list li:hover { background: var(--brand-wash); color: var(--brand); }
+.combo-list li[data-value=""] { color: var(--ink-2); font-weight: 600; }
+.combo-list li[hidden] { display: none; }
+
+.filter-count { font-size: .8rem; color: var(--ink-3); white-space: nowrap; }
+.filter-count.empty-result { color: var(--bad); }
+
+/* --------------------------------------------------------------- the map */
+
+.map-side {
+  background: var(--card); border: 1px solid var(--rule);
+  border-radius: var(--radius); overflow: hidden;
+}
+.map-side .filter-bar { padding: .7rem .8rem; }
+.map-side .combo { flex: 1 1 100%; min-width: 0; }
+#map-side-body { padding: .85rem .95rem; }
+
+/* The dotted fence around a selected region and its sites. */
+.fleet-map .region-fence, svg.globe .region-fence {
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   v5 — a more finished surface
+   ==========================================================================
+
+   The page still worked; it just read as a wireframe. This layer is about
+   finish, not layout: a deeper palette, shadows that actually sit a card above
+   the page, one consistent corner radius, motion on the things you touch, and a
+   header and sidebar that look built rather than sketched.
+
+   Same discipline as the v4 block above -- every rule here overrides something
+   already defined, nothing structural moves, and deleting this section returns
+   the app exactly to how it looked before. Colour still only ever means
+   something; none of it is decoration.
+   -------------------------------------------------------------------------- */
+
+:root {
+  /* Cooler, and a hair more contrast between the page and a white card so the
+     card edge is not doing all the work. */
+  --page: #f4f6f9;
+  --page-2: #eef1f5;
+  --card: #ffffff;
+  --surface-2: #f7f9fb;   /* table headers, panel headers, inset fills */
+  --rule: #e7e9ee;
+  --rule-strong: #d3d7df;
+
+  --ink: #171a1f;
+  --ink-2: #565d68;
+  --ink-3: #878e9a;
+
+  --brand: #1668c0;
+  --brand-hover: #12569f;
+  --brand-strong: #0e4a88;
+  --brand-wash: #eff5fc;
+  --brand-wash-2: #d7e7f8;
+  --brand-ring: rgba(22, 104, 192, .16);
+
+  --good: #0f7a33;
+  --good-wash: #e6f4ea;
+  --warn: #8a6100;
+  --warn-wash: #fbf1d9;
+  --bad: #b3261e;
+  --bad-wash: #fceae9;
+
+  /* A real elevation ramp. xs for the chrome edges, sm for cards at rest, md
+     when a card lifts under the pointer, lg for popovers and modals. */
+  --shadow-xs: 0 1px 2px rgba(19, 26, 41, .05);
+  --shadow-sm: 0 1px 2px rgba(19, 26, 41, .04), 0 3px 8px -2px rgba(19, 26, 41, .07);
+  --shadow-md: 0 6px 16px -4px rgba(19, 26, 41, .12), 0 3px 8px -3px rgba(19, 26, 41, .07);
+  --shadow-lg: 0 18px 44px -8px rgba(19, 26, 41, .22), 0 8px 18px -8px rgba(19, 26, 41, .12);
+  --shadow: var(--shadow-sm);
+  --shadow-lift: var(--shadow-md);
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-lg: 18px;
+
+  --ease: cubic-bezier(.22, .61, .28, 1);
+  --dur: .16s;
+
+  --sans: "Segoe UI Variable Text", "Segoe UI", ui-sans-serif, system-ui,
+          -apple-system, "Helvetica Neue", Roboto, sans-serif;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  background:
+    radial-gradient(1200px 600px at 78% -8%, #ffffff 0%, rgba(255, 255, 255, 0) 60%),
+    linear-gradient(180deg, var(--page) 0%, var(--page-2) 100%);
+  background-attachment: fixed;
+  color: var(--ink);
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "ss01", "cv05";
+  letter-spacing: -.004em;
+}
+
+::selection { background: var(--brand-wash-2); color: var(--brand-strong); }
+
+a { transition: color var(--dur) var(--ease); }
+
+/* Thin, quiet scrollbars -- the default chunky ones age a UI badly. */
+* { scrollbar-width: thin; scrollbar-color: var(--rule-strong) transparent; }
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--rule-strong); border-radius: 999px;
+  border: 3px solid transparent; background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--ink-3); background-clip: content-box; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+
+/* ------------------------------------------------------------------ header */
+
+.appbar {
+  height: var(--header);
+  background: rgba(255, 255, 255, .82);
+  -webkit-backdrop-filter: saturate(1.6) blur(14px);
+  backdrop-filter: saturate(1.6) blur(14px);
+  border-bottom: 1px solid var(--rule);
+  box-shadow: 0 1px 0 rgba(19, 26, 41, .02), 0 6px 20px -14px rgba(19, 26, 41, .28);
+  padding: 0 1.15rem;
+  gap: .8rem;
+}
+.appbar .ms { font-weight: 650; letter-spacing: -.01em; }
+.appbar .product { color: var(--ink-2); font-weight: 500; }
+.appbar .divider { height: 20px; background: var(--rule-strong); opacity: .8; }
+.appbar .right { gap: .5rem; }
+.appbar .period {
+  font-size: .78rem; color: var(--ink-2); font-variant-numeric: tabular-nums;
+  padding: .3rem .6rem; border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--card);
+}
+
+.logo { gap: 1.5px; width: 19px; height: 19px; }
+.logo i { border-radius: 1.5px; }
+
+.iconbtn {
+  width: 34px; height: 34px; border-radius: var(--radius-sm);
+  color: var(--ink-2); transition: background var(--dur) var(--ease),
+    color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.iconbtn:hover { background: var(--page-2); color: var(--ink); }
+.iconbtn:active { transform: scale(.94); }
+.iconbtn svg { width: 17px; height: 17px; display: block; }
+.iconbtn .badge {
+  box-shadow: 0 0 0 2px var(--card);
+  font-variant-numeric: tabular-nums;
+}
+
+.avatar {
+  background: linear-gradient(150deg, #8b93a1, #6b7280);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .18), var(--shadow-xs);
+  letter-spacing: .02em;
+}
+.avatar.brand { background: linear-gradient(150deg, #2f86dd, var(--brand)); }
+
+/* ----------------------------------------------------------------- sidebar */
+
+.sidebar {
+  background: linear-gradient(180deg, #ffffff 0%, #fcfdfe 100%);
+  border-right: 1px solid var(--rule);
+  box-shadow: 1px 0 0 rgba(19, 26, 41, .015);
+}
+.whoami { padding: 1.05rem 1.15rem; gap: .8rem; }
+.whoami b { letter-spacing: -.01em; }
+.whoami span { color: var(--ink-3); }
+
+.nav { padding: .7rem .7rem; gap: 2px; }
+.nav a {
+  position: relative; border-radius: var(--radius-sm);
+  padding: .55rem .7rem; color: var(--ink-2); font-weight: 500;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.nav a .ico {
+  font-size: 1rem; opacity: .6;
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.nav a:hover { background: var(--page-2); color: var(--ink); }
+.nav a:hover .ico { opacity: .9; }
+.nav a.on {
+  background: var(--brand-wash); color: var(--brand); font-weight: 650;
+  box-shadow: none;
+}
+.nav a.on .ico { opacity: 1; }
+.nav a.on::before {
+  content: ""; position: absolute; left: -.7rem; top: 50%;
+  width: 3px; height: 18px; margin-top: -9px;
+  background: var(--brand); border-radius: 0 3px 3px 0;
+}
+.nav hr { border-top-color: var(--rule); margin: .55rem .7rem; }
+.sidebar .foot { border-top-color: var(--rule); padding: .5rem .7rem .8rem; }
+.sidebar .foot a { color: var(--ink-3); }
+.sidebar .foot a:hover { background: var(--bad-wash); color: var(--bad); }
+
+/* -------------------------------------------------------------------- main */
+
+main { padding: 1.85rem 2.1rem 5rem; }
+.page-title { font-weight: 680; letter-spacing: -.03em; color: var(--ink); }
+.page-sub { color: var(--ink-2); }
+
+/* Each rendered view fades up a touch as it mounts -- the router swaps
+   #view wholesale, so this reads as the page settling, not as chrome. */
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+main > * { animation: view-in .22s var(--ease) both; }
+
+/* ------------------------------------------------------------------- cards */
+
+.panel {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.panel > header {
+  background: var(--surface-2);
+  padding: .8rem 1.15rem;
+  border-bottom: 1px solid var(--rule);
+}
+.panel > header h3 {
+  font-size: .82rem; font-weight: 650; letter-spacing: .01em;
+  text-transform: none; color: var(--ink);
+}
+.panel > header .hint { color: var(--ink-3); font-size: .76rem; }
+.panel > .body { padding: 1.15rem 1.25rem; }
+.panel > .body.flush { padding: 0; }
+
+/* --------------------------------------------------------------- KPI tiles */
+
+.kpis { gap: 1rem; margin-bottom: 1.5rem; }
+.kpi {
+  position: relative; overflow: hidden; min-height: 104px;
+  border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--card); box-shadow: var(--shadow-sm);
+  padding: 1.05rem 1.2rem 1rem;
+  transition: box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.kpi::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+  background: linear-gradient(90deg, var(--brand), #58a6e6);
+  opacity: .9;
+}
+.kpi:has(.value.bad)::before  { background: linear-gradient(90deg, var(--bad), #d9645f); }
+.kpi:has(.value.good)::before { background: linear-gradient(90deg, var(--good), #4fae6c); }
+.kpi:has(.value.ink)::before  { background: var(--rule-strong); }
+.kpi:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.kpi .label {
+  font-size: .72rem; font-weight: 650; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.kpi .value {
+  font-size: 2.35rem; font-weight: 660; letter-spacing: -.035em;
+  margin-top: .3rem; font-variant-numeric: tabular-nums;
+}
+.kpi .sub { color: var(--ink-2); font-size: .8rem; }
+.kpi .kpi-of { color: var(--ink-3); }
+
+/* ------------------------------------------------------------------ tables */
+
+thead th {
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--rule-strong);
+  font-size: .71rem; font-weight: 650; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--ink-3);
+  padding: .65rem .9rem;
+}
+tbody td {
+  padding: .72rem .9rem; border-bottom: 1px solid var(--rule);
+  transition: background var(--dur) var(--ease);
+}
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr { transition: background var(--dur) var(--ease); }
+tbody tr:hover { background: var(--surface-2); }
+tbody tr.clickable { cursor: pointer; }
+tbody tr.clickable:hover { background: var(--brand-wash); }
+tbody td:first-child, thead th:first-child { padding-left: 1.15rem; }
+tbody td:last-child, thead th:last-child { padding-right: 1.15rem; }
+
+tbody tr.at-risk { background: var(--bad-wash); }
+tbody tr.at-risk:hover { background: #f9dedc; }
+
+/* ------------------------------------------------------------------- chips */
+
+.pill {
+  border-radius: 999px; padding: .16rem .62rem;
+  font-size: .73rem; font-weight: 650; line-height: 1.5;
+  border: 1px solid transparent;
+}
+.pill.good { background: var(--good-wash); color: var(--good); border-color: rgba(15, 122, 51, .16); }
+.pill.warn { background: var(--warn-wash); color: var(--warn); border-color: rgba(138, 97, 0, .18); }
+.pill.bad  { background: var(--bad-wash);  color: var(--bad);  border-color: rgba(179, 38, 30, .16); }
+.pill.info { background: var(--brand-wash); color: var(--brand); border-color: var(--brand-wash-2); }
+.pill.mute { background: var(--surface-2); color: var(--ink-2); border-color: var(--rule); }
+
+/* ------------------------------------------------------------------ inputs */
+
+input[type=text], input[type=search], input[type=password], select {
+  border: 1px solid var(--rule-strong); border-radius: var(--radius-sm);
+  padding: .48rem .7rem; background: var(--card);
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+input[type=text]:focus, input[type=search]:focus,
+input[type=password]:focus, select:focus {
+  outline: none; border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-ring);
+}
+button:focus-visible, a.iconbtn:focus-visible, .nav a:focus-visible {
+  outline: none; box-shadow: 0 0 0 3px var(--brand-ring);
+}
+
+.btn {
+  border-radius: var(--radius-sm); font-weight: 650;
+  padding: .5rem 1.15rem; box-shadow: var(--shadow-xs);
+  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
+    transform var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.btn:hover { box-shadow: var(--shadow-sm); }
+.btn:active { transform: translateY(1px); }
+.btn.ghost { background: var(--card); border-color: var(--rule-strong); color: var(--ink); }
+.btn.ghost:hover { background: var(--surface-2); border-color: var(--ink-3); }
+
+/* ---------------------------------------------- "how to read" banner */
+
+.howto {
+  border-radius: var(--radius); box-shadow: var(--shadow-xs);
+  background: var(--card);
+}
+.howto > summary { color: var(--ink-2); font-weight: 650; }
+.howto > summary:hover { color: var(--brand); }
+.howto[open] > summary { color: var(--brand); }
+.howto .lede { color: var(--ink); }
+.howto .walk li::marker { color: var(--brand); }
+.howto .src { border-top-color: var(--rule); }
+
+/* -------------------------------------------------------------- the map */
+
+.map-holder svg.globe { border-radius: var(--radius); }
+.map-zoom button {
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-sm);
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+.map-zoom button:active { transform: scale(.94); }
+.map-legend, #map-legend {
+  padding: .55rem .7rem; background: var(--card);
+  border: 1px solid var(--rule); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-xs);
+}
+.map-side { box-shadow: var(--shadow-sm); }
+
+/* -------------------------------------------------------------- overlays */
+
+.modal-back {
+  background: rgba(17, 22, 31, .42);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  animation: view-in .16s var(--ease) both;
+}
+.modal { border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
+.modal .modal-head { background: var(--surface-2); border-bottom-color: var(--rule); }
+
+.info-tip { border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); }
+
+/* -------------------------------------------------------------- assistant */
+
+.chat-fab {
+  border-radius: 999px; font-weight: 650;
+  background: linear-gradient(140deg, #2f86dd, var(--brand));
+  box-shadow: var(--shadow-md), 0 0 0 1px rgba(255, 255, 255, .1) inset;
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.chat-fab:hover { background: linear-gradient(140deg, #2f86dd, var(--brand-hover));
+  transform: translateY(-1px); box-shadow: var(--shadow-lg); }
+.chat-fab:active { transform: translateY(0); }
+.chat-fab svg { flex: none; }
+.chat-panel > header svg { flex: none; color: var(--brand); }
+.chat-panel { border-radius: var(--radius); box-shadow: var(--shadow-lg); }
+.chat-panel > header { background: var(--surface-2); }
+.chat-form input { border-radius: var(--radius-sm); }
+
+/* ------------------------------------------------------------------ login */
+
+.login-page {
+  background:
+    radial-gradient(680px 420px at 20% 10%, var(--brand-wash) 0%, rgba(0, 0, 0, 0) 62%),
+    radial-gradient(720px 480px at 92% 96%, #e8eef7 0%, rgba(0, 0, 0, 0) 60%),
+    linear-gradient(180deg, var(--page) 0%, var(--page-2) 100%);
+}
+.login-card {
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  padding: 2.4rem 2.4rem 2.1rem;
+}
+.login-card h1 { letter-spacing: -.025em; font-weight: 680; }
+.login-card .btn { border-radius: var(--radius-sm); padding: .62rem; }
+.login-card input { border-radius: var(--radius-sm); }

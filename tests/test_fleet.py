@@ -200,6 +200,36 @@ def test_every_region_has_real_coordinates(entities):
         assert -180 <= float(geo.loc[region, "Longitude"]) <= 180
 
 
+def test_every_datacentre_is_placed_near_its_region(entities):
+    """The extract has no per-site location, so each data centre is its region's
+    real point plus a small generated offset. Every site must land within a
+    metro-sized radius of its region -- a bad offset that put a building an ocean
+    away would read as a real location and mislead."""
+    import math
+
+    from dimensional.build import SITE_SPREAD_KM, attach_datacentre_coordinates
+
+    geo = entities["dim_region_geography"].set_index("Region")
+    sites = entities["dim_datacentre"]
+    assert sites["Latitude"].notna().all() and sites["Longitude"].notna().all()
+
+    for s in sites.itertuples():
+        blat = float(geo.loc[s.Region, "Latitude"])
+        blon = float(geo.loc[s.Region, "Longitude"])
+        km = math.hypot(
+            (s.Latitude - blat) * 111.0,
+            (s.Longitude - blon) * 111.0 * math.cos(math.radians(blat)),
+        )
+        assert km <= SITE_SPREAD_KM + 1e-6, f"{s.DatacentreId} is {km:.0f} km from {s.Region}"
+
+    # Deterministic: two builds put every site in the same place.
+    again = attach_datacentre_coordinates(
+        entities["dim_datacentre"][["DatacentreId", "Region"]].copy(),
+        entities["dim_region_geography"],
+    )
+    assert again["Latitude"].tolist() == sites["Latitude"].tolist()
+
+
 # --------------------------------------------------------------------------
 # the reframe
 # --------------------------------------------------------------------------

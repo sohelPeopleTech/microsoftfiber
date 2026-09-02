@@ -111,11 +111,23 @@ def test_the_error_shown_belongs_to_the_model_in_use():
     import api
 
     js = (_P(__file__).resolve().parents[1] / "webapp" / "static" / "pages.js").read_text()
-    body = js[js.index('kpi("Model used"'):js.index('All ${f.scores.length} models scored')]
-    assert "scores[0]" not in body, (
-        "a forecast KPI still reads scores[0] — that is the backtest winner, "
-        "which is a different model wherever the choice is forced")
-    assert "scoreFor(f)" in body
+
+    # There is more than one of these now. The forecast moved onto each data
+    # centre, so a second KPI block draws the same four figures for a building,
+    # and this originally sliced from the first "Model used" to the *forecast
+    # page's* table heading -- a span covering half the file, including prose
+    # about the bug itself. Every block is checked instead, which is what the
+    # test meant in the first place: wherever a page names the model in use, the
+    # error beside it has to be that model's own.
+    marks = [i for i in range(len(js))
+             if js.startswith('kpi("Model used"', i)]
+    assert marks, "no forecast KPI block found at all"
+    for start in marks:
+        body = js[start:js.index("models scored", start)]
+        assert "scores[0]" not in body, (
+            "a forecast KPI still reads scores[0] — that is the backtest winner, "
+            "which is a different model wherever the choice is forced")
+        assert "scoreFor(f)" in body or "scoreFor(" in body
 
     forced = []
     for region in [r["region"] for r in api.overview()["regions"]]:

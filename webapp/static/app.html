@@ -13,17 +13,32 @@
      browser back both work without a build step or a routing library. -->
 
 <header class="appbar">
-  <button class="iconbtn menu-toggle" id="menu" aria-label="Toggle navigation">☰</button>
+  <button class="iconbtn menu-toggle" id="menu" aria-label="Toggle navigation">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" aria-hidden="true">
+      <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/>
+      <line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
   <span class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
   <span class="ms">Microsoft</span>
   <span class="divider"></span>
   <span class="product">Capacity Intelligence</span>
   <div class="right">
     <span class="period" id="asof" title="">—</span>
-    <button class="iconbtn" id="alerts" title="Regions needing action">
-      🔔<span class="badge" id="alert-count" hidden>0</span>
+    <button class="iconbtn" id="alerts" title="Regions needing action" aria-label="Regions needing action">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+        <path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      <span class="badge" id="alert-count" hidden>0</span>
     </button>
-    <a class="iconbtn" href="/methodology" title="Methodology">?</a>
+    <a class="iconbtn" href="/methodology" title="Methodology" aria-label="Methodology">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    </a>
     <span class="avatar brand" id="me-initials" title="">··</span>
   </div>
 </header>
@@ -49,12 +64,22 @@
      without this line reads as real Microsoft capacity and revenue data. -->
 <main id="view"><p class="loading">Loading…</p></main>
 
-<button class="chat-fab" id="chat-open">✦ <span id="chat-name">Assistant</span></button>
+<button class="chat-fab" id="chat-open">
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="17" height="17">
+    <path d="M12 2.5l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/>
+    <path d="M18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z" opacity=".8"/></svg>
+  <span id="chat-name">Assistant</span></button>
 
 <section class="chat-panel" id="chat-panel" aria-label="Assistant">
   <header>
-    ✦ <span id="chat-title">Assistant</span>
-    <button class="iconbtn close" id="chat-close" aria-label="Close assistant">✕</button>
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="16" height="16">
+      <path d="M12 2.5l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
+    <span id="chat-title">Assistant</span>
+    <button class="iconbtn close" id="chat-close" aria-label="Close assistant">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" aria-hidden="true">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
   </header>
   <div class="chat-log" id="chat-log"></div>
   <div class="chips" id="chat-chips"></div>

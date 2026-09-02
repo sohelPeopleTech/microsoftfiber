@@ -128,8 +128,20 @@ STATE_DIR = ROOT / "out" / "state"
 #: Every tab is a real URL. FastAPI serves the same shell for all of them and
 #: the client router picks the renderer, so deep links and browser-back work
 #: without a build step.
-TABS = ("/", "/map", "/recommendations", "/regions", "/datacentres", "/customers", "/incidents",
-        "/reasons", "/forecast", "/policy", "/actions", "/methodology")
+#: `/` is the Fleet map. It used to be the Overview, and the swap is deliberate:
+#: review asked for the map to be the first thing anyone sees after signing in,
+#: and the login redirect and the router's unknown-path fallback both already
+#: point at `/`, so moving the renderer rather than adding a redirect keeps one
+#: landing page instead of two. Overview keeps a real, linkable URL at
+#: `/overview`; `/map` stays registered so older links still resolve.
+#:
+#: Six tabs left the sidebar in the same review -- recommendations, incidents,
+#: reasons, forecast, policy and actions. Only the sidebar changed: every route
+#: below is still served and every endpoint behind it still runs, so the pages
+#: remain reachable by URL and nothing downstream was deleted.
+TABS = ("/", "/overview", "/map", "/recommendations", "/regions", "/datacentres",
+        "/customers", "/incidents", "/reasons", "/forecast", "/policy", "/actions",
+        "/methodology")
 
 #: Deep pages. Review was explicit that selecting a facility must open that
 #: facility's own page rather than expanding a panel in place -- "do not drill
@@ -669,6 +681,20 @@ def datacentres():
             "thresholdPct": round(site_thr, 1),
             "siteUtilisationPct": round(site_util, 1),
             "overThreshold": bool(site_util > site_thr),
+            # What the building holds and uses, in its own right. The list
+            # previously showed only capacity *counts*, so a site with one F512
+            # and a site with one F2 read identically.
+            "totalCU": round(site_dep, 1),
+            "utilisedCU": round(site_used, 1),
+            # Where the building is, for the map: region point + generated offset.
+            "lat": _clean(site["Latitude"]) if site is not None else None,
+            "lon": _clean(site["Longitude"]) if site is not None else None,
+            # And when the buy decision falls due, against the fixed planning
+            # line and the fixed lead time.
+            **_site_planning(str(dc), site_util),
+            # And what the buy is: the CU short of the planning line, and the
+            # smallest real F SKU that covers it -- CU is not bought loose.
+            **_site_procurement(site_dep, site_used),
             "requests": int(len(grp)),
             "failed": int(len(denied)),
             "customers": int(grp["SubscriptionId"].nunique()),
@@ -885,6 +911,8 @@ def datacentre_detail(datacentre_id: str):
     return {
         "datacentre": datacentre_id,
         "region": region,
+        "lat": _clean(site.get("Latitude")),
+        "lon": _clean(site.get("Longitude")),
         "capacityUnits": _clean(site.get("DeployedUnits")),
         "capacityUnitsFree": _clean(site.get("FreeUnits")),
         "thresholdPct": _clean(site.get("ThresholdPct")),
@@ -1026,6 +1054,239 @@ def _forecast(region: str, threshold: float):
     )
 
 
+@lru_cache(maxsize=1)
+def _site_usage_daily():
+    """Daily utilisation per data centre, from the CU record.
+
+    This endpoint used to say there was no per-site utilisation series and that
+    splitting the region curve across ten buildings would draw ten identical
+    lines. The first half was wrong. `fact_capacity_cu_daily` is one row per
+    *capacity* per day in CU seconds, and every capacity carries the building it
+    sits in -- so a site's own utilisation is consumed over available, summed
+    across the capacities in it. All 110 sites have a complete 150-day record.
+
+    Summing the seconds rather than averaging the per-capacity percentages is
+    the point: an F2 at 90% and an F512 at 20% do not average to 55% of the
+    building, they average to roughly 20%, and only the seconds know that.
+
+    The column is named `Region` because `forecast.forecast_region` filters on
+    a column of that name. Nothing in the forecast engine had to change to
+    forecast a building -- it only ever needed a series and an identifier.
+    """
+    import numpy as np
+    import pandas as pd
+
+    cu = get_entities()["fact_capacity_cu_daily"]
+    grouped = (cu.groupby(["DatacentreId", "Date"], as_index=False)
+                 .agg(Available=("CuSecondsAvailable", "sum"),
+                      Consumed=("CuSecondsConsumed", "sum")))
+    grouped["UtilisationPct"] = np.where(
+        grouped["Available"] > 0,
+        grouped["Consumed"] / grouped["Available"] * 100.0, 0.0)
+    out = grouped.rename(columns={"DatacentreId": "Region"})
+    out["Date"] = pd.to_datetime(out["Date"]).dt.date.astype(str)
+    return out[["Region", "Date", "UtilisationPct"]].sort_values(["Region", "Date"])
+
+
+@lru_cache(maxsize=1)
+def _site_meta() -> dict:
+    """DatacentreId -> its region and its own safety threshold."""
+    sites = get_entities()["dim_datacentre"]
+    return {str(r.DatacentreId): {"region": str(r.Region),
+                                  "threshold": float(r.ThresholdPct)}
+            for r in sites.itertuples()}
+
+
+def _site_threshold(datacentre_id: str, override: float | None = None) -> float:
+    """The line to judge a building by: its own, unless one was forced."""
+    if override is not None:
+        return float(override)
+    return _site_meta().get(str(datacentre_id), {}).get("threshold", 85.0)
+
+
+@lru_cache(maxsize=256)
+def _forecast_site(datacentre_id: str, threshold: float):
+    """One building's projection, chosen by the same backtest the regions use.
+
+    Anomaly exclusion is inherited from the parent region rather than detected
+    per site. A spike caused by a signed deal is a business event recorded at
+    region grain, and the same day is anomalous in the buildings underneath it;
+    running detection 110 times to rediscover that would cost far more than it
+    tells anyone. The page says which it is.
+    """
+    meta = _site_meta().get(str(datacentre_id))
+    excluded = get_anomalies().get(meta["region"]) if meta else None
+    return forecast.forecast_region(
+        _site_usage_daily(), str(datacentre_id), threshold_pct=threshold,
+        horizon_days=FORECAST_HORIZON_DAYS,
+        exclude_anomalies=excluded.excluded_dates if excluded else None,
+        force_model=_forced_model(),
+    )
+
+
+#: Review set these as fixed policy figures rather than per-site data.
+#:
+#: The planning threshold is one number for the whole estate. `dim_datacentre`
+#: does carry a per-site `ThresholdPct` (82.5% to 90%), and the forecast still
+#: judges each building against its own; this is the separate, deliberately
+#: uniform line the *procurement* decision is taken against, so that "overdue"
+#: means the same thing in every row of the table.
+PLANNING_THRESHOLD_PCT = 80.0
+
+#: Procurement lead time, fixed across the estate. `dim_datacentre.LeadTimeDays`
+#: exists and varies, but it was generated per site and review asked for one
+#: figure; twelve weeks is what the decision is actually made against.
+PROCUREMENT_LEAD_WEEKS = 12
+
+
+@lru_cache(maxsize=1)
+def _site_growth_rates() -> dict:
+    """Utilisation growth per site, in percentage points per week.
+
+    There is no growth-rate column anywhere in the extract -- checked every
+    table -- so this is derived rather than read. It is the ordinary
+    least-squares slope of the building's own daily utilisation over its whole
+    150-day record, converted from points-per-day to points-per-week.
+
+    A least-squares line is the honest summary here. It uses the whole record
+    rather than differencing two endpoints, which would turn one noisy day into
+    the entire trend, and it is the same quantity the forecast is trying to
+    estimate, just without the model selection.
+    """
+    import numpy as np
+
+    usage = _site_usage_daily()
+    out = {}
+    for site, grp in usage.groupby("Region", sort=False):
+        y = grp["UtilisationPct"].to_numpy(dtype=float)
+        if len(y) < 14:
+            # Under a fortnight, a slope is noise with a direction.
+            out[str(site)] = None
+            continue
+        x = np.arange(len(y), dtype=float)
+        slope_per_day = float(np.polyfit(x, y, 1)[0])
+        out[str(site)] = round(slope_per_day * 7.0, 3)
+    return out
+
+
+@lru_cache(maxsize=1)
+def _sites_per_region() -> dict:
+    """Region -> how many data centres it holds. Every site, not only the ones
+    that have seen a request: the question is how many places the region could
+    place work in, and a quiet building still counts."""
+    sites = get_entities()["dim_datacentre"]
+    return {str(k): int(v) for k, v in sites.groupby("Region").size().items()}
+
+
+def _site_planning(datacentre_id: str, utilisation_pct: float) -> dict:
+    """When the buy decision has to be taken for one building.
+
+    `weeksToDecide` is the runway to the planning threshold at the building's
+    current growth rate. Status compares that runway with the procurement lead
+    time: if the capacity would arrive after the line is crossed, the decision
+    is already late, which is what `overdue` means here.
+
+    Three cases produce no answer rather than a misleading one -- a site already
+    past the line, a site that is flat or shrinking, and a site without enough
+    history to have a trend. Printing "999 weeks" for a flat site would read as
+    comfort; a dash reads as what it is.
+    """
+    growth = _site_growth_rates().get(str(datacentre_id))
+    out = {
+        "planningThresholdPct": PLANNING_THRESHOLD_PCT,
+        "leadTimeWeeks": PROCUREMENT_LEAD_WEEKS,
+        "growthPctPerWeek": growth,
+        "weeksToDecide": None,
+        "planningStatus": "ok",
+    }
+    if utilisation_pct >= PLANNING_THRESHOLD_PCT:
+        # Already over. The runway is gone, not long.
+        out["weeksToDecide"] = 0.0
+        out["planningStatus"] = "overdue"
+        return out
+    if not growth or growth <= 0:
+        out["planningStatus"] = "ok"
+        return out
+
+    weeks = (PLANNING_THRESHOLD_PCT - float(utilisation_pct)) / growth
+    out["weeksToDecide"] = round(weeks, 1)
+    out["planningStatus"] = "overdue" if weeks < PROCUREMENT_LEAD_WEEKS else "ok"
+    return out
+
+
+def _site_position(datacentre_id: str) -> dict:
+    """The capacity position of one building, in the shape the regions table used.
+
+    Review moved four columns off the Regions tab -- when it crosses its line,
+    what it would take to stay under, what it owes and who is waiting -- on the
+    grounds that they are site questions being asked of a geography. A region
+    with ten buildings where one is full is not constrained; the building is.
+    This computes them at the grain they belong to.
+
+    `hitsThresholdIn` comes from the same backtested forecast the site page
+    draws, not from a second cheaper fit. Two numbers for one question is how
+    the Regions tab and the Forecast tab once ended up ten days apart, and the
+    fix then was to share the forecast rather than to reconcile the answers.
+    """
+    meta = _site_meta().get(str(datacentre_id))
+    if meta is None:
+        return {}
+    sites = get_entities()["dim_datacentre"]
+    row = sites[sites["DatacentreId"].astype(str) == str(datacentre_id)]
+    if row.empty:
+        return {}
+    site = row.iloc[0]
+
+    deployed = float(site["DeployedUnits"] or 0)
+    used = float(site["UsedUnits"] or 0)
+    target = float(site["ThresholdPct"] or 0)
+    # Utilisation is used over deployed, so to sit at or under T% the site needs
+    # used * 100 / T deployed, and it is short by that less what it holds. Zero
+    # when it is already under its line -- a building with headroom needs nothing.
+    needed = (used * 100.0 / target) if target > 0 else deployed
+    shortfall = round(max(0.0, needed - deployed), 1)
+
+    out = {
+        "cuToStayUnder": shortfall,
+        "smallestSkuStep": _smallest_sku_covering(shortfall),
+        "hitsThresholdIn": None,
+        "crossingDate": None,
+        "alreadyBreached": None,
+        "forecastModel": "",
+    }
+    try:
+        f = _forecast_site(str(datacentre_id), _site_threshold(datacentre_id))
+    except Exception:
+        # A forecast that fails must not take the region page down with it. The
+        # column shows a dash; every other figure in the row is unaffected.
+        return out
+
+    out["forecastModel"] = f.model
+    out["alreadyBreached"] = bool(f.already_breached)
+    out["crossingDate"] = f.crossing_date
+    if f.already_breached:
+        out["hitsThresholdIn"] = 0
+    elif f.crossing_date and f.history:
+        import pandas as pd
+        last = pd.Timestamp(f.history[-1]["date"])
+        out["hitsThresholdIn"] = int((pd.Timestamp(f.crossing_date) - last).days)
+    return out
+
+
+#: How a site forecast is sourced, stated on every page that draws one. The CU
+#: consumption underneath it is generated, and a forecast built on generated
+#: data must not be presented with the authority of one built on tickets.
+SITE_FORECAST_PROVENANCE = (
+    "Fitted on this building's own daily CU record — consumed CU seconds over "
+    "available, summed across the capacities in it. That record is generated: "
+    "region consumption was distributed across sites, so a building's shape "
+    "follows its region's. The model selection, the backtest and the error band "
+    "are real measurements of that series; the series itself is synthetic. "
+    "Anomalous days are inherited from the parent region's detection rather than "
+    "re-detected here."
+)
+
+
 @app.get("/api/forecast")
 def forecast_all(threshold: Annotated[float | None, Query(ge=50.0, le=99.0)] = None):
     """Every region's projection, judged against that region's own threshold.
@@ -1108,6 +1369,40 @@ def _trim_for_plotting(d: dict, trim: bool = True) -> dict:
     #: should discount a crossing date that sits out there, so it is stated
     #: rather than left for them to work out from the axis.
     d["extrapolatedBeyondHistory"] = len(d["projection"]) > len(d.get("history") or [])
+    return d
+
+
+@app.get("/api/forecast/datacentre/{datacentre_id}")
+def forecast_site(datacentre_id: str,
+                  threshold: Annotated[float | None, Query(ge=50.0, le=99.0)] = None,
+                  full: Annotated[bool, Query()] = False):
+    """One building's projection against its own safety line.
+
+    Declared before `/api/forecast/{region}` for readability only -- the two
+    cannot collide, since this path has a segment the other does not.
+
+    The Forecast tab left the sidebar in review and the forecasting went where
+    the thing being forecast lives. A region-level crossing date says a
+    geography is filling up; this says which building fills first, which is the
+    grain at which anything can actually be done about it.
+    """
+    meta = _site_meta().get(str(datacentre_id))
+    if meta is None:
+        raise HTTPException(404, f"unknown datacentre {datacentre_id!r}")
+    line = _site_threshold(datacentre_id, threshold)
+    d = _trim_for_plotting(_clean(_forecast_site(str(datacentre_id), line).to_dict()),
+                           trim=not full)
+    # `region` on the forecast object is the identifier it was fitted on, which
+    # here is the building. Both names are returned so a caller never has to
+    # guess which one it is holding.
+    d["datacentre"] = str(datacentre_id)
+    d["region"] = meta["region"]
+    d["scope"] = "datacentre"
+    d["candidates"] = sorted(forecast.CANDIDATES)
+    d["horizonDays"] = forecast.HORIZON
+    d["projectionDays"] = FORECAST_HORIZON_DAYS
+    d["folds"] = forecast.BACKTEST_FOLDS
+    d["provenance"] = SITE_FORECAST_PROVENANCE
     return d
 
 
@@ -1225,6 +1520,31 @@ def _smallest_sku_covering(units: float) -> str:
         if cu >= units:
             return sku
     return max(admission.F_SKUS, key=lambda k: admission.F_SKUS[k])
+
+
+def _site_procurement(deployed_cu: float, used_cu: float) -> dict:
+    """What a site would have to buy to sit back under the planning line.
+
+    Utilisation is used over deployed, so to come back under
+    ``PLANNING_THRESHOLD_PCT`` a site needs ``used * 100 / threshold`` deployed
+    and is short by that less what it already holds. A site under its line needs
+    nothing and returns a zero shortfall with no SKU.
+
+    The shortfall is then rounded up to the smallest F SKU that covers it,
+    because Capacity Units are not bought loose -- the ladder doubles, so a site
+    short by 110 CU takes an F128. ``procureSkuCU`` is that rung's CU, which is
+    what actually lands, not the bare shortfall.
+    """
+    if deployed_cu <= 0:
+        return {"procureShortfallCU": None, "procureSku": "", "procureSkuCU": None}
+    target = used_cu * 100.0 / PLANNING_THRESHOLD_PCT
+    shortfall = max(0.0, target - deployed_cu)
+    sku = _smallest_sku_covering(shortfall)
+    return {
+        "procureShortfallCU": round(shortfall, 1),
+        "procureSku": sku,
+        "procureSkuCU": admission.F_SKUS.get(sku) if sku else None,
+    }
 
 
 def _site_utilisation(site) -> float:
@@ -1459,6 +1779,9 @@ def capacity_map():
         "asOf": str(entities["fact_usage_daily"]["Date"].max()),
         "provenance": {
             "coordinates": "REAL - Azure Resource Manager region metadata",
+            "siteCoordinates": ("GENERATED - each data centre is its region's real "
+                                "point plus a deterministic offset of up to 75 km; "
+                                "Azure publishes no per-building location"),
             "featureAvailability": "REAL - Microsoft Learn Fabric region availability",
             "capacityAndUsage": "GENERATED - see data/synthetic",
         },
@@ -1529,6 +1852,10 @@ def map_region(region: str):
             "utilisationPct": round(_site_utilisation(s_), 1),
             "overThreshold": bool(_site_utilisation(s_) >
                                   float(getattr(s_, "ThresholdPct", 0) or 0)),
+            # Where the building sits: its region's real point plus a small
+            # generated offset, so the map can place it rather than scatter it.
+            "lat": _clean(getattr(s_, "Latitude", None)),
+            "lon": _clean(getattr(s_, "Longitude", None)),
         })
     sites.sort(key=lambda s: -s["capacityUnits"])
 
@@ -2105,6 +2432,14 @@ def region_detail(name: str):
             "capacityUnitsFree": _clean(meta["FreeUnits"]) if meta is not None else None,
             "thresholdPct": _clean(meta["ThresholdPct"]) if meta is not None else None,
             "headroom": _clean(meta["HeadroomToThreshold"]) if meta is not None else None,
+            # Moved down from the Regions tab. What this building still owes and
+            # who is waiting on it -- counted from the failed requests raised
+            # here, not from a region total divided across its sites.
+            "cuPending": round(sum(float(x.get("blocked", 0)) for x in failed), 1),
+            "customersWaiting": len({str(x.get("subscriptionId", "")) for x in failed
+                                     if x.get("subscriptionId")}),
+            # And the two forecast-derived ones, at the grain they belong to.
+            **_site_position(str(dc)),
         })
     # Worst first: over its line, then by failures, then by what it cost.
     datacentres.sort(key=lambda d: (not d["overThreshold"], -d["failed"],
@@ -2175,6 +2510,11 @@ def threshold(pct: Annotated[float | None, Query(ge=50.0, le=99.0)] = None,
         f["throttling"] = throttling.get(region, {})
         f["sites_rollup"] = rollup.get(region, {})
         f["free_units"] = round(float(f["deployed_units"]) - float(f["used_units"]), 1)
+        # How many buildings the region actually has. The Regions table needs it
+        # to say what its own average is an average *of*: 97% across one site and
+        # 97% across twelve are different problems, and the number was not on the
+        # page anywhere.
+        f["datacentre_count"] = _sites_per_region().get(region, 0)
 
         # "How much should I raise in order to be within that capacity range?"
         # -- the second half of the what-if, and the half the slider could not
@@ -2633,6 +2973,34 @@ def _threshold_series(region: str, threshold_pct: float) -> list:
     return out
 
 
+def _site_threshold_series(datacentre_id: str, threshold_pct: float) -> list:
+    """The same monthly over/under-the-line series, for one building.
+
+    Deliberately the same shape and the same rounding as `_threshold_series`
+    above, because the region page and the site page draw it with the same
+    component and two functions producing subtly different objects for one chart
+    is how a caption ends up disagreeing with the line above it.
+    """
+    import pandas as pd
+
+    usage = _site_usage_daily()
+    here = usage[usage["Region"] == str(datacentre_id)].copy()
+    if here.empty:
+        return []
+    here["Month"] = pd.to_datetime(here["Date"]).dt.to_period("M").astype(str)
+    out = []
+    for month, grp in here.groupby("Month", sort=True):
+        util = float(grp["UtilisationPct"].mean())
+        out.append({
+            "month": str(month),
+            "utilisationPct": round(util, 2),
+            "thresholdPct": round(float(threshold_pct), 1),
+            "deltaPct": round(util - float(threshold_pct), 2),
+            "peakPct": round(float(grp["UtilisationPct"].max()), 2),
+        })
+    return out
+
+
 @app.get("/api/demand/region/{name}")
 def demand_region(name: str):
     entities = get_entities()
@@ -2657,19 +3025,19 @@ def demand_datacentre(datacentre_id: str):
         raise HTTPException(404, f"unknown datacentre {datacentre_id!r}")
     d = _demand_series(entities["fact_capacity_request"], entities["fact_event"],
                        "DatacentreId", datacentre_id)
+    line = round(float(row.iloc[0]["ThresholdPct"]), 1)
     return {
         "scope": "datacentre", "id": str(datacentre_id),
         "region": str(row.iloc[0]["Region"]),
         **d, **_project_demand(d["demand"]),
-        "thresholdPct": round(float(row.iloc[0]["ThresholdPct"]), 1),
-        # Utilisation is recorded per region per day; there is no per-site
-        # series to plot. Splitting the region's curve across its ten sites
-        # would draw ten identical lines and imply a measurement nobody made.
-        "thresholdSeries": [],
-        "thresholdSeriesNote": (
-            "Utilisation over time is recorded per region, not per facility, so "
-            "this chart is shown on the region page. Demand below is this site's own."
-        ),
+        "thresholdPct": line,
+        # This was an empty list and an apology: "utilisation is recorded per
+        # region, so this chart is on the region page". It is recorded per
+        # capacity per day, and every capacity names its building, so the site
+        # has a series of its own -- see `_site_usage_daily`.
+        "thresholdSeries": _site_threshold_series(str(datacentre_id), line),
+        "thresholdSeriesNote": "",
+        "thresholdSeriesProvenance": SITE_FORECAST_PROVENANCE,
     }
 
 

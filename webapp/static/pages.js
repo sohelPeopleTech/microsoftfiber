@@ -62,7 +62,10 @@ function failureCause(r) {
     <br>${verdict}`;
 }
 
-PAGES["/"] = async (view) => {
+/* Overview moved off `/` when the fleet map took it as the landing page. It is
+   a real page with a real URL, not a redirect target -- the only thing that
+   changed is which of the two someone arrives on. */
+PAGES["/overview"] = async (view) => {
   const d = await get("/api/overview");
   const k = d.kpis;
 
@@ -94,24 +97,24 @@ PAGES["/"] = async (view) => {
       <span class="n">${num(n)}</span><span class="what">${esc(label)}</span></div>`;
 
   view.innerHTML = howto({
-    answers: "<b>Portfolio position across all monitored regions</b> \u2014 which need a decision, request outcomes, and the revenue attributed to failures.",
-    steps: [
-      { what: "KPI strip", is: "portfolio totals \u2014 regions under management, how many need a decision now, and the revenue impact of failed requests." },
-      { what: "Request outcomes", is: "the two failure types the tool targets — SLA breached before being granted, and never granted at all. Everything handled inside SLA is collapsed into one line below them, for reconciliation only." },
-      { what: "Demand distribution", is: "request volume by region, highest first \u2014 the link between the region count and the incident count. Select a row to open that region." },
-      { what: "Denial reason analysis", is: "root cause for every denial with the corresponding remediation path. This determines which team owns the fix." },
-      { what: "Regions requiring action", is: "prioritised by how soon each has to be decided on, with the rationale for each flag and the dominant cause behind any revenue loss \u2014 so a green region carrying money is explained rather than puzzling." },
-    ],
-    words: [
-      { term: "FTR", means: "First-time resolution \u2014 approved on the initial pass with no denial recorded." },
-      { term: "SLA", means: "Committed turnaround by subscription tier \u2014 Enterprise 48h, Premium 72h, Standard and Free 96h. Resolution inside the window is normal handling; beyond it is a breach and is classified as a failure." },
-      { term: "Revenue loss", means: "<b>Microsoft revenue, not the customer&rsquo;s own.</b> The subscription\u2019s ARR, apportioned by the share of the request left unfulfilled and the duration of the shortfall." },
-      { term: "Manual review", means: "Denial causes with no automated remediation \u2014 quota policy, network faults and unrecorded causes require engineering or account-team engagement rather than a platform action." },
-      { term: "Why a green region still shows revenue loss", means: "The two columns look in opposite directions. <b>Status</b> is a forecast about the region\u2019s ceiling; <b>revenue loss</b> is history about individual requests. Being under the threshold means there was room \u2014 it does not mean the request got through. Across this extract, <b>every failure in a region that is currently green landed on a data centre that had room</b>: they failed on maintenance windows, quota policy, network faults and tickets nobody actioned. The <i>Why those requests failed</i> column says which it was, because &ldquo;add capacity here&rdquo; is the wrong answer to most of them. Note that this is a statement about <i>where the failures happened</i>, not about the whole region &mdash; a region can average comfortably and still hold one data centre at 100%, so the column counts those separately." },
-    ],
-    next: "Review the denial reason analysis to identify the applicable remediation, then action any region showing a negative value in 'Days to decide' \u2014 those crossings are already inside the decision window.",
-    sources: "ICM capacity-request extract, subscription ARR reference, and daily Fabric capacity consumption.",
-  }) + title("Overview", `Everything across all regions — as of ${String(d.asOf).slice(0, 10)}`) + `
+  answers: "<b>Portfolio view across all regions</b> — decisions, request outcomes, and revenue impact.",
+  steps: [
+    { what: "KPI strip", is: "Shows managed regions, regions needing action, and revenue impact." },
+    { what: "Request outcomes", is: "Shows SLA breaches and ungranted requests; successful requests are grouped for reference." },
+    { what: "Demand distribution", is: "Ranks request volume by region. Select a row for details." },
+    { what: "Denial reasons", is: "Shows why requests failed and the recommended remediation." },
+    { what: "Regions requiring action", is: "Prioritises regions by decision urgency and revenue impact." },
+  ],
+  words: [
+    { term: "FTR", means: "First-time resolution — approved on the initial pass." },
+    { term: "SLA", means: "Expected resolution time by subscription tier. Missing it counts as a failure." },
+    { term: "Revenue loss", means: "<b>Microsoft revenue</b> affected by unfulfilled requests and their duration." },
+    { term: "Manual review", means: "Issues requiring engineering or account-team action rather than automation." },
+    { term: "Green region with revenue loss", means: "Green means the region has capacity headroom, not that every request succeeds. Failures can come from maintenance, quota, network, or other issues." },
+  ],
+  next: "Review denial reasons, then action regions with negative 'Days to decide'.",
+  sources: "Capacity requests, subscription ARR, and daily Fabric capacity data.",
+}) + title("Overview", `Everything across all regions — as of ${String(d.asOf).slice(0, 10)}`) + `
 
   <div class="kpis">
     ${kpi("Regions monitored", num(d.regions.length), `across ${d.skus.length} Fabric SKUs`, "ink", "Azure regions with capacity requests in this extract. Each region holds Fabric capacities spread over several data centres.")}
@@ -436,7 +439,7 @@ function demandChart(d) {
    The x axis is real dates rather than an index, which is what lets a daily
    series and a monthly one share it honestly: a monthly point sits at the
    middle of its month, where the aggregate belongs, not at its edge. */
-function combinedRegionChart(d, f) {
+function combinedRegionChart(d, f, place = "region") {
   const hist = d.demand || [];
   if (!hist.length) return `<p class="hint">No capacity requests recorded here.</p>`;
   const proj = d.projection || [];
@@ -559,7 +562,7 @@ function combinedRegionChart(d, f) {
   return `<div class="legend">
     <span><i class="ln demand"></i>CU requested — what customers asked for (left axis)</span>
     ${proj.length ? `<span><i class="ln demand-proj"></i>Projected demand</span>` : ""}
-    ${hasUtil ? `<span><i class="ln util"></i>How full the region ran — one reading per day (right axis)</span>` : ""}
+    ${hasUtil ? `<span><i class="ln util"></i>How full the ${esc(place)} ran — one reading per day (right axis)</span>` : ""}
     ${hasUtil && fProj.length ? `<span><i class="ln util-proj"></i>Projected utilisation${f.model ? ` — ${esc(f.model)}` : ""}</span>` : ""}
     ${band ? `<span><i class="ln util-band"></i>Range the forecast could be out by</span>` : ""}
     ${hasUtil ? `<span><i class="ln limit"></i>Safety threshold ${pct(f.thresholdPct, 1)}</span>` : ""}
@@ -778,6 +781,163 @@ async function capacityPanel(scope, id) {
     <p style="color:var(--ink-3);font-size:.78rem;margin:.5rem 0 0">${esc(d.note)}</p>`);
 }
 
+/* One data centre's forecast, as its own panel.
+
+   The Forecast tab left the sidebar and the forecasting moved to the thing
+   being forecast. That is not a relocation of a chart: a region-level crossing
+   date says a geography is filling up, which nobody can act on, while this says
+   which building fills first and by when -- and scaling an F SKU is a per-site
+   decision made immediately.
+
+   The evidence that made the old tab trustworthy comes with it rather than
+   being left behind. The headline is the crossing date; how the model was
+   chosen, what it scored and what it was beaten by sits in a fold underneath,
+   so the page stays readable for someone who wants the date and complete for
+   someone who wants to challenge it. */
+async function forecastPanel(datacentreId) {
+  let f;
+  try {
+    f = await get(`/api/forecast/datacentre/${encodeURIComponent(datacentreId)}`);
+  } catch (err) {
+    return "";
+  }
+  if (!(f.history || []).length) {
+    return panel("Forecast", `<p class="empty" style="padding:0">${
+      esc(f.note || "No utilisation history is recorded for this data centre.")}</p>`);
+  }
+
+  const last = f.history[f.history.length - 1];
+  const heading = f.alreadyBreached
+    ? (f.saturationDate ? `already over its line, full by ${f.saturationDate}`
+                        : "already over its line")
+    : (f.crossingDate ? `projected to cross its line on ${f.crossingDate}`
+                      : "stays within its safety line");
+
+  return panel(`Forecast — ${heading}`, `
+    ${f.note ? `<p class="error" style="margin:0 0 1rem">${esc(f.note)}</p>` : ""}
+    <div style="position:relative">${forecastChart(f, "data centre")}</div>
+
+    <p style="background:var(--page);border-left:3px solid var(--brand);
+       padding:.7rem .9rem;margin:.75rem 0 0;font-size:.88rem">
+      <b>In plain terms:</b> ${esc(f.datacentre)} was
+      <b>${pct(last.value, 1)} full</b> on ${esc(last.date)},
+      ${f.alreadyBreached
+        ? `already past its own ${pct(f.thresholdPct)} safety line`
+        : `against its own ${pct(f.thresholdPct)} safety line`}.
+      ${f.alreadyBreached
+        ? (f.saturationDate
+            ? `On this trend it has <b>no capacity left at all by ${esc(f.saturationDate)}</b>.`
+            : `It is not projected to fill completely within the next ${f.projectionDays} days.`)
+        : (f.crossingDate
+            ? `On this trend it crosses that line on <b>${esc(f.crossingDate)}</b>${
+                f.saturationDate ? ` and is completely full by ${esc(f.saturationDate)}${
+                  f.saturationBeyondChart ? " — past the right-hand edge of this chart" : ""}` : ""}.`
+            : `It is not projected to cross that line within the next ${f.projectionDays} days.`)}
+      The line is this building's own utilisation, not its region's — the two can
+      point in different directions, and that is the whole reason for forecasting
+      here rather than a level up.
+    </p>
+
+    ${f.extrapolatedBeyondHistory ? `<p style="color:var(--warn-ink,var(--ink-2));font-size:.8rem;
+       margin:.4rem 0 0;border-left:3px solid var(--warn);padding-left:.7rem">
+      This projection runs <b>${f.plottedDays} days</b> forward on
+      <b>${f.history.length} days</b> of history. It is extrapolating past the window
+      it was fitted on, so treat the date as a planning prompt rather than a
+      commitment — the further right it sits, the weaker it is.
+    </p>` : ""}
+
+    <p style="color:var(--ink-3);font-size:.78rem;margin:.4rem 0 0">
+      This line is CU consumed over CU held, across the capacities in the building.
+      <b>Above 100% is bursting, not an error</b> — a capacity can draw more CU than
+      it holds and Fabric smooths the overage over future timepoints, which is why a
+      site can sit past 100% without anything having failed. Note this is a different
+      measurement from the utilisation in the site table above, which is capped at
+      the CU deployed; the two agree everywhere a building is not bursting.
+    </p>
+
+    <div class="kpis" style="margin-top:1rem">
+      ${kpi("Model used", esc(f.model),
+            f.forced ? "set for every forecast in the product"
+                     : (f.beatsNaive ? "beat the naive baseline" : "nothing beat naive"),
+            f.forced ? "warn" : (f.beatsNaive ? "good" : "warn"),
+            f.forced
+              ? `This model was set rather than chosen by measured accuracy. For `
+                + `${esc(f.datacentre)} the backtest ranked `
+                + `${esc((f.forced.wouldHaveChosen) || "another model")} first.`
+              : "Chosen by backtest on data the model never saw, not selected by hand.")}
+      ${f.alreadyBreached
+        ? kpi("Full by", f.saturationDate || "—",
+              f.saturationDate ? "projected to reach 100% utilisation"
+                               : `not projected to fill within ${f.projectionDays} days`,
+              f.saturationDate ? "bad" : "",
+              "This data centre is already past its safety line, so a crossing date is "
+              + "history. What matters is when it runs out completely.")
+        : kpi("Crossing date", f.crossingDate || "—",
+              f.crossingEarliest ? `between ${f.crossingEarliest} and ${f.crossingLatest}`
+                                 : `not projected within ${f.projectionDays} days`,
+              f.crossingDate ? "bad" : "good",
+              "First projected day past this building's own safety line. The range comes "
+              + "from the error the model made on data it never saw.")}
+      ${/* scoreFor(f) finds the row for the model actually drawing the line.
+             Reading the first-ranked row instead would give the backtest winner,
+             which is a different model wherever the choice is forced -- and the
+             page would then print one model's accuracy under another's name. */ ""}
+      ${kpi("Forecast error (MAPE)", scoreFor(f) ? `${scoreFor(f).mape.toFixed(2)}%` : "—",
+            scoreFor(f) ? `typically ±${(scoreFor(f).mape / 100 * last.value).toFixed(1)} points out, `
+                + `${f.horizonDays} days ahead` : "", "ink",
+            `How wrong this model was when tested. It was fitted on part of this `
+            + `building's history, asked to predict the ${f.horizonDays} days it had `
+            + `not seen, and marked against what actually happened — repeated over `
+            + `${scoreFor(f) ? scoreFor(f).folds : f.folds} stretches of the record. `
+            + `Lower is better, and it is a percentage of the reading rather than `
+            + `percentage points.`)}
+      ${kpi("Skill vs naive", scoreFor(f) ? `${scoreFor(f).skillVsNaive > 0 ? "+" : ""}${scoreFor(f).skillVsNaive.toFixed(0)}%` : "—",
+            scoreFor(f) ? (scoreFor(f).skillVsNaive > 0
+                  ? `${scoreFor(f).skillVsNaive.toFixed(0)}% more accurate than assuming nothing changes`
+                  : "worse than assuming nothing changes")
+              : "", f.beatsNaive ? "good" : "bad",
+            `Whether the modelling was worth doing at all. The benchmark is the simplest `
+            + `forecast there is — carry the last reading forward, no model. 0% means the `
+            + `modelling added nothing; below 0% it did worse than doing nothing, and that `
+            + `candidate is rejected rather than displayed.`)}
+    </div>
+
+    <details style="margin-top:1rem"><summary style="cursor:pointer;color:var(--brand);font-size:.88rem">
+      How this was worked out — all ${(f.scores || []).length} models scored</summary>
+      <p style="color:var(--ink-2);font-size:.83rem;margin:.6rem 0 .2rem">
+        Every candidate is backtested on this data centre's own series over
+        ${f.folds} rolling folds at a ${f.horizonDays}-day horizon, on data it was
+        never shown. The lowest RMSE wins; a model that failed to fit on any fold
+        is listed but cannot win, because averaging only the stretches it managed
+        would rank it against models that sat the whole exam.
+      </p>
+      <div class="scroll-x" style="margin-top:.5rem"><table>
+        <thead><tr><th>Model</th>
+          ${th("MAPE", "Mean absolute percentage error — on average, how far each "
+             + "prediction landed from what actually happened, as a percentage of the "
+             + "reading rather than in percentage points. Lower is better.", "n")}
+          ${th("RMSE", "Root mean squared error, in percentage points. It squares each "
+             + "miss before averaging, so one large error counts for far more than "
+             + "several small ones — which is why the winner is chosen on this and not "
+             + "on MAPE. In capacity planning it is the single big miss that causes a "
+             + "denial.", "n")}
+          ${th("Skill vs naive", "The share of the naive benchmark's error this model "
+             + "removed. 0% means the modelling added nothing.", "n")}
+          ${th("Folds", "How many separate stretches of the history the model was tested "
+             + "on. A model that failed on some is listed with fewer and cannot win.", "n")}
+        </tr></thead>
+        <tbody>${(f.scores || []).map((sc, i) => `<tr>
+          <td>${i === 0 ? `<b>${esc(sc.model)}</b>` : esc(sc.model)}</td>
+          <td class="n">${sc.mape.toFixed(2)}%</td>
+          <td class="n">${sc.rmse.toFixed(2)}</td>
+          <td class="n" style="color:${sc.skillVsNaive > 0 ? "var(--good)" : "var(--bad)"}">
+            ${sc.skillVsNaive > 0 ? "+" : ""}${sc.skillVsNaive.toFixed(1)}%</td>
+          <td class="n">${sc.folds}</td>
+        </tr>`).join("")}</tbody></table></div>
+      <p class="prov" style="margin-top:.6rem">${esc(f.provenance || "")}</p>
+    </details>`);
+}
+
 async function demandPanels(scope, id) {
   let d;
   try {
@@ -793,13 +953,20 @@ async function demandPanels(scope, id) {
      eighteen months of demand, so a year ahead is a minority of its width.
      A failure here costs the utilisation half, not the panel. */
   let f = null;
-  if (scope === "region") {
+  if (scope === "region" || scope === "datacentre") {
+    // A data centre has a series of its own now -- consumed CU seconds over
+    // available, summed across the capacities in the building. The guard used
+    // to stop at regions because the site endpoint returned nothing to draw.
+    const url = scope === "region"
+      ? `/api/forecast/${encodeURIComponent(id)}?full=true`
+      : `/api/forecast/datacentre/${encodeURIComponent(id)}?full=true`;
     try {
-      f = await get(`/api/forecast/${encodeURIComponent(id)}?full=true`);
+      f = await get(url);
     } catch (err) {
       f = null;
     }
   }
+  const place = scope === "datacentre" ? "data centre" : "region";
   const spikes = (d.demand || []).filter((m) => m.eventDriven);
   // Two different things wear the same amber. A recorded month is amber because
   // an event names the ticket in it; a generated month is amber because it is
@@ -828,14 +995,14 @@ async function demandPanels(scope, id) {
       ? "Demand and utilisation — what was asked for, and how full it ran"
       : "Demand — CU requested per month", `
     <div style="position:relative">${
-      showChart ? combinedRegionChart(d, f) : demandChart(d)}</div>
+      showChart ? combinedRegionChart(d, f, place) : demandChart(d)}</div>
     <p style="background:var(--page);border-left:3px solid var(--brand);
        padding:.7rem .9rem;margin:.75rem 0 0;font-size:.88rem">
       <b>In plain terms:</b> ${showChart ? `this chart carries two different
       measurements, which is why it has two scales.
       The <b style="color:var(--brand)">blue line</b> is what customers
       <b>asked for</b> — CU per month, read on the left. The
-      <b style="color:var(--ink-2)">grey line</b> is how <b>full the region
+      <b style="color:var(--ink-2)">grey line</b> is how <b>full this ${place}
       actually ran</b> — a percentage, one reading per day, read on the right.
       One is demand arriving, the other is the room left to absorb it.
       Dashed means projected, on either line. ` : ""}An ordinary month here is about
@@ -858,7 +1025,7 @@ async function demandPanels(scope, id) {
            place asks for, and removing them would project somewhere that never
            signs anything.`
         : `No month here was driven by a recorded business event.`}
-      ${rich ? `<br><br>On the utilisation side, the region was
+      ${rich ? `<br><br>On the utilisation side, this ${place} was
         <b>${lastU.value.toFixed(1)}% full</b> on ${esc(lastU.date)} against its own
         <b>${pct(line, 1)}</b> safety threshold —
         ${delta >= 0
@@ -879,8 +1046,11 @@ async function demandPanels(scope, id) {
               ? `<b>crosses the line on ${esc(f.crossingDate)}</b>${
                   f.saturationDate ? ` and is full by ${esc(f.saturationDate)}` : ""}`
               : `does not cross the line within the year drawn`)}.
-        That threshold is this region's own — derived from the thresholds its data
-        centres actually hold, not one figure applied everywhere.` : ""}
+        ${scope === "datacentre"
+          ? `That threshold is this building's own, which is where a threshold is
+             actually held — the region's is derived from these.`
+          : `That threshold is this region's own — derived from the thresholds its data
+             centres actually hold, not one figure applied everywhere.`}` : ""}
     </p>
     <p style="color:var(--ink-3);font-size:.78rem;margin:.5rem 0 0">
       The blue line is capacity asked for, not capacity granted. Amber points mark a
@@ -896,6 +1066,9 @@ async function demandPanels(scope, id) {
       ${f.extrapolatedBeyondHistory ? `<b>The projection runs ${f.plottedDays} days
       forward on ${fh.length} days of history</b>, so treat dates late in it as a
       prompt to plan rather than a measurement.` : ""}` : ""}
+      ${scope === "datacentre" && d.thresholdSeriesProvenance
+        ? `<br><b>Where this building's utilisation comes from:</b> ${esc(d.thresholdSeriesProvenance)}`
+        : ""}
     </p>`)
   + (!d.thresholdSeries?.length && d.thresholdSeriesNote
       ? `<p class="hint" style="margin:.5rem 0 1rem">${esc(d.thresholdSeriesNote)}</p>`
@@ -1457,23 +1630,25 @@ PAGES["/map"] = async (view) => {
      pushed the globe down the page. The Regions tab carries the same counts in
      a table that can be sorted and read properly. */
 
-  view.innerHTML = howto({
-    answers: "<b>Where the fleet stands, on one screen.</b> Every region as a point: how full it is against its own safety line, when it crosses, what has to be scaled, and which Fabric workloads will not run there.",
-    steps: [
-      { what: "Marker colour", is: "the region's state against <i>its own</i> threshold — red is past it, amber is forecast to cross it, green is inside it. The same three states the pills use elsewhere." },
-      { what: "Marker size", is: "Capacity Units deployed, by area rather than radius so a region twice the size looks twice the size." },
-      { what: "Turning the globe", is: "drag it. The + and − buttons wind in and out. Only the near hemisphere is drawn, so regions on the far side appear as you turn towards them." },
-      { what: "Selecting one", is: "turns the globe to that region, winds in, and shows the data centres inside it. Its card opens beside the map and the full detail opens below." },
-      { what: "Overlapping points", is: "eastus and eastus2 are both in Virginia, and three European regions sit within four degrees. Markers that would cover each other are nudged apart and joined to their true position by a hairline." },
-    ],
-    words: [
-      { term: "How full", means: "Utilisation against the region's own safety threshold, which is derived from the thresholds its data centres actually hold — not one figure applied to every region." },
-      { term: "Unavailable features", means: "Fabric workloads Microsoft does not currently run in that region. This is <b>real published data</b>, refreshed from Microsoft Learn, and it is a capacity decision that has nothing to do with how full a region is: a region with plenty of headroom is still the wrong home for a workload it cannot run." },
-      { term: "To scale / to rebalance", means: "Two different answers. <b>To scale</b> means a capacity is throttling or has no headroom left, and the fix is a bigger F SKU. <b>To rebalance</b> means the region has room but one workspace is taking most of a single capacity — a bigger SKU would carry the same imbalance up the ladder." },
-    ],
-    next: "Start with the red markers, then the amber ones carrying a move recommendation — those are the ones no utilisation figure would have surfaced.",
-    sources: "Azure region coordinates and Microsoft Fabric regional availability are real. Capacities, their CU consumption and their throttling history are generated — every generated row carries its provenance.",
-  }) + `
+  
+view.innerHTML = howto({
+  answers: "<b>Fleet overview, on one screen.</b> See each region's capacity, threshold status, scaling needs, and unavailable Fabric workloads.",
+  steps: [
+    { what: "Marker colour", is: "Shows status: <b>red</b> = over threshold, <b>amber</b> = forecast to cross, <b>green</b> = within limits." },
+    { what: "Marker size", is: "Represents deployed Capacity Units (CU)." },
+    { what: "Globe controls", is: "Drag to rotate and use + / − to zoom. Only the visible hemisphere is shown." },
+    { what: "Selecting a region", is: "Centers and zooms to it, showing its data centres and detailed information." },
+    { what: "Overlapping points", is: "Nearby regions are slightly separated and connected to their actual location." },
+  ],
+  words: [
+    { term: "How full", means: "Utilisation compared with each region's own safety threshold." },
+    { term: "Unavailable features", means: "Fabric workloads not currently supported in that region, based on published Microsoft data." },
+    { term: "To scale / rebalance", means: "<b>Scale</b> when capacity lacks headroom; <b>rebalance</b> when one workspace is consuming most of a capacity despite available regional capacity." },
+  ],
+  next: "Start with red markers, then amber regions with move recommendations.",
+  sources: "Azure region locations and Fabric availability use real published data. Capacity usage and throttling data are generated and marked with provenance.",
+}) + `
+
 
   <section class="panel">
     <div class="body map-wrap">
@@ -1491,7 +1666,18 @@ PAGES["/map"] = async (view) => {
         </div>
       </div>
       <aside id="map-side" class="map-side">
-        <p class="empty">Select a region on the map.</p>
+        ${filterBar("map-filter", {
+          placeholder: "Search regions",
+          label: "Jump to",
+          allLabel: "All regions",
+          // Eleven markers on a globe, some of them behind it at any given
+          // rotation. Picking a region here spins the globe to it and opens it,
+          // which is the same outcome as finding and clicking the marker --
+          // without having to drag the world round to see whether it is there.
+          options: [...new Set(d.points.map((p) => p.region))].sort(),
+        })}
+        <div id="map-side-body"><p class="empty">Select a region on the map,
+          or find one with the box above.</p></div>
       </aside>
     </div>
   </section>
@@ -1499,7 +1685,9 @@ PAGES["/map"] = async (view) => {
   <div id="map-detail"></div>`;
 
   const byRegion = Object.fromEntries(d.points.map((p) => [p.region, p]));
-  const side = $("map-side");
+  // The panel body, not the whole aside: selecting a region rewrites this, and
+  // the filter bar above it has to survive that or it disappears on first use.
+  const side = $("map-side-body");
 
   /* Redraw the map, zoomed on a region or back out to the world.
 
@@ -1514,12 +1702,17 @@ PAGES["/map"] = async (view) => {
   function drawMap(next, cam) {
     focus = next;
     if (cam) camera = cam;
+    // The markers are about to be replaced; a tooltip left open by a marker
+    // that no longer exists would hang there with stale text.
+    const openTip = view.querySelector(".map-holder .map-tip");
+    if (openTip) openTip.hidden = true;
     $("map-svg").innerHTML = globeMap(d, camera, focus);
     $("map-legend").innerHTML = focus
       ? `<span><i class="dot bad"></i>Site past its own line</span>
          <span><i class="dot good"></i>Site with room</span>
-         <span class="t3">Positions are a layout, not locations \u2014 Microsoft does
-           not publish where individual data centres are</span>
+         <span class="t3">Each site is its region's real point plus a generated
+           offset \u2014 Microsoft does not publish where individual data centres
+           are, so the spread within a region is approximate and scaled up to read</span>
          <a href="#" id="map-back">\u2190 all regions</a>`
       : `<span><i class="dot bad"></i>Past its safety line</span>
          <span><i class="dot warn"></i>Due to cross its line</span>
@@ -1533,7 +1726,56 @@ PAGES["/map"] = async (view) => {
     };
   }
 
+  /* One dark tooltip, reused. It lives on `.map-holder` (which is positioned)
+     and outlives every redraw -- only `#map-svg` is replaced -- so it is made
+     once and refilled. The markers carry the same facts in their aria-label for
+     assistive tech; this is the sighted reader's version, without the browser's
+     one-second delay, and it is where the coordinates go because they do not
+     read well appended to a label. */
+  function mapTip() {
+    const mh = view.querySelector(".map-holder");
+    let tip = mh.querySelector(".chart-tip.map-tip");
+    if (!tip) {
+      tip = document.createElement("div");
+      tip.className = "chart-tip map-tip";
+      tip.hidden = true;
+      mh.appendChild(tip);
+    }
+    return tip;
+  }
+
+  function coordLine(lat, lon) {
+    return (lat == null || lon == null) ? ""
+      : `<br><span class="t-mute">${lat.toFixed(3)}, ${lon.toFixed(3)}</span>`;
+  }
+
+  function hoverable(c, html) {
+    const tip = mapTip();
+    const mh = view.querySelector(".map-holder");
+    const move = (ev) => {
+      const box = mh.getBoundingClientRect();
+      const x = Math.min(Math.max(ev.clientX - box.left, 70), box.width - 70);
+      // Below the cursor near the top edge, above it everywhere else, so the
+      // readout is not clipped by the panel when a marker sits high on the globe.
+      const y = ev.clientY - box.top;
+      tip.style.left = `${x}px`;
+      tip.style.top = `${y < 90 ? y + 26 : y}px`;
+      tip.style.transform = y < 90 ? "translate(-50%, 0)" : "translate(-50%, -125%)";
+    };
+    c.addEventListener("mouseenter", (ev) => {
+      if (drag || dragged) return;   // not while the globe is being spun
+      tip.innerHTML = html();
+      tip.hidden = false;
+      move(ev);
+    });
+    c.addEventListener("mousemove", move);
+    c.addEventListener("mouseleave", () => { tip.hidden = true; });
+  }
+
   function wireMarkers() {
+    const bySite = Object.fromEntries(
+      ((focus && focus.sites) || []).map((s) => [s.datacentre, s]));
+
     view.querySelectorAll("circle.mk").forEach((c) => {
       c.classList.toggle("on", !!focus && c.dataset.region === focus.region);
       // Not after a drag: spinning the globe with a marker under the cursor
@@ -1542,6 +1784,13 @@ PAGES["/map"] = async (view) => {
       c.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(c.dataset.region); }
       });
+      const p = byRegion[c.dataset.region];
+      if (p) hoverable(c, () => `<b>${esc(p.region)}</b>${
+        p.city ? ` <span class="t-mute">${esc(p.city)}</span>` : ""}${
+        coordLine(p.lat, p.lon)}<br>${
+        p.utilisation == null ? "—" : `${pct(p.utilisation, 1)} used`}${
+        p.thresholdPct != null ? ` <span class="t-mute">of a ${pct(p.thresholdPct, 1)} line</span>` : ""}<br>${
+        `<span class="t-mute">${num(p.capacities)} capacities · ${num(p.capacityUnits)} CU · ${num(p.sites)} sites</span>`}`);
     });
     // A site opens the data centre, which is where its own KPIs already live.
     view.querySelectorAll("circle.site-mk").forEach((c) => {
@@ -1553,6 +1802,11 @@ PAGES["/map"] = async (view) => {
       c.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); }
       });
+      const s = bySite[c.dataset.dc];
+      if (s) hoverable(c, () => `<b>${esc(s.datacentre)}</b>${
+        coordLine(s.lat, s.lon)}<br>${s.utilisationPct}% <span class="t-mute">of its own ${s.thresholdPct}% line</span><br>${
+        `<span class="t-mute">${num(s.capacities)} capacit${s.capacities === 1 ? "y" : "ies"} · ${num(s.capacityUnits)} CU</span>`}${
+        s.throttlingCapacities ? `<br><span class="t-bad">${num(s.throttlingCapacities)} throttling</span>` : ""}`);
     });
   }
 
@@ -1578,7 +1832,13 @@ PAGES["/map"] = async (view) => {
       if (pending !== token) return;
       if (zoom) {
         const p = byRegion[region];
-        const target = { lon0: p.lon, lat0: p.lat, zoom: 2.2 };
+        /* Zoom in far enough that the region and its sites fill the view.
+           2.2 left most of a hemisphere on screen, so selecting a region looked
+           much like not selecting one -- the sites were a cluster of dots among
+           ten other regions' markers. 3.6 was better but still showed a
+           continent; 6.8 drops to roughly a country/state frame so the data
+           centres separate and their labels are readable. Inside ZOOM_MAX. */
+        const target = { lon0: p.lon, lat0: p.lat, zoom: 6.8 };
         const next = { region, sites: d.sites || [] };
         spinTo(camera, target, 620, (cam) => drawMap(next, cam));
       }
@@ -1596,10 +1856,11 @@ PAGES["/map"] = async (view) => {
 
      ZOOM
          Bounded at both ends. Below about 0.85 the globe is a dot with eleven
-         markers stacked on it; above 4.5 the horizon is off-screen and there
-         is nothing left to orient by. Each press animates through spinTo, the
-         same easing a region selection uses, so the two do not feel like
-         different controls.
+         markers stacked on it; the top end is 9 -- far enough in to read one
+         region's data centres at roughly a state frame, which is as close as a
+         country-resolution coastline is worth showing. Each press animates
+         through spinTo, the same easing a region selection uses, so the two do
+         not feel like different controls.
 
      DRAG
          Every handler is on `.map-holder` with the pointer captured, not on
@@ -1610,7 +1871,7 @@ PAGES["/map"] = async (view) => {
          behaviour and dies with the DOM. The holder is also safe to bind to
          because only `#map-svg`'s contents are replaced on redraw, never the
          holder itself. */
-  const ZOOM_MIN = 0.85, ZOOM_MAX = 4.5;
+  const ZOOM_MIN = 0.85, ZOOM_MAX = 9;
 
   function zoomBy(factor) {
     const z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, camera.zoom * factor));
@@ -1687,197 +1948,433 @@ PAGES["/map"] = async (view) => {
 
   wireMarkers();
 
+  /* The map's filter is not the table filter: there are no rows to hide, so
+     hiding is not the useful verb. Choosing a region spins the globe to it and
+     opens it -- the same outcome as finding its marker, minus the dragging.
+     Clearing the box goes back to the whole fleet rather than leaving the
+     camera wherever the last pick left it. */
+  const names = [...new Set(d.points.map((p) => p.region))].sort();
+  const mq = $("map-filter-q"), mf = $("map-filter-f"), mc = $("map-filter-count");
+
+  function jump(region) {
+    if (!region || !byRegion[region]) return;
+    if (mf) mf.value = region;
+    select(region);
+  }
+
+  if (mf) mf.onchange = () => {
+    if (mf.value) { mq.value = ""; mc.textContent = ""; jump(mf.value); }
+    else resetView();
+  };
+
+  if (mq) mq.oninput = () => {
+    const term = mq.value.trim().toLowerCase();
+    if (!term) { mc.textContent = ""; if (mf) mf.value = ""; return; }
+    const hits = names.filter((n) => n.toLowerCase().includes(term));
+    // One match is an answer, so act on it. Several is a narrowing, so say how
+    // many rather than picking one of them arbitrarily.
+    if (hits.length === 1) { mc.textContent = ""; jump(hits[0]); }
+    else mc.textContent = hits.length
+      ? `${hits.length} regions match — keep typing, or use the dropdown`
+      : "No region matches";
+  };
+
+  function resetView() {
+    spinTo(camera, { lon0: -30, lat0: 22, zoom: 1 }, 620, (cam) => drawMap(null, cam));
+    detail.innerHTML = "";
+    side.innerHTML = `<p class="empty">Select a region on the map,
+      or find one with the box above.</p>`;
+  }
+
   // Open on whatever is worst, so the page is useful before anyone clicks.
   const worst = [...d.points].sort((a, b) =>
     (b.utilisation ?? 0) - (a.utilisation ?? 0))[0];
   if (worst) select(worst.region, { zoom: false });
 };
 
+/* The map is the landing page. `/map` is kept as an alias rather than
+   redirected: it is the address the page had for its whole life, it appears in
+   bookmarks and in the docs, and the router's unknown-path fallback also lands
+   here -- so both spellings render the same thing instead of one of them
+   bouncing. */
+PAGES["/"] = PAGES["/map"];
+
 PAGES["/regions"] = async (view) => {
-  const d = await get("/api/overview");
-
   view.innerHTML = howto({
-    answers: "<b>Capacity position by region</b> \u2014 how full each region is against its own safety threshold, what it still owes its customers, and what to do about it.",
-    steps: [
-      { what: "Safety threshold control", is: "the utilisation ceiling. Adjusting it recomputes every region — this is a recalculation, not a filter. Each region's threshold is also shown as its own column." },
-      { what: "Region table", is: "every monitored region: capacity held, capacity used, how much of the safety threshold has been consumed, and how much CU is still owed. Any column is sortable." },
-      { what: "Recommendation", is: "opens the region-level advice — what moving the safety threshold would release and whether it covers what is owed. Which capacity to scale is a per-site question, so it links through to the data centres." },
-      { what: "Region drill-down", is: "selecting a row opens that region: data centres in scope, denial causes, all incidents, feature availability and demand anomalies." },
-    ],
-    words: [
-      { term: "Threshold status", means: "Whether the region is <b>in risk</b> — utilisation has moved past its safety threshold — or not. It is a state, not a fault: a region using the capacity it holds has done nothing wrong." },
-      { term: "Placeable CU", means: "The Capacity Units this region can still hand out \u2014 the room left under each <b>data centre\u2019s own</b> safety line, added across the sites that still have some. Capacity in a site already over its line cannot be given away, so this is lower than the region\u2019s free total. It is the region-level question answered properly: a region with ten data centres where one is full is not constrained, because the work goes to one of the other nine and a customer picks a region rather than a building. It is constrained when there is nowhere left in it to put the work." },
-      { term: "Hits threshold in", means: "How long until this region reaches the threshold on its current trend, from the same backtested forecast the Forecast tab uses. Move the slider above and this moves with it \u2014 the point of the control is to ask <i>when would we cross a line we have not set yet</i>." },
-      { term: "To stay under", means: "The Capacity Units this region would have to add for its <b>current</b> usage to sit under the threshold. Utilisation is usage over deployed capacity, so the region needs usage \u00d7 100 \u00f7 threshold deployed, and this is the gap. It is a floor, not a purchase order: Capacity Units are not bought loose, so the SKU beneath is the smallest single one that covers the gap \u2014 and the real answer needs the SKU mix of the requests themselves, which this extract does not carry." },
-      { term: "CU pending", means: "Capacity requested by customers and not yet delivered. This is what the region owes, not how many tickets failed \u2014 one ticket can be worth hundreds of CU." },
-      { term: "Why there is no hardware here", means: "Fabric is a SaaS platform \u2014 a customer never sees a server. What sits under a region is Fabric <b>capacities</b>, each with an F-SKU and a number of Capacity Units, and those are on the Fleet map and the data-centre pages. There is nothing to take offline and nothing to provision." },
-    ],
-    next: "Work the regions in risk first, largest CU-pending first. Open the recommendation to see whether moving the safety threshold covers what is owed, or whether the region needs capacity added.",
-    sources: "daily regional utilisation, Fabric capacity consumption per region, and the ICM capacity-request history.",
-  }) + title("Regions", "How full each region is, and what it still owes") + `
+  answers: "<b>How full each region is.</b> See capacity, utilisation, and risk at a glance.",
 
-  <section class="panel"><div class="body" style="display:flex;gap:2rem;align-items:center;flex-wrap:wrap">
-    <label class="ctl" title="Each region is judged against its own threshold. Tick this to force them all to one figure and see what changes.">
-      <input type="checkbox" id="thr-override"> Force one threshold on every region
-    </label>
-    <label class="ctl" id="thr-wrap" style="display:none">
-      <input type="range" id="thr" min="50" max="99" value="85" step="1">
-      <b id="thr-val" style="min-width:3ch">85%</b>
-    </label>
-    <label class="ctl">Trend window
-      <select id="win">
-        <option value="30">30 days</option>
-        <option value="45" selected>45 days</option>
-        <option value="90">90 days</option>
-      </select>
-    </label>
-    <span class="hint" id="thr-note" style="color:var(--ink-3);font-size:.82rem"></span>
-  </div></section>
+  steps: [
+    {
+      what: "Region table",
+      is: "Shows capacity and utilisation for every region. Sort by any column."
+    },
+    {
+      what: "Utilisation in red",
+      is: "Means the region is above its own safety threshold."
+    },
+    {
+      what: "Region drill-down",
+      is: "Select a region to see its data centres, thresholds, forecasts, and scaling actions."
+    }
+  ],
 
-  <div id="region-table"></div>`;
+  words: [
+    {
+      term: "Total CU",
+      means: "Capacity Units deployed across all data centres in the region."
+    },
+    {
+      term: "Utilisation",
+      means: "CU in use versus deployed CU. A regional average can hide an overloaded data centre."
+    },
+    {
+      term: "Why this table is short",
+      means: "Region-level details can hide site-level issues, so thresholds, forecasts, and actions are shown in the data-centre drill-down."
+    }
+  ],
 
-  const exposureByRegion = Object.fromEntries(d.regions.map((r) => [r.region, r]));
+  next: "Start with the fullest regions, then open them to identify which data centre needs action.",
 
-  // Default: fullest region first. The order-by column it used to sort on was
-  // removed with the procurement framing, and a default pointing at a column
-  // that no longer exists silently falls back to whatever is first.
-  const sort = { key: "util", asc: false };
+  sources: "Daily regional utilisation and Fabric capacity data."
+}) +
+
+  title(
+    "Regions",
+    "How full each region is"
+  ) +
+
+  `
+
+  <section class="panel">
+    <div class="body">
+      <span
+        class="hint"
+        id="thr-note"
+        style="color:var(--ink-3);font-size:.82rem"
+      ></span>
+    </div>
+  </section>
+
+  <div id="region-table"></div>
+  `;
+
+  /*
+   * Default sorting:
+   * fullest region first.
+   */
+  const sort = {
+    key: "util",
+    asc: false
+  };
 
   async function draw() {
-    // No pct means every region is judged on its own threshold, which is the
-    // default. The control forces one line on all of them as a what-if.
-    const override = $("thr-override").checked;
-    const p = await get(`/api/threshold?trend_days=${$("win").value}`
-      + (override ? `&pct=${$("thr").value}` : ""));
-    const inRisk = p.regions.filter((r) => r.at_risk).length;
-    $("thr-note").textContent = p.thresholdIsPerRegion
-      ? `${inRisk} of ${p.regions.length} regions are in risk, each against its own threshold `
-        + `(${Math.min(...p.regions.map((r) => r.threshold_pct))}% to `
-        + `${Math.max(...p.regions.map((r) => r.threshold_pct))}%).`
-      : `${inRisk} of ${p.regions.length} regions are in risk with every region forced to `
-        + `${p.thresholdPct}%.`;
+    /*
+     * Get current threshold information.
+     */
+    const p = await get("/api/threshold");
 
-    /* Sorting the whole table, not just the default order -- the explainer
-       above promises it, and a promised control that does nothing is worse
-       than not offering it. Exposure lives on a different object, so the
-       accessor closes over both. */
-    /* Columns are the set review asked for. What a region ran on, and how long
-       it took to arrive, came off this table long before either left the rest
-       of the product, and neither exists anywhere now -- a Fabric region holds
-       capacities. "Days to order-by" went with them; it answered a procurement
-       question on a page that is supposed to answer "which region is in
-       trouble, and how much does it owe". */
+    /*
+     * Safety check in case the API returns an unexpected response.
+     */
+    if (!p || !Array.isArray(p.regions)) {
+      $("region-table").innerHTML =
+        `<p class="error">Could not load region data.</p>`;
+      return;
+    }
+
+    /*
+     * Number of regions currently in risk.
+     */
+    const inRisk = p.regions.filter(
+      (r) => r.at_risk
+    ).length;
+
+    /*
+     * Update threshold note.
+     */
+    const thresholdValues = p.regions
+      .map((r) => r.threshold_pct)
+      .filter((v) => v != null && !Number.isNaN(Number(v)));
+
+    const thrNote = $("thr-note");
+
+    if (thrNote) {
+      if (p.regions.length && thresholdValues.length) {
+        thrNote.textContent =
+          `${inRisk} of ${p.regions.length} regions are past their own safety threshold `
+          + `(${Math.min(...thresholdValues)}% to `
+          + `${Math.max(...thresholdValues)}%). `
+          + `Open a region to see which of its data centres is responsible.`;
+      } else {
+        thrNote.textContent =
+          "No region threshold information is currently available.";
+      }
+    }
+
+    /*
+     * Columns displayed in the region table.
+     */
     const COLS = [
-      { key: "region", label: "Region", get: (r) => r.region, numeric: false },
-      { key: "total", label: "Total CU", get: (r) => r.deployed_units, numeric: true },
-      { key: "used", label: "Utilised CU", get: (r) => r.used_units, numeric: true },
-      { key: "util", label: "Utilisation", get: (r) => r.current_utilisation_pct, numeric: true },
-      { key: "thr", label: "Threshold", get: (r) => r.threshold_pct, numeric: true },
-      { key: "status", label: "Threshold status", get: (r) => (r.at_risk ? 1 : 0), numeric: true },
-      // The two halves of the what-if. Moving the slider said when a region
-      // would cross a threshold and never what it would take not to, which is
-      // the question review actually asked: "how much should I raise in order
-      // to be within that capacity range?"
-      { key: "hits", label: "Hits threshold in",
-        get: (r) => (r.days_to_threshold == null ? 1e9 : r.days_to_threshold), numeric: true },
-      // The region as the sum of its sites. A region with ten data centres
-      // where one is full is not constrained; one with nowhere left to place
-      // the work is, whatever its average says. Ordered before the shortfall
-      // because it reads as a pair: what the region can still hand out, then
-      // what it would have to add.
-      { key: "placeable", label: "Placeable CU",
-        get: (r) => (r.sites_rollup || {}).placeableCu ?? 0, numeric: true },
-      { key: "shortfall", label: "To stay under",
-        get: (r) => r.cu_to_stay_under ?? 0, numeric: true },
-      { key: "pending", label: "CU pending", get: (r) => r.cores_pending, numeric: true },
-      { key: "exposure", label: "Revenue loss",
-        get: (r) => (exposureByRegion[r.region] || {}).exposure ?? 0, numeric: true },
-      { key: "cust", label: "Customers waiting", get: (r) => r.customers_waiting, numeric: true },
+      {
+        key: "region",
+        label: "Region",
+        get: (r) => r.region,
+        numeric: false
+      },
+      {
+        key: "sites",
+        label: "Data centres",
+        get: (r) => r.datacentre_count,
+        numeric: true
+      },
+      {
+        key: "total",
+        label: "Total CU",
+        get: (r) => r.deployed_units,
+        numeric: true
+      },
+      {
+        key: "used",
+        label: "Utilised CU",
+        get: (r) => r.used_units,
+        numeric: true
+      },
+      {
+        key: "util",
+        label: "Utilisation",
+        get: (r) => r.current_utilisation_pct,
+        numeric: true
+      }
     ];
-    const col = COLS.find((c) => c.key === sort.key) || COLS[3];
+
+    /*
+     * Determine which column is currently being sorted.
+     */
+    const col =
+      COLS.find((c) => c.key === sort.key) ||
+      COLS[COLS.length - 1];
+
+    /*
+     * Sort a copy so the API response itself is not mutated.
+     */
     const rows = [...p.regions].sort((a, b) => {
-      const x = col.get(a), y = col.get(b);
-      const cmp = col.numeric ? (x - y) : String(x).localeCompare(String(y));
+      const x = col.get(a);
+      const y = col.get(b);
+
+      const cmp = col.numeric
+        ? (Number(x) || 0) - (Number(y) || 0)
+        : String(x ?? "").localeCompare(String(y ?? ""));
+
       return sort.asc ? cmp : -cmp;
     });
-    const arrow = (c) => (c.key === sort.key ? (sort.asc ? " ▲" : " ▼") : "");
 
-    $("region-table").innerHTML = panel("Regions by capacity position", `<div class="scroll-x"><table>
-      <thead><tr>
-        ${COLS.map((c) => `<th class="${c.numeric ? "n " : ""}sortable" data-sort="${c.key}"
-           style="cursor:pointer;user-select:none">${esc(c.label)}${arrow(c)}</th>`).join("")}
-        <th>Reason</th><th>Recommendation</th>
-      </tr></thead>
-      <tbody>${rows.map((r) => {
-        const e = exposureByRegion[r.region] || {};
-        return `<tr class="clickable" data-region="${esc(r.region)}">
-          <td><b>${esc(r.region)}</b></td>
-          <td class="n">${num(Math.round(r.deployed_units))}</td>
-          <td class="n">${num(Math.round(r.used_units))}</td>
-          <td class="n"><b style="color:${r.at_risk ? "var(--bad)" : "inherit"}">${pct(r.current_utilisation_pct, 1)}</b></td>
-          <td class="n">${pct(r.threshold_pct, 0)}</td>
-          <td>${thresholdPill(r)}</td>
-          <td class="n">${r.days_to_threshold == null ? "—"
-            : r.days_to_threshold <= 0 ? `<b class="t-bad">already there</b>`
-            : `<b>${num(Math.round(r.days_to_threshold))}</b> <span class="t3">days</span>`}</td>
-          <td class="n">${(() => { const sr = r.sites_rollup || {};
-            if (!sr.sites) return `<span class="t3">—</span>`;
-            return sr.canAbsorbPipeline
-              ? `<b class="t-good">${num(Math.round(sr.placeableCu))}</b>
-                 <br><span class="t3">${num(sr.sitesWithRoom)} of ${num(sr.sites)} sites</span>`
-              : `<b class="t-bad">${num(Math.round(sr.placeableCu))}</b>
-                 <br><span class="t3">${num(Math.round(sr.shortBy))} short of the ask</span>`;
-          })()}</td>
-          <td class="n">${r.cu_to_stay_under
-            ? `<b class="t-warn">${num(Math.round(r.cu_to_stay_under))}</b>
-               <br><span class="t3">buy an ${esc(r.smallest_sku_step)}</span>`
-            : `<span class="t3">nothing</span>`}</td>
-          <td class="n">${r.cores_pending ? `<b>${num(Math.round(r.cores_pending))}</b>` : "—"}</td>
-          <td class="n">${money(e.exposure)}</td>
-          <td class="n">${r.customers_waiting || "—"}</td>
-          <td class="why">${esc(r.reason)}</td>
-          <td><button class="rec-btn" data-rec="${esc(r.region)}"
-                style="cursor:pointer;border:1px solid var(--rule);background:var(--page);
-                       border-radius:3px;padding:.25rem .6rem;font-size:.78rem;color:var(--brand)">
-                View</button></td>
-        </tr>`;
-      }).join("")}</tbody></table></div>`, { hint: "click a row for detail", flush: true });
+    /*
+     * Sorting arrow.
+     */
+    const arrow = (c) =>
+      c.key === sort.key
+        ? (sort.asc ? " ▲" : " ▼")
+        : "";
 
-    $("region-table").querySelectorAll("button[data-rec]").forEach((b) =>
-      (b.onclick = (ev) => { ev.stopPropagation(); showRecommendation(b.dataset.rec); }));
+    /*
+     * Preserve filter state before rebuilding the table.
+     *
+     * IMPORTANT:
+     * The old code correctly used ?. while reading these values,
+     * but later unconditionally did:
+     *
+     * $("rg-filter-q").value = keep.q;
+     * $("rg-filter-f").value = keep.f;
+     *
+     * If either element was missing, that caused:
+     *
+     * Cannot set properties of null (setting 'value')
+     */
+    const qElement = $("rg-filter-q");
+    const fElement = $("rg-filter-f");
 
-    $("region-table").querySelectorAll("th[data-sort]").forEach((th) =>
-      (th.onclick = () => {
-        // Re-clicking the active column flips it; a new column starts ascending,
-        // except the numeric ones where "worst first" is what anyone wants.
-        const key = th.dataset.sort;
-        if (sort.key === key) sort.asc = !sort.asc;
-        else { sort.key = key; sort.asc = !["exposure", "util", "lead"].includes(key); }
-        draw();
-      }));
+    const keep = {
+      q: qElement?.value || "",
+      f: fElement?.value || ""
+    };
 
-    $("region-table").querySelectorAll("tr[data-region]").forEach((tr) =>
-      (tr.onclick = () => navigate(`/region/${encodeURIComponent(tr.dataset.region)}`)));
+    /*
+     * Render the complete region table.
+     */
+    $("region-table").innerHTML =
+      panel(
+        "Regions by capacity position",
+
+        filterBar("rg-filter", {
+          placeholder: "Search regions",
+          label: "Show",
+          allLabel: "All regions",
+
+          options: [
+            {
+              value: "risk",
+              label: "Past its safety threshold"
+            },
+            {
+              value: "ok",
+              label: "Within its safety threshold"
+            }
+          ]
+        })
+
+        +
+
+        `<div class="scroll-x">
+          <table>
+            <thead>
+              <tr>
+                ${COLS.map((c) => `
+                  <th
+                    class="${c.numeric ? "n " : ""}sortable"
+                    data-sort="${c.key}"
+                    style="cursor:pointer;user-select:none"
+                  >
+                    ${esc(c.label)}${arrow(c)}
+                  </th>
+                `).join("")}
+              </tr>
+            </thead>
+
+            <tbody>
+              ${
+                rows.map((r) => `
+                  <tr
+                    class="clickable"
+                    data-region="${esc(r.region)}"
+                    data-search="${esc(r.region)}"
+                    data-filter="${r.at_risk ? "risk" : "ok"}"
+                  >
+                    <td>
+                      <b>${esc(r.region)}</b>
+                    </td>
+
+                    <td class="n">
+                      ${num(r.datacentre_count)}
+                    </td>
+
+                    <td class="n">
+                      ${num(Math.round(r.deployed_units))}
+                    </td>
+
+                    <td class="n">
+                      ${num(Math.round(r.used_units))}
+                    </td>
+
+                    <td class="n">
+                      <b
+                        style="color:${r.at_risk ? "var(--bad)" : "inherit"}"
+                        ${
+                          r.at_risk
+                            ? `
+                              data-info="Past this region's own ${r.threshold_pct}% safety threshold. Which data centre is responsible is on the region page."
+                              title="Past its own ${r.threshold_pct}% safety threshold"
+                            `
+                            : ""
+                        }
+                      >
+                        ${pct(r.current_utilisation_pct, 1)}
+                      </b>
+                    </td>
+                  </tr>
+                `).join("")
+              }
+            </tbody>
+          </table>
+        </div>`,
+
+        {
+          hint: "click a row for detail",
+          flush: true
+        }
+      );
+
+    /*
+     * Wire table column sorting.
+     *
+     * Sorting rebuilds the table, so these handlers have to be
+     * attached every time draw() runs.
+     */
+    $("region-table")
+      .querySelectorAll("th[data-sort]")
+      .forEach((th) => {
+        th.onclick = () => {
+          const key = th.dataset.sort;
+
+          if (sort.key === key) {
+            /*
+             * Clicking the same column reverses the order.
+             */
+            sort.asc = !sort.asc;
+          } else {
+            /*
+             * New columns start ascending.
+             *
+             * Utilisation is the exception:
+             * highest utilisation first is more useful.
+             */
+            sort.key = key;
+            sort.asc = key !== "util";
+          }
+
+          draw();
+        };
+      });
+
+    /*
+     * Wire region row navigation.
+     */
+    $("region-table")
+      .querySelectorAll("tr[data-region]")
+      .forEach((tr) => {
+        tr.onclick = () => {
+          navigate(
+            `/region/${encodeURIComponent(tr.dataset.region)}`
+          );
+        };
+      });
+
+    /*
+     * Restore the filter values safely.
+     *
+     * THIS IS THE MAIN FIX.
+     *
+     * We never do:
+     *
+     * $("some-id").value = ...
+     *
+     * without first confirming the element exists.
+     */
+    const restoredQ = $("rg-filter-q");
+    const restoredF = $("rg-filter-f");
+
+    if (restoredQ) {
+      restoredQ.value = keep.q;
+    }
+
+    if (restoredF) {
+      restoredF.value = keep.f;
+    }
+
+    /*
+     * Wire search/filter behavior.
+     */
+    wireFilter(
+      "rg-filter",
+      "#region-table tr[data-region]",
+      {
+        noun: "regions"
+      }
+    );
   }
 
-  $("thr-override").onchange = () => {
-    $("thr-wrap").style.display = $("thr-override").checked ? "" : "none";
-    draw();
-  };
-  /* The label follows the slider immediately; the redraw waits until it stops.
-
-     `oninput` fires on every step, and each redraw refits nine forecast models
-     across eleven regions -- about nine seconds. Dragging from 85 to 70 queued
-     fifteen of those, so the answer arrived long after the question and out of
-     order, the last response to land winning rather than the last one asked
-     for. */
-  let thrTimer = null;
-  $("thr").oninput = () => {
-    $("thr-val").textContent = `${$("thr").value}%`;
-    clearTimeout(thrTimer);
-    thrTimer = setTimeout(draw, 350);
-  };
-  $("win").onchange = draw;
+  /*
+   * Initial render.
+   */
   await draw();
 };
 
@@ -1955,11 +2452,38 @@ PAGES["/region"] = async (view, name, showAll = false) => {
               + "region holds the SKUs the requests actually need.")}
       </div>
 
+      ${/* This table gained five columns when the Regions tab lost them. They
+             were always site questions: when does it cross its line, what would
+             it take to stay under, what does it owe, who is waiting. Asked of a
+             region they produce an average that hides the building actually in
+             trouble; asked of a building they are answerable. */ ""}
       <h4 style="margin:1.25rem 0 .4rem;font-size:.9rem">Every data centre in this region</h4>
+      <p style="color:var(--ink-2);font-size:.82rem;margin:0 0 .5rem">
+        The capacity position of each building. The Regions tab deliberately carries
+        only how full a region is — everything that can be acted on is here, one
+        data centre at a time.
+      </p>
       <div class="scroll-x"><table>
         <thead><tr><th>Data centre</th><th class="n">CU</th><th class="n">Free</th>
           <th class="n">Threshold</th><th class="n">Utilisation</th>
-          <th>Threshold status</th><th class="n">Requests</th>
+          <th>Threshold status</th>
+          ${th("Hits threshold in", "How long until this data centre reaches its own "
+             + "safety threshold on its current trend, from a model backtested on this "
+             + "building's own daily CU record. The same forecast the site page draws — "
+             + "not a second, cheaper fit that would give a different answer to the same "
+             + "question.", "n")}
+          ${th("To stay under", "The Capacity Units this data centre would have to add "
+             + "for its current usage to sit under its own threshold. Utilisation is "
+             + "usage over deployed capacity, so it needs usage \u00d7 100 \u00f7 threshold "
+             + "deployed, and this is the gap. A floor, not a purchase order: Capacity "
+             + "Units are not bought loose, so the SKU beneath is the smallest single "
+             + "one that covers it.", "n")}
+          ${th("CU pending", "Capacity requested against this data centre and not yet "
+             + "delivered. What this building owes, not how many tickets failed — one "
+             + "ticket can be worth hundreds of CU.", "n")}
+          ${th("Waiting", "Distinct customers with an unmet request raised against this "
+             + "data centre.", "n")}
+          <th class="n">Requests</th>
           <th class="n">Failed</th>
           <th class="n">Oldest open</th><th class="n">Revenue loss</th>
           <th>Denial cause and recommended action</th></tr></thead>
@@ -1972,6 +2496,15 @@ PAGES["/region"] = async (view, name, showAll = false) => {
           <td>${x.overThreshold
             ? `<span class="pill bad">In risk</span>`
             : `<span class="pill good">Not in risk</span>`}</td>
+          <td class="n">${x.hitsThresholdIn == null ? `<span class="t3">—</span>`
+            : x.hitsThresholdIn <= 0 ? `<b class="t-bad">already there</b>`
+            : `<b>${num(x.hitsThresholdIn)}</b> <span class="t3">days</span>`}</td>
+          <td class="n">${x.cuToStayUnder
+            ? `<b class="t-warn">${num(Math.round(x.cuToStayUnder))}</b>
+               <br><span class="t3">add an ${esc(x.smallestSkuStep)}</span>`
+            : `<span class="t3">nothing</span>`}</td>
+          <td class="n">${x.cuPending ? `<b>${num(Math.round(x.cuPending))}</b>` : "—"}</td>
+          <td class="n">${x.customersWaiting || "—"}</td>
           <td class="n">${num(x.requests)}</td>
           <td class="n">${x.failed ? `<b style="color:var(--bad)">${num(x.failed)}</b>` : "—"}</td>
           <td class="n">${x.oldestOpenDays != null
@@ -2064,10 +2597,11 @@ PAGES["/region"] = async (view, name, showAll = false) => {
   view.insertAdjacentHTML("beforeend", await demandPanels("region", name));
   wireCharts(view);
 
+  // The Forecast tab this used to link to has left the sidebar. The forecast
+  // did not: it is on each data centre above, so the link goes there.
   view.insertAdjacentHTML("beforeend", `<p style="margin:1.5rem 0 0">
     <a href="/regions">← All regions</a> &nbsp;·&nbsp;
-    <a href="/datacentres">Data centres</a> &nbsp;·&nbsp;
-    <a href="/forecast">Forecast</a></p>`);
+    <a href="/datacentres">All data centres</a></p>`);
 
   view.querySelectorAll("tr[data-dc]").forEach((tr) =>
     (tr.onclick = () => navigate(`/datacentre/${encodeURIComponent(tr.dataset.dc)}`)));
@@ -2839,6 +3373,102 @@ function riskCell(risk) {
     ${basis}`;
 }
 
+// PAGES["/datacentres"] = async (view) => {
+//   const d = await get("/api/datacentres");
+//   const solid = d.datacentres.filter((x) => !x.lowEvidence);
+
+//   view.innerHTML = howto({
+//     answers: "<b>Site-level risk ranking.</b> A region identifies the geography; a data centre identifies the facility requiring intervention.",
+//     steps: [
+//       { what: "Site table", is: `all facilities with recorded activity, ranked by risk score. ${d.withActivity} of ${d.totalSites} sites have recorded incidents; the remainder are dormant and excluded.` },
+//       { what: "Risk score", is: "computed from that facility\u2019s own incidents, with the highest-weighted component named beneath." },
+//       { what: "Clicking a row", is: "opens that site \u2014 how its score was built line by line, why its requests were refused, every ticket, and <b>its own forecast</b>: when this building crosses its safety line, fitted to its own daily CU record. The region name in there is a link if you want the wider picture." },
+//       { what: "Evidence base", is: "stated under every score, because nearly every facility here has one or two incidents. Where a facility has too few to judge on its own, its failure rate is pulled toward the fleet average and both figures are shown \u2014 a single denial is a 100% failure rate arithmetically, but it is one observation, not a finding." },
+//     ],
+//     words: [
+//       { term: "How the score is built", is: "", means: `${Object.entries(d.weights).map(([k, w]) => `${Math.round(w * 100)}% ${esc(words(k))}`).join(", ")}. Each site is scored from its own rows — this is not a region total divided up.` },
+//       { term: "Primary denial reason", means: "The most frequent denial cause at that facility \u2014 the fastest indicator of whether the constraint is capacity, licensing or policy." },
+//     ],
+//     next: `Rank by score, but read the evidence line beneath it before acting: ${solid.length} of ${d.datacentres.length} sites here have three or more requests, so for most of them the ranking is driven by utilisation and throttling — which are measured continuously — rather than by a failure rate drawn from one or two tickets.`,
+//     sources: "ICM capacity requests attributed to a facility, and the Fabric capacities in it.",
+//   }) + title("Data centres", `${d.withActivity} sites with activity, of ${d.totalSites} across all regions`) + `
+
+//   ${panel("Data centres by risk score",
+//     filterBar("dc-filter", {
+//       placeholder: "Search data centres — name or region",
+//       label: "Region",
+//       allLabel: "All regions",
+//       options: [...new Set(d.datacentres.map((x) => x.region))].sort(),
+//     })
+//     + `<div class="scroll-x"><table>
+//     <thead><tr><th>Data centre</th><th>Region</th>
+//       <th class="n">Total CU</th><th class="n">Utilised CU</th>
+//       ${th("Utilisation", "Capacity Units in use over Capacity Units deployed at this "
+//          + "site. Unlike the region average above it, this is the figure a decision "
+//          + "is actually taken on.", "n")}
+//       ${th("Threshold", "The planning line the buy decision is taken against, fixed at "
+//          + "80% for every site so that \u2018overdue\u2019 means the same thing in every "
+//          + "row. Each building also has its own safety threshold, between 82.5% and 90%, "
+//          + "which is what its forecast is judged against on its own page.", "n")}
+//       ${th("Growth", "Percentage points of utilisation added per week, as the "
+//          + "least-squares trend of this building\u2019s own daily record. There is no "
+//          + "growth column in the source data \u2014 this is derived from the 150 days of "
+//          + "CU consumption behind it, not read from a field.", "n")}
+//       ${th("Lead time", "How long capacity takes to arrive once ordered. Fixed at 12 "
+//          + "weeks across the estate.", "n")}
+//       ${th("Weeks to decide", "How long until this site reaches the 80% planning line at "
+//          + "its current growth rate. A dash means it is flat or shrinking, so there is no "
+//          + "date to work back from.", "n")}
+//       ${th("Status", "Overdue when the runway is shorter than the 12-week lead time \u2014 "
+//          + "capacity ordered today would arrive after the line is crossed, so the "
+//          + "decision is already late.")}
+//       <th class="n">Requests</th><th class="n">Failed</th><th class="n">Customers</th>
+//       <th class="n">Revenue loss</th><th>Primary denial reason</th><th>Risk score</th></tr></thead>
+//     <tbody>${d.datacentres.map((x) => `<tr class="clickable" data-dc="${esc(x.datacentre)}"
+//       data-region="${esc(x.region)}" data-filter="${esc(x.region)}"
+//       data-search="${esc(`${x.datacentre} ${x.region} ${x.topReason || ""} ${x.planningStatus}`)}">
+//       <td class="mono"><b>${esc(x.datacentre)}</b></td>
+//       <td>${esc(x.region)}</td>
+//       <td class="n">${x.capacityCount == null ? "—"
+//         : `${num(x.capacityCount)}<br><span class="t3">${num(x.capacityUnits)} CU${
+//              x.throttling ? ` · <b class="t-bad">${num(x.throttling)} throttling</b>` : ""}</span>`}</td>
+//       <td class="n">${num(Math.round(x.totalCU))}</td>
+//       <td class="n">${num(Math.round(x.utilisedCU))}</td>
+//       <td class="n"><b${x.siteUtilisationPct >= x.planningThresholdPct
+//         ? ` class="t-bad"` : ""}>${pct(x.siteUtilisationPct, 1)}</b></td>
+//       <td class="n t3">${pct(x.planningThresholdPct, 0)}</td>
+//       ${/* Derived, not read: no growth column exists in the extract. */ ""}
+//       <td class="n">${x.growthPctPerWeek == null ? `<span class="t3">—</span>`
+//         : x.growthPctPerWeek > 0
+//           ? `+${x.growthPctPerWeek.toFixed(2)}<span class="t3"> pp/wk</span>`
+//           : `<span class="t3">${x.growthPctPerWeek.toFixed(2)} pp/wk</span>`}</td>
+//       <td class="n t3">${x.leadTimeWeeks}w</td>
+//       <td class="n">${x.weeksToDecide == null ? `<span class="t3">—</span>`
+//         : x.weeksToDecide <= 0 ? `<b class="t-bad">now</b>`
+//         : `<b${x.planningStatus === "overdue" ? ` class="t-bad"` : ""}>${
+//              x.weeksToDecide.toFixed(1)}</b><span class="t3"> wks</span>`}</td>
+//       <td>${x.planningStatus === "overdue"
+//         ? `<span class="pill bad">Overdue</span>`
+//         : `<span class="pill good">OK</span>`}</td>
+//       <td class="n">${num(x.requests)}</td>
+//       <td class="n">${x.failed ? `<b style="color:var(--bad)">${num(x.failed)}</b>` : "—"}</td>
+//       <td class="n">${num(x.customers)}</td>
+//       <td class="n">${x.revenueLoss ? money(x.revenueLoss) : "—"}</td>
+//       <td>${x.topReason ? esc(x.topReason) : "—"}</td>
+//       <td>${riskCell(x.risk)}</td>
+//     </tr>`).join("")}</tbody></table></div>`,
+//     { hint: "click a row for detail", flush: true })}
+//   <div id="dc-detail"></div>`;
+
+//   view.querySelectorAll("tr[data-dc]").forEach((tr) =>
+//     (tr.onclick = () => navigate(`/datacentre/${encodeURIComponent(tr.dataset.dc)}`)));
+
+//   /* 110 sites is past the point where scrolling is a way of finding one. The
+//      search matches the site name, its region and its denial reason together, so
+//      "westeurope" and "throttl" both narrow the list; the dropdown cuts to a
+//      single region, which is the question this page is most often opened with. */
+//   wireFilter("dc-filter", "#view tr[data-dc]", { noun: "data centres" });
+// };
 PAGES["/datacentres"] = async (view) => {
   const d = await get("/api/datacentres");
   const solid = d.datacentres.filter((x) => !x.lowEvidence);
@@ -2848,27 +3478,89 @@ PAGES["/datacentres"] = async (view) => {
     steps: [
       { what: "Site table", is: `all facilities with recorded activity, ranked by risk score. ${d.withActivity} of ${d.totalSites} sites have recorded incidents; the remainder are dormant and excluded.` },
       { what: "Risk score", is: "computed from that facility\u2019s own incidents, with the highest-weighted component named beneath." },
-      { what: "Clicking a row", is: "opens that site underneath \u2014 how its score was built line by line, why its requests were refused, and every ticket. The region name in there is a link if you want the wider picture." },
+      { what: "Clicking a row", is: "opens that site \u2014 how its score was built line by line, why its requests were refused, every ticket, and <b>its own forecast</b>: when this building crosses its safety line, fitted to its own daily CU record. The region name in there is a link if you want the wider picture." },
       { what: "Evidence base", is: "stated under every score, because nearly every facility here has one or two incidents. Where a facility has too few to judge on its own, its failure rate is pulled toward the fleet average and both figures are shown \u2014 a single denial is a 100% failure rate arithmetically, but it is one observation, not a finding." },
     ],
     words: [
       { term: "How the score is built", is: "", means: `${Object.entries(d.weights).map(([k, w]) => `${Math.round(w * 100)}% ${esc(words(k))}`).join(", ")}. Each site is scored from its own rows — this is not a region total divided up.` },
       { term: "Primary denial reason", means: "The most frequent denial cause at that facility \u2014 the fastest indicator of whether the constraint is capacity, licensing or policy." },
+      { term: "Procurement", means: "The CU a site is short of the 80% planning line, rounded up to the smallest F SKU that covers it. CU is not sold loose, so the answer is always a real rung on the ladder \u2014 a site short by 110 CU takes an F128." },
     ],
     next: `Rank by score, but read the evidence line beneath it before acting: ${solid.length} of ${d.datacentres.length} sites here have three or more requests, so for most of them the ranking is driven by utilisation and throttling — which are measured continuously — rather than by a failure rate drawn from one or two tickets.`,
     sources: "ICM capacity requests attributed to a facility, and the Fabric capacities in it.",
   }) + title("Data centres", `${d.withActivity} sites with activity, of ${d.totalSites} across all regions`) + `
 
-  ${panel("Data centres by risk score", `<div class="scroll-x"><table>
-    <thead><tr><th>Data centre</th><th>Region</th><th class="n">Capacities</th>
+  ${panel("Data centres by risk score",
+    filterBar("dc-filter", {
+      placeholder: "Search data centres — name or region",
+      label: "Region",
+      allLabel: "All regions",
+      options: [...new Set(d.datacentres.map((x) => x.region))].sort(),
+    })
+    + `<div class="scroll-x"><table>
+    <thead><tr>
+      <th>Data centre</th>
+      <th>Region</th>
+      <th class="n">Capacities</th> 
+      <th class="n">Total CU</th>
+      <th class="n">Utilised CU</th>
+      ${th("Utilisation", "Capacity Units in use over Capacity Units deployed at this "
+         + "site. Unlike the region average above it, this is the figure a decision "
+         + "is actually taken on.", "n")}
+      ${th("Threshold", "The planning line the buy decision is taken against, fixed at "
+         + "80% for every site so that \u2018overdue\u2019 means the same thing in every "
+         + "row. Each building also has its own safety threshold, between 82.5% and 90%, "
+         + "which is what its forecast is judged against on its own page.", "n")}
+      ${th("Growth", "Percentage points of utilisation added per week, as the "
+         + "least-squares trend of this building\u2019s own daily record. There is no "
+         + "growth column in the source data \u2014 this is derived from the 150 days of "
+         + "CU consumption behind it, not read from a field.", "n")}
+      ${th("Lead time", "How long capacity takes to arrive once ordered. Fixed at 12 "
+         + "weeks across the estate.", "n")}
+      ${th("Weeks to decide", "How long until this site reaches the 80% planning line at "
+         + "its current growth rate. A dash means it is flat or shrinking, so there is no "
+         + "date to work back from.", "n")}
+      ${th("Status", "Overdue when the runway is shorter than the 12-week lead time \u2014 "
+         + "capacity ordered today would arrive after the line is crossed, so the "
+         + "decision is already late.")}
+      ${th("Procurement", "What this site would have to buy to sit back under the 80% "
+         + "planning line: the CU it is short by, rounded up to the smallest real "
+         + "F SKU that covers it \u2014 CU is not sold loose, so the ladder (F2, F4, "
+         + "F8 \u2026) doubles at each rung. A dash means the site is under its line "
+         + "and needs nothing.", "n")}
       <th class="n">Requests</th><th class="n">Failed</th><th class="n">Customers</th>
       <th class="n">Revenue loss</th><th>Primary denial reason</th><th>Risk score</th></tr></thead>
-    <tbody>${d.datacentres.map((x) => `<tr class="clickable" data-dc="${esc(x.datacentre)}">
+    <tbody>${d.datacentres.map((x) => `<tr class="clickable" data-dc="${esc(x.datacentre)}"
+      data-region="${esc(x.region)}" data-filter="${esc(x.region)}"
+      data-search="${esc(`${x.datacentre} ${x.region} ${x.topReason || ""} ${x.planningStatus} ${x.procureSku || ""}`)}">
       <td class="mono"><b>${esc(x.datacentre)}</b></td>
       <td>${esc(x.region)}</td>
       <td class="n">${x.capacityCount == null ? "—"
-        : `${num(x.capacityCount)}<br><span class="t3">${num(x.capacityUnits)} CU${
-             x.throttling ? ` · <b class="t-bad">${num(x.throttling)} throttling</b>` : ""}</span>`}</td>
+        : `${num(x.capacityCount)}<br><span class="t3">${num(x.capacityUnits)} CU</span>`}</td>
+      <td class="n">${num(Math.round(x.totalCU))}</td>
+      <td class="n">${num(Math.round(x.utilisedCU))}</td>
+      <td class="n"><b${x.siteUtilisationPct >= x.planningThresholdPct
+        ? ` class="t-bad"` : ""}>${pct(x.siteUtilisationPct, 1)}</b></td>
+      <td class="n t3">${pct(x.planningThresholdPct, 0)}</td>
+      ${/* Derived, not read: no growth column exists in the extract. */ ""}
+      <td class="n">${x.growthPctPerWeek == null ? `<span class="t3">—</span>`
+        : x.growthPctPerWeek > 0
+          ? `+${x.growthPctPerWeek.toFixed(2)}<span class="t3"> pp/wk</span>`
+          : `<span class="t3">${x.growthPctPerWeek.toFixed(2)} pp/wk</span>`}</td>
+      <td class="n t3">${x.leadTimeWeeks}w</td>
+      <td class="n">${x.weeksToDecide == null ? `<span class="t3">—</span>`
+        : x.weeksToDecide <= 0 ? `<b class="t-bad">now</b>`
+        : `<b${x.planningStatus === "overdue" ? ` class="t-bad"` : ""}>${
+             x.weeksToDecide.toFixed(1)}</b><span class="t3"> wks</span>`}</td>
+      <td>${x.planningStatus === "overdue"
+        ? `<span class="pill bad">Overdue</span>`
+        : `<span class="pill good">OK</span>`}</td>
+      <td class="n"${x.procureShortfallCU > 0
+        ? ` title="${num(Math.round(x.procureShortfallCU))} CU short of the 80% planning line"` : ""}>${
+        x.procureSku && x.procureShortfallCU > 0
+          ? `<b>${esc(x.procureSku)}</b><br><span class="t3">${num(x.procureSkuCU)} CU`
+            + ` · ${num(Math.round(x.procureShortfallCU))} short</span>`
+          : `<span class="t3">—</span>`}</td>
       <td class="n">${num(x.requests)}</td>
       <td class="n">${x.failed ? `<b style="color:var(--bad)">${num(x.failed)}</b>` : "—"}</td>
       <td class="n">${num(x.customers)}</td>
@@ -2881,8 +3573,13 @@ PAGES["/datacentres"] = async (view) => {
 
   view.querySelectorAll("tr[data-dc]").forEach((tr) =>
     (tr.onclick = () => navigate(`/datacentre/${encodeURIComponent(tr.dataset.dc)}`)));
-};
 
+  /* 110 sites is past the point where scrolling is a way of finding one. The
+     search matches the site name, its region and its denial reason together, so
+     "westeurope" and "throttl" both narrow the list; the dropdown cuts to a
+     single region, which is the question this page is most often opened with. */
+  wireFilter("dc-filter", "#view tr[data-dc]", { noun: "data centres" });
+};
 /* ==================================================================== deep */
 /* One data centre — its own page, reachable from Regions or Data centres.    */
 
@@ -2899,9 +3596,15 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
       { what: "Recommended remediation", is: "one entry per denial cause at this site, with the capacities to scale where a larger F SKU is the fix." },
       { what: "Risk index breakdown", is: "each component of the score, with its measured value and contribution." },
       { what: "Incident register", is: "every request raised here, with the derivation behind each revenue-loss figure." },
+      { what: "Forecast", is: "when <i>this building</i> crosses its own safety line, fitted to its own daily CU record. There is no separate forecasting tab: a region-level crossing date says a geography is filling up, which nobody can act on, whereas this names the building and the date \\u2014 and scaling an F SKU is a per-site decision that applies immediately." },
+      { what: "Demand and utilisation", is: "what customers asked for here each month, drawn against how full the site actually ran." },
     ],
-    next: "Action the remediation for the highest-cost cause. Causes marked manual review require engineering or account-team engagement.",
-    sources: "ICM capacity requests attributed to this facility, and the Fabric capacities in it.",
+    words: [
+      { term: "Why the forecast is here", means: "It used to be a tab of its own covering regions only. A region is a geography and cannot be scaled; a capacity in a building can. The forecast now sits beside the capacities that would be changed to move the date." },
+      { term: "How this site's utilisation is measured", means: "Consumed CU seconds over available CU seconds, summed across the capacities in the building. Summing the seconds matters: an F2 at 90% and an F512 at 20% do not average to 55% of the building." },
+    ],
+    next: "Read the crossing date, then the capacity list beneath it — that is what would be scaled to move the date. Action the remediation for the highest-cost cause; causes marked manual review require engineering or account-team engagement.",
+    sources: "ICM capacity requests attributed to this facility, the Fabric capacities in it, and this facility's own daily CU consumption record.",
   }) + title(`Data centre: ${x.datacentre}`,
              `In ${x.region} · ${num(x.fabric.capacityCount)} Fabric capacities · ${num(x.fabric.capacityUnits)} CU`
              + (x.fabric.throttling ? ` · ${num(x.fabric.throttling)} throttling` : "")) + `
@@ -3043,6 +3746,7 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
     ${registerToggle("dc", showAll ? 0 : x.tickets.filter((k) => !k.isFlagged).length)}`,
     { flush: true })}
 
+  <div id="dc-forecast"></div>
   <div id="dc-caps"></div>
   <div id="dc-demand"></div>
 
@@ -3051,8 +3755,16 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
     &nbsp;·&nbsp; <a href="/datacentres">All data centres</a>
   </p>`;
 
-  // This facility's own demand. Utilisation over time is only recorded per
-  // region, so that chart stays on the region page and this says where to find it.
+  /* This facility's own forecast, then its capacities, then its demand.
+
+     The comment that used to sit here said utilisation over time was recorded
+     per region only, so the chart lived on the region page. That was wrong: the
+     CU record is per capacity per day and every capacity names its building, so
+     this site has a series of its own and now gets a forecast fitted to it.
+
+     Forecast first, because it is the reason someone opened the page. The
+     capacity list beneath it is what would be scaled to change the date. */
+  $("dc-forecast").innerHTML = await forecastPanel(id);
   $("dc-caps").innerHTML = await capacityPanel("datacentre", id);
   $("dc-demand").innerHTML = await demandPanels("datacentre", id);
   wireCharts($("dc-demand"));
@@ -3166,7 +3878,7 @@ PAGES["/incidents"] = async (view) => {
 
 /* History, projection, uncertainty band and the safety line in one inline SVG.
    No chart library, for the same reason there is no build step. */
-function forecastChart(f) {
+function forecastChart(f, place = "region") {
   const hist = f.history || [], proj = f.projection || [];
   if (hist.length < 2) return `<p class="empty">Not enough history to plot.</p>`;
 
@@ -3181,7 +3893,16 @@ function forecastChart(f) {
   // nothing. Five of the eleven regions showed it. The floor is clamped for
   // the same reason -- a region cannot be less than empty.
   const lo = Math.max(0, Math.floor(Math.min(...all) - 2));
-  const hi = Math.min(100, Math.ceil(Math.max(...all) + 2));
+  /* 100% is the ceiling for a *region*: utilisation there is used over deployed
+     capacity and a line past it forecasts nothing. A single Fabric capacity is
+     not bound by that. It can consume more CU than it holds -- that is bursting,
+     which Fabric smooths over future timepoints -- so a building whose
+     capacities are bursting genuinely runs above 100%, and westeurope-dc04 sits
+     at 185%. Clamping the axis unconditionally drew that line off the top of the
+     chart, out of the viewBox, where it was simply invisible. So the ceiling
+     applies only when the data stays under it. */
+  const top = Math.max(...all);
+  const hi = top > 100 ? Math.ceil(top + 2) : Math.min(100, Math.ceil(top + 2));
   const n = hist.length + proj.length;
   const x = (i) => L + (i / (n - 1)) * (W - L - R);
   const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
@@ -3198,13 +3919,13 @@ function forecastChart(f) {
     ? proj.findIndex((p) => p.date === f.crossingDate) : -1;
 
   return `<div class="legend">
-    <span><i class="ln measured"></i>Measured — how full the region actually was, one reading per day</span>
+    <span><i class="ln measured"></i>Measured — how full the ${esc(place)} actually was, one reading per day</span>
     <span><i class="ln projected"></i>Projected — where the trend takes it if nothing changes</span>
     <span><i class="ln band"></i>Range the forecast could be out by</span>
     <span><i class="ln limit"></i>Safety line</span>
   </div>
   <svg class="chart" viewBox="0 0 ${W} ${H}" role="img"
-    aria-label="Utilisation history and projection for ${esc(f.region)}">
+    aria-label="Utilisation history and projection for ${esc(f.datacentre || f.region)}">
     <text x="10" y="${T + 4}" font-size="10" fill="var(--ink-3)"
       transform="rotate(-90 10 ${T + 4})" text-anchor="end">how full (%)</text>
     ${[lo, Math.round((lo + hi) / 2), hi].map((v) =>
@@ -3469,3 +4190,9 @@ PAGES["/policy"] = async (view) => {
       The ladder is real; the ${d.unitsPerCu} units-per-CU conversion is assumed.
     </p>`, { flush: true })}`;
 };
+
+
+
+
+
+

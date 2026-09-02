@@ -86,7 +86,19 @@ LEGACY_AZURE_PAGES: set[str] = set()
 
 #: Sentences whose whole point is that the Azure model is gone. A note saying
 #: "hardware and lead time were removed" has to be able to name what it removed.
-ALLOWED_CONTEXT = ["why there is no hardware", "were removed"]
+#:
+#: "procurement lead time" is a separate, deliberate exception. The ban on "lead
+#: time" was about *hardware provisioning* -- Fabric is SaaS, nothing is racked,
+#: and the old page printed a server delivery estimate beside a list of F SKUs.
+#: Review then asked for a commercial procurement lead time, fixed at twelve
+#: weeks, as the thing the buy decision is judged against. That is a real
+#: business quantity rather than a leftover from the Azure model, so it is named
+#: explicitly here: the phrase is allowed where it is qualified as procurement
+#: or stated in weeks, and still banned everywhere else.
+ALLOWED_CONTEXT = [
+    "why there is no hardware", "were removed",
+    "capacity takes to arrive once ordered", "12-week lead time",
+]
 
 
 #: Which page a line belongs to. Crude -- pages.js assigns each one as
@@ -308,8 +320,13 @@ def test_the_regions_table_body_has_a_cell_for_every_heading():
     rendered the placeable figure under "To stay under" and the shortfall under
     "Placeable CU". Nothing errors -- the table is well-formed and wrong.
     """
-    body = JS[JS.index("const COLS = ["):JS.index("</tbody>", JS.index("const COLS = ["))]
-    headings = re.findall(r'label:\s*"([^"]+)"', body)
+    start = JS.index("const COLS = [")
+    body = JS[start:JS.index("</tbody>", start)]
+    # Headings come from the COLS array only. Scraping the whole block picked up
+    # the filter dropdown's option labels once search was added above the table,
+    # and counted them as columns -- so the test failed on a correct page.
+    cols = body[:body.index("];")]
+    headings = re.findall(r'label:\s*"([^"]+)"', cols)
     cells = body[body.index("<tbody>"):].count("<td")
     assert headings, "COLS no longer declares labels -- update this test"
     assert cells >= len(headings), (
@@ -447,3 +464,117 @@ def test_site_tie_lines_stop_short_of_the_region_marker():
     assert "hit.x" not in line and "hit.y" not in line, (
         "the tie line starts at the region centre rather than outside its "
         "marker -- the marker will be buried under the spokes again")
+
+
+# --------------------------------------------------------------------------
+# search and region filtering
+# --------------------------------------------------------------------------
+
+
+def test_the_three_browsable_pages_all_carry_a_filter():
+    """110 sites and 11 regions is past the point where scrolling finds one.
+
+    Data centres, Regions and the Fleet map each get a search box and a
+    dropdown, built from one shared component rather than three near-copies
+    that drift apart.
+    """
+    shell = (ROOT / "webapp" / "static" / "shell.js").read_text()
+    assert "function filterBar(" in shell, "the shared filter component is gone"
+    assert "function wireFilter(" in shell, "the shared filter wiring is gone"
+
+    for page_id in ("dc-filter", "rg-filter", "map-filter"):
+        assert f'filterBar("{page_id}"' in JS, f"{page_id} no longer renders a filter"
+
+
+def test_filterable_rows_carry_the_attributes_the_filter_reads():
+    """`wireFilter` matches on data-search and data-filter. A row without them
+    falls back to its rendered text, which silently matches on things like a
+    revenue figure -- so the pages that filter must set them explicitly."""
+    assert 'data-search="${esc(`${x.datacentre} ${x.region}' in JS, (
+        "data centre rows no longer carry the text the search matches")
+    assert 'data-filter="${esc(x.region)}"' in JS, (
+        "data centre rows no longer carry the region the dropdown filters on")
+    assert 'data-filter="${r.at_risk ? "risk" : "ok"}"' in JS, (
+        "region rows no longer carry the threshold state the dropdown filters on")
+
+
+def test_the_map_filter_survives_selecting_a_region():
+    """Selecting a region rewrites the side panel. The filter sits in that panel,
+    so it has to live outside the part that gets replaced or it vanishes the
+    first time it is used."""
+    assert 'const side = $("map-side-body");' in JS, (
+        "the map writes selections over the whole aside again, which destroys "
+        "the filter bar sitting in it")
+    assert '<div id="map-side-body">' in JS
+
+
+# --------------------------------------------------------------------------
+# v4 review items
+# --------------------------------------------------------------------------
+
+
+def test_how_to_read_is_collapsed_on_arrival():
+    """It sat open on every page, so every page opened on half a screen of
+    instructions. Read once, it is not needed again."""
+    shell = (ROOT / "webapp" / "static" / "shell.js").read_text()
+    assert '<details class="howto">' in shell, (
+        "the how-to banner is expanded by default again")
+    assert '<details class="howto" open>' not in shell
+
+
+def test_search_and_filter_are_one_control():
+    """Two controls let a reader set contradictory criteria and gave no hint
+    which one would find what they wanted. They are now a single combobox."""
+    shell = (ROOT / "webapp" / "static" / "shell.js").read_text()
+    assert 'role="combobox"' in shell, "the merged search control is gone"
+    assert "<select" not in shell.split("function filterBar(")[1].split("function wireFilter(")[0], (
+        "the filter dropdown is a separate <select> again")
+
+
+def test_site_markers_are_scattered_not_ringed():
+    """Ten dots equidistant from a hub is a diagram of nothing, and the
+    regularity implied a spatial relationship that does not exist. The layout
+    must still be deterministic, or markers jump about mid-drag."""
+    globe = (ROOT / "webapp" / "static" / "globe.js").read_text()
+    assert "function jitter(" in globe, "site scatter is gone"
+    assert "GOLDEN" in globe
+    assert "const ringDeg = 4.2;" not in globe, (
+        "sites are back on a single fixed-radius ring")
+
+
+def test_a_selected_region_is_fenced_and_filled_the_view():
+    """With sites scattered, nothing said where the region ended -- and at the
+    old zoom, selecting a region looked much like not selecting one."""
+    globe = (ROOT / "webapp" / "static" / "globe.js").read_text()
+    assert "region-fence" in globe and "stroke-dasharray" in globe, (
+        "the dotted region boundary is gone")
+    assert "zoom: 6.8" in JS, "the region zoom no longer fills the view"
+
+
+def test_map_markers_have_a_hover_readout_with_coordinates():
+    """Review asked the hover to show latitude and longitude alongside what it
+    already carried. The markers now build a cursor-following tooltip rather
+    than leaning on the browser's slow one-line <title>."""
+    block = JS[JS.index('PAGES["/map"]'):]
+    block = block[:block.index('PAGES["/regions"]')]
+    assert "function coordLine(" in block and "toFixed(3)" in block, (
+        "the marker hover no longer prints coordinates")
+    assert 'className = "chart-tip map-tip"' in block, (
+        "the map lost its cursor-following hover tooltip")
+    globe = (ROOT / "webapp" / "static" / "globe.js").read_text()
+    assert "<title>" not in globe, (
+        "a marker is back to the browser's <title> tooltip, which now double-"
+        "renders behind the hover readout")
+
+
+def test_the_planning_columns_are_on_the_data_centre_table():
+    """Review asked for the buy decision to be visible in the list: how full,
+    against a fixed line, at what growth, with what runway."""
+    for label in ("Total CU", "Utilised CU", "Utilisation", "Threshold",
+                  "Growth", "Lead time", "Weeks to decide", "Status"):
+        assert label in JS, f"the {label!r} column is missing"
+
+
+def test_the_region_table_says_what_its_average_is_an_average_of():
+    assert 'label: "Data centres"' in JS, "the site count column is missing"
+    assert 'label: "Utilised CU"' in JS, "the utilised CU column is missing"

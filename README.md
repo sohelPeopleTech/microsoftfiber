@@ -32,11 +32,25 @@ python -m module5 --decisions         # who approved what, and why
 cd webapp && python3 -m uvicorn api:app --port 8899
 ```
 
-Six tabs — Overview, Regions, Customers, Propensity, Actions, Methodology —
-behind a sign-in. Approve/Reject on the Actions tab writes to the same
-append-only decisions log the CLI writes, and the next run suppresses a
-rejected region. Set `APP_USERS` and `APP_SECRET_KEY` before anyone else can
-reach it; unset, it serves a demo account and says so at startup.
+Six tabs behind a sign-in, in this order: **Fleet map** (the landing page, at
+`/`), **Overview** (`/overview`), **Regions**, **Data centres**, **Customers**
+and **Methodology**.
+
+Regions carries only how full each region is. Everything that can be acted on —
+each site's own safety threshold, when it crosses it, what it would take to stay
+under, what it owes and who is waiting — sits on the data centres inside it,
+because a region is a geography and cannot be scaled while a capacity in a
+building can. For the same reason there is no forecasting tab: each data centre
+is forecast on its own daily CU record, on its own page, beside the capacities
+that would be changed to move the date.
+
+Six further routes — `/recommendations`, `/incidents`, `/reasons`, `/forecast`,
+`/policy` and `/actions` — are no longer offered in the sidebar but are still
+served and still backed by their endpoints, so existing links keep working.
+Approve/Reject on `/actions` still writes to the same append-only decisions log
+the CLI writes, and the next run suppresses a rejected region. Set `APP_USERS`
+and `APP_SECRET_KEY` before anyone else can reach it; unset, it serves a demo
+account and says so at startup.
 
 ## What comes out
 

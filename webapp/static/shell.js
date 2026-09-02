@@ -14,24 +14,27 @@ const ASSISTANT_NAME = "Atlas";
 const PAGES = {};                 // path -> async (view) => void, filled by pages.js
 const $ = (id) => document.getElementById(id);
 
-/* Grouped by what someone is looking for, not by module number. The first
-   block is "where is the problem" at four levels of zoom; the second is
-   "what do I do about it"; the last is how any of it was worked out. */
+/* Grouped by what someone is looking for, not by module number: the fleet as a
+   whole, then the same fleet at three levels of zoom, then how any of it was
+   worked out.
+
+   The map leads and sits at `/`, so it is what someone sees on signing in.
+   Review's reasoning was that the first question is *where*, and a map answers
+   that before a table does; Overview keeps its own URL directly beneath it.
+
+   Six entries came off this list -- Reasons, Incidents, Forecast, Capacity
+   policy, Recommendations and Actions. Only the list changed. Every one of
+   those routes is still registered, still served and still backed by its
+   endpoints, so a saved link or a demo bookmark still opens the page; it is
+   simply no longer offered here. Forecasting in particular did not go away, it
+   moved: it is now on each data centre, beside the thing being forecast. */
 const NAV = [
-  { path: "/",             icon: "▦", label: "Overview" },
-  { path: "/map",          icon: "◍", label: "Fleet map" },
+  { path: "/",             icon: "◍", label: "Fleet map" },
+  { path: "/overview",     icon: "▦", label: "Overview" },
   null,
   { path: "/regions",      icon: "◈", label: "Regions" },
   { path: "/datacentres",  icon: "▤", label: "Data centres" },
   { path: "/customers",    icon: "◉", label: "Customers" },
-  { path: "/reasons",      icon: "◐", label: "Reasons" },
-  { path: "/incidents",    icon: "☰", label: "Incidents" },
-  null,
-  { path: "/forecast",     icon: "◠", label: "Forecast" },
-  { path: "/policy",       icon: "⚖", label: "Capacity policy" },
-  null,
-  { path: "/recommendations", icon: "➤", label: "Recommendations" },
-  { path: "/actions",      icon: "✓", label: "Actions" },
   null,
   { path: "/methodology",  icon: "ⓘ", label: "Methodology" },
 ];
@@ -89,8 +92,14 @@ async function post(url, body) {
  * glance at the block it refers to. Definitions come after the walkthrough --
  * a word means more once you have seen where it is used.
  */
+/* Collapsed by default.
+
+   It sat open on every page, so every page opened on half a screen of
+   instructions and the reader scrolled past them to reach the thing they came
+   for. Read once, it is not needed again; left open, it pushes the table below
+   the fold on arrival. The summary stays visible so it is one click away. */
 function howto({ answers, steps, words = [], next, sources }) {
-  return `<details class="howto" open>
+  return `<details class="howto">
     <summary>How to read this page</summary>
     <div class="body">
       <p class="lede">${answers}</p>
@@ -205,6 +214,131 @@ function th(label, help, cls = "") {
   return `<th${cls ? ` class="${cls}"` : ""}>${esc(label)}${help ? info(help) : ""}</th>`;
 }
 
+/* A search box and one dropdown, above a table.
+
+   Three pages grew the same need at once -- find one row among a hundred and
+   ten, or cut the list to a single region -- so it is one component rather than
+   three near-copies that drift. Filtering is done in the DOM against rows the
+   page has already rendered: no refetch, no server round-trip, and no second
+   code path that could disagree with the table it is filtering.
+
+   `rows` must carry `data-search` (the text the box matches, lowercased) and,
+   where a dropdown is used, `data-filter`. */
+function filterBar(id, { placeholder = "Search…", options = [],
+                         allLabel = "All", label = "" } = {}) {
+  /* One control, not two.
+
+     This was a search box and a separate dropdown sitting beside it, which
+     asked the reader to work out which of the two would find what they wanted
+     -- and let them set both to contradictory things. It is now a single
+     combobox: type to narrow, or open the list and pick. The suggestions are
+     the same values the dropdown held, filtered live by what has been typed,
+     so one control does both jobs and cannot disagree with itself. */
+  return `<div class="filter-bar" id="${id}">
+    <div class="combo" role="combobox" aria-expanded="false" aria-haspopup="listbox">
+      <svg class="combo-icon" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M10.4 10.4 14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <input type="text" id="${id}-q" autocomplete="off" spellcheck="false"
+        placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}"
+        aria-controls="${id}-list">
+      <button type="button" class="combo-clear" id="${id}-clear"
+        aria-label="Clear" hidden>&times;</button>
+      <button type="button" class="combo-toggle" id="${id}-toggle"
+        aria-label="Show ${esc(label || "all options")}">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"
+          fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <ul class="combo-list" id="${id}-list" role="listbox" hidden>
+        <li role="option" data-value="">${esc(allLabel)}</li>
+        ${options.map((o) => `<li role="option" data-value="${esc(o.value ?? o)}"
+          >${esc(o.label ?? o)}</li>`).join("")}
+      </ul>
+    </div>
+    <span class="filter-count" id="${id}-count"></span>
+  </div>`;
+}
+
+/* Wires a `filterBar` to the rows beneath it. Returns the apply function so a
+   page can re-run it after redrawing its own table. */
+function wireFilter(id, rowSelector, { total = null, noun = "rows" } = {}) {
+  const box = $(`${id}-q`), list = $(`${id}-list`), count = $(`${id}-count`);
+  const toggle = $(`${id}-toggle`), clear = $(`${id}-clear`);
+  if (!box) return () => {};
+  const combo = box.closest(".combo");
+  const items = [...list.querySelectorAll("li")];
+
+  // Set when a value was chosen from the list rather than typed. A pick is an
+  // exact filter on one value; typed text is a substring match across the row.
+  let picked = "";
+
+  function openList(show) {
+    list.hidden = !show;
+    combo.setAttribute("aria-expanded", String(!!show));
+    if (show) {
+      // Only offer options still reachable from what has been typed.
+      const term = picked ? "" : box.value.trim().toLowerCase();
+      items.forEach((li) => {
+        li.hidden = !!term && li.dataset.value !== ""
+          && !li.textContent.toLowerCase().includes(term);
+      });
+    }
+  }
+
+  function apply() {
+    const term = picked ? "" : box.value.trim().toLowerCase();
+    const rows = [...document.querySelectorAll(rowSelector)];
+    let shown = 0;
+    rows.forEach((tr) => {
+      const hay = (tr.dataset.search || tr.textContent || "").toLowerCase();
+      const ok = (!term || hay.includes(term))
+              && (!picked || (tr.dataset.filter || "") === picked);
+      tr.hidden = !ok;
+      if (ok) shown++;
+    });
+    const all = total ?? rows.length;
+    clear.hidden = !(box.value || picked);
+    // Silent when nothing is filtered: a count that never moves is noise.
+    count.textContent = (term || picked)
+      ? (shown ? `${shown} of ${all} ${noun}` : `No ${noun} match`)
+      : "";
+    count.classList.toggle("empty-result", !!(term || picked) && !shown);
+  }
+
+  box.addEventListener("input", () => { picked = ""; openList(true); apply(); });
+  box.addEventListener("focus", () => openList(true));
+  toggle.addEventListener("click", () => {
+    if (list.hidden) { box.focus(); openList(true); } else openList(false);
+  });
+  clear.addEventListener("click", () => {
+    box.value = ""; picked = ""; openList(false); apply(); box.focus();
+  });
+
+  list.addEventListener("click", (ev) => {
+    const li = ev.target.closest("li[data-value]");
+    if (!li) return;
+    picked = li.dataset.value;
+    box.value = picked ? li.textContent.trim() : "";
+    openList(false);
+    apply();
+  });
+
+  // Escape closes; clicking away closes. Bound on the document but removed with
+  // it -- route() replaces the view, and a listener left on document would
+  // outlive the combobox it was closing.
+  box.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") { openList(false); box.blur(); }
+  });
+  document.addEventListener("click", (ev) => {
+    if (!combo.contains(ev.target)) openList(false);
+  });
+
+  apply();
+  return apply;
+}
+
 function panel(heading, inner, { hint = "", flush = false } = {}) {
   return `<section class="panel">
     <header><h3>${esc(heading)}</h3>${hint ? `<span class="hint">${esc(hint)}</span>` : ""}</header>
@@ -259,9 +393,12 @@ function riskPill(band) {
 /* --------------------------------------------------------------- chrome */
 
 function renderNav(path) {
+  // `/map` is the map's old address and still resolves. Someone arriving on it
+  // should see the map entry lit rather than nothing lit at all.
+  const here = path === "/map" ? "/" : path;
   $("nav").innerHTML = NAV.map((item) => {
     if (!item) return "<hr>";
-    const on = item.path === path ? " on" : "";
+    const on = item.path === here ? " on" : "";
     return `<a class="nav-link${on}" href="${item.path}">
       <span class="ico">${item.icon}</span>${esc(item.label)}</a>`;
   }).join("");

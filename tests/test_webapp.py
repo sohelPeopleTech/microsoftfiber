@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "webapp"))
 
 import api  # noqa: E402
 import admission  # noqa: E402
+import forecast as forecast_module  # noqa: E402
 import ratecard  # noqa: E402
 import riskindex  # noqa: E402
 
@@ -1466,14 +1467,132 @@ def test_the_demand_baseline_excludes_the_spikes_it_measures():
             assert d["baselineCores"] < max(m["cores"] for m in spikes), region
 
 
-def test_a_site_reports_its_own_demand_and_defers_on_utilisation():
-    """Tickets carry a facility, so per-site demand is real. Utilisation is only
-    recorded per region, so the site must say where that chart lives rather than
-    splitting a regional curve ten ways and implying a measurement nobody made."""
+def test_a_site_reports_its_own_demand_and_its_own_utilisation():
+    """Tickets carry a facility, so per-site demand is real -- and so is per-site
+    utilisation, which this endpoint used to deny having.
+
+    It returned an empty series and a note saying utilisation was recorded per
+    region only, so the chart lived on the region page. The first half was
+    wrong: `fact_capacity_cu_daily` is one row per capacity per day and every
+    capacity names its building, so the site has a measured series of its own.
+    It is not the region's curve divided ten ways -- these assertions exist so
+    nobody can quietly make it that.
+    """
     d = api.demand_datacentre("southcentralus-dc01")
     assert d["scope"] == "datacentre" and d["region"] == "southcentralus"
-    assert d["thresholdSeries"] == []
-    assert "per region" in d["thresholdSeriesNote"]
+    assert d["thresholdSeries"], "the site must carry its own utilisation series"
+    assert not d["thresholdSeriesNote"], "there is nothing left to apologise for"
+    assert d["thresholdSeriesProvenance"], (
+        "a series built on generated CU consumption must say so on the page")
+
+    own = api._site_threshold("southcentralus-dc01")
+    assert d["thresholdPct"] == pytest.approx(round(own, 1))
+    for s in d["thresholdSeries"]:
+        assert s["thresholdPct"] == pytest.approx(round(own, 1))
+        assert s["deltaPct"] == pytest.approx(
+            round(s["utilisationPct"] - s["thresholdPct"], 2), abs=0.02)
+
+    # Sites in one region must not all report the identical curve, which is what
+    # splitting the regional series across them would have produced.
+    siblings = [dc for dc, m in api._site_meta().items()
+                if m["region"] == "southcentralus"][:4]
+    curves = {tuple(round(p["utilisationPct"], 2) for p in
+                    api.demand_datacentre(dc)["thresholdSeries"]) for dc in siblings}
+    assert len(curves) > 1, (
+        "every site in the region reported the same utilisation curve, which "
+        "means the region's series is being divided rather than measured")
+
+
+def test_a_bursting_site_is_not_drawn_off_the_top_of_its_chart():
+    """100% is a ceiling for a region, not for a building.
+
+    Region utilisation is used over deployed capacity and cannot exceed 100%, so
+    the chart clamped its axis there. A Fabric capacity can consume more CU than
+    it holds -- bursting, which Fabric smooths over future timepoints -- so a
+    site can genuinely run past 100%: westeurope-dc04 sits near 185%. With the
+    axis clamped, that line was drawn outside the viewBox and was invisible.
+    """
+    from pathlib import Path as _P
+
+    js = (_P(__file__).resolve().parents[1] / "webapp" / "static" / "pages.js").read_text()
+    assert "const hi = Math.min(100, Math.ceil(Math.max(...all) + 2));" not in js, (
+        "the forecast chart clamps its axis to 100% unconditionally, which hides "
+        "any bursting site's history line entirely")
+
+    # And the data really does go there, so this is not a hypothetical.
+    usage = api._site_usage_daily()
+    over = usage[usage["UtilisationPct"] > 100]
+    assert len(over), "no site bursts, so this guard is protecting nothing"
+
+
+def test_every_data_centre_can_be_forecast_on_its_own_record():
+    """The forecast moved off its own tab and onto the thing being forecast.
+
+    A region-level crossing date says a geography is filling up, which nobody
+    can act on; this says which building fills first, at the grain where an F
+    SKU can actually be scaled. Every site has a complete daily record, so no
+    site should be answering "not enough history".
+    """
+    sites = sorted(api._site_meta())
+    assert len(sites) > 100, "the whole fleet should be forecastable, not a sample"
+    for dc in sites[:6]:
+        f = api.forecast_site(dc)
+        assert f["datacentre"] == dc
+        assert f["scope"] == "datacentre"
+        assert f["model"] != "none", f"{dc} produced no model at all"
+        assert len(f["history"]) >= forecast_module.MIN_HISTORY, dc
+        assert f["projection"], f"{dc} produced no projection"
+        # Judged against its own line, not its region's.
+        assert f["thresholdPct"] == pytest.approx(api._site_threshold(dc))
+        # Utilisation is a share of deployed capacity; nothing above 100% is a
+        # forecast of anything.
+        assert all(0 <= p["value"] <= 100 for p in f["projection"]), dc
+        assert f["provenance"], "a generated series must carry its provenance"
+
+
+def test_a_site_forecast_and_the_region_table_cannot_disagree():
+    """One forecast per building, shared by everything that quotes it.
+
+    The Regions tab and the Forecast tab once each fitted their own and
+    disagreed by up to ten days about the same region. The columns that moved
+    down to the data centres must not reintroduce that: `hitsThresholdIn` on the
+    region page has to be the same forecast the site page draws.
+    """
+    import pandas as pd
+
+    for dc in sorted(api._site_meta())[:6]:
+        pos = api._site_position(dc)
+        f = api.forecast_site(dc)
+        assert pos["crossingDate"] == f["crossingDate"], dc
+        assert pos["forecastModel"] == f["model"], dc
+        if f["alreadyBreached"]:
+            assert pos["hitsThresholdIn"] == 0, dc
+        elif f["crossingDate"]:
+            last = pd.Timestamp(f["history"][-1]["date"])
+            assert pos["hitsThresholdIn"] == (
+                pd.Timestamp(f["crossingDate"]) - last).days, dc
+        else:
+            assert pos["hitsThresholdIn"] is None, dc
+
+
+def test_the_columns_that_left_the_regions_table_arrived_at_the_sites():
+    """Review moved four columns off the Regions tab because they are questions
+    about a building being asked of a geography. They have to exist at the grain
+    they moved to, or the move was a deletion."""
+    d = api.region_detail("southcentralus")
+    assert d["datacentres"], "no sites to carry the columns"
+    for site in d["datacentres"]:
+        for field in ("hitsThresholdIn", "cuToStayUnder", "smallestSkuStep",
+                      "cuPending", "customersWaiting"):
+            assert field in site, f"{site['datacentre']} is missing {field}"
+        # A site under its own line needs nothing added; one over it does.
+        if site["utilisationPct"] > site["thresholdPct"]:
+            assert site["cuToStayUnder"] > 0, site["datacentre"]
+        assert site["cuPending"] >= 0 and site["customersWaiting"] >= 0
+
+    # What the region owes is what its buildings owe, give or take rounding.
+    assert sum(s["cuPending"] for s in d["datacentres"]) == pytest.approx(
+        d["threshold"]["cores_pending"], abs=1.0)
 
 
 def test_the_threshold_series_is_measured_against_the_regions_own_line():
@@ -1733,3 +1852,56 @@ def test_the_assistant_knows_what_each_region_owes():
     for r in snap["regions"]:
         assert r["coresPending"] == pytest.approx(
             round(owed.get(r["region"], 0.0), 1)), r["region"]
+
+
+def test_growth_rate_is_derived_because_no_such_column_exists():
+    """Review asked for a growth rate and asked first whether the data had one.
+
+    It does not -- no table in the extract carries growth, trend or slope. It is
+    computed from each building's own 150-day utilisation record instead, so the
+    figure on the page is a measurement rather than an invented field.
+    """
+    entities = api.get_entities()
+    for name, table in entities.tables.items():
+        for col in table.columns:
+            assert "growth" not in col.lower(), (
+                f"{name}.{col} exists -- read it instead of deriving a rate")
+
+    rates = api._site_growth_rates()
+    assert len(rates) > 100, "not every site got a growth rate"
+    assert any(v and v > 0 for v in rates.values()), "every site is flat"
+
+
+def test_weeks_to_decide_and_overdue_agree_with_each_other():
+    """Status is not a separate judgement: overdue means the runway is shorter
+    than the lead time, and the two numbers are both on the row."""
+    d = api.datacentres()
+    assert d["datacentres"]
+    for x in d["datacentres"]:
+        assert x["planningThresholdPct"] == api.PLANNING_THRESHOLD_PCT
+        assert x["leadTimeWeeks"] == api.PROCUREMENT_LEAD_WEEKS
+        w = x["weeksToDecide"]
+        if w is None:
+            # Flat or shrinking and still under the line: no date to work back
+            # from, so no claim is made either way.
+            assert x["planningStatus"] == "ok", x["datacentre"]
+            assert x["siteUtilisationPct"] < api.PLANNING_THRESHOLD_PCT
+        else:
+            expected = "overdue" if w < api.PROCUREMENT_LEAD_WEEKS else "ok"
+            assert x["planningStatus"] == expected, x["datacentre"]
+
+    # A site already past the planning line has no runway left, not a long one.
+    over = [x for x in d["datacentres"]
+            if x["siteUtilisationPct"] >= api.PLANNING_THRESHOLD_PCT]
+    assert over, "no site is over the planning line, so this guard is idle"
+    for x in over:
+        assert x["weeksToDecide"] == 0.0 and x["planningStatus"] == "overdue"
+
+
+def test_the_region_row_carries_its_site_count_and_utilised_cu():
+    t = api.threshold()
+    total = sum(r["datacentre_count"] for r in t["regions"])
+    assert total == len(api.get_entities()["dim_datacentre"]), (
+        "region site counts do not add up to the estate")
+    for r in t["regions"]:
+        assert r["used_units"] <= r["deployed_units"] + 1e-6, r["region"]
