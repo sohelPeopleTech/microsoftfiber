@@ -513,13 +513,38 @@ def test_the_map_filter_survives_selecting_a_region():
 # --------------------------------------------------------------------------
 
 
-def test_how_to_read_is_collapsed_on_arrival():
+def test_how_to_read_costs_nothing_until_it_is_asked_for():
     """It sat open on every page, so every page opened on half a screen of
-    instructions. Read once, it is not needed again."""
-    shell = (ROOT / "webapp" / "static" / "shell.js").read_text()
-    assert '<details class="howto">' in shell, (
-        "the how-to banner is expanded by default again")
-    assert '<details class="howto" open>' not in shell
+    instructions. Read once, it is not needed again.
+
+    It was a `<details class="howto">` collapsed to a summary line; it is now a
+    slide-over opened from a button beside the page heading, so it takes no
+    room at all rather than one line. This guards the same property against the
+    new mechanism: nothing renders open, and the trigger says so.
+    """
+    shell = (ROOT / "webapp" / "static" / "shell.js").read_text(encoding="utf-8")
+
+    # The banner is gone, and cannot come back by accident.
+    assert "details" not in shell.split("function howto(")[1].split("function title(")[0], (
+        "the how-to explainer is a <details> banner on the page again")
+
+    # What howto() emits is inert and hidden until wireHowto() moves it.
+    assert '<div class="howto-src" hidden>' in shell, (
+        "the explainer carrier renders visible markup on the page")
+
+    # The panel and its overlay render closed.
+    panel = shell.split("function howtoPanel(")[1].split("let howtoOpener")[0]
+    assert 'class="howto-overlay" id="howto-overlay" hidden' in panel, (
+        "the overlay renders visible on arrival")
+    assert 'class="howto-panel" id="howto-panel" hidden' in panel, (
+        "the panel renders open on arrival")
+    assert 'aria-modal="true"' in panel and 'role="dialog"' in panel
+
+    # And the trigger starts collapsed, so the state it announces matches.
+    wire = shell.split("function wireHowto(")[1]
+    assert 'trigger.setAttribute("aria-expanded", "false")' in wire, (
+        "the trigger does not announce itself as collapsed on arrival")
+    assert 'trigger.setAttribute("aria-expanded", "true")' not in wire
 
 
 def test_search_and_filter_are_one_control():

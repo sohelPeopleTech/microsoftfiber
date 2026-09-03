@@ -21,10 +21,13 @@ dependencies = [
     "pandas>=2.0",
     "numpy>=1.24",
     "openpyxl>=3.1",
-    "certifi",             # module5.transport, for TLS verification
-    "scipy>=1.10",         # forecast.theil_sen
-    "statsmodels>=0.14",   # forecast.arima and forecast.sarima
-    "scikit-learn>=1.3",   # propensity.model
+    "certifi",
+    "scipy>=1.10",
+    "statsmodels>=0.14",
+    "scikit-learn>=1.3",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

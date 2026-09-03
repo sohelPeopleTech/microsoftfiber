@@ -1755,16 +1755,30 @@ def test_a_facility_is_not_described_with_its_regions_utilisation():
     """The snapshot passed the region's utilisation under a per-facility key, so
     the assistant reported a regional figure as though it belonged to one
     building. The regional figure is now simply not there, which is stronger
-    than naming it carefully -- it cannot be misread if it is absent."""
-    entities = api.get_entities()
-    dim = {str(r["DatacentreId"]): r for _, r in entities["dim_datacentre"].iterrows()}
+    than naming it carefully -- it cannot be misread if it is absent.
+
+    What it does carry is the building's own position, read from the capacities
+    standing in it. This used to be checked against `UsedUnits / DeployedUnits`,
+    which is the second, separately-derived estimate the pages no longer use --
+    checking against it would put the assistant back on a different measurement
+    from the screen beside it.
+    """
+    positions = api._site_cu_positions()
     sites = api.get_snapshot()["datacentres"]
     assert sites
     for s in sites:
-        row = dim[s["datacentre"]]
-        expected = float(row["UsedUnits"]) / float(row["DeployedUnits"]) * 100
-        assert s["utilisationPct"] == pytest.approx(round(expected, 1), abs=0.05)
+        assert s["utilisationPct"] == positions[s["datacentre"]]["utilisationPct"], (
+            f"{s['datacentre']}: snapshot says {s['utilisationPct']}%, its own "
+            f"capacities say {positions[s['datacentre']]['utilisationPct']}%")
         assert "regionUtilisationPct" not in s
+
+    # Per building, not one region figure stamped across all of them -- which is
+    # what the original bug looked like on screen.
+    by_region: dict[str, set] = {}
+    for s in sites:
+        by_region.setdefault(s["region"], set()).add(s["utilisationPct"])
+    assert any(len(v) > 1 for v in by_region.values()), \
+        "every site in every region reports the same utilisation"
 
 
 def test_the_assistant_sees_every_facility_not_only_the_busy_ones():
@@ -1896,6 +1910,140 @@ def test_weeks_to_decide_and_overdue_agree_with_each_other():
     assert over, "no site is over the planning line, so this guard is idle"
     for x in over:
         assert x["weeksToDecide"] == 0.0 and x["planningStatus"] == "overdue"
+
+
+def test_a_full_f32_site_is_told_to_buy_an_f8_not_an_f16():
+    """Regression: the site procurement path matched a *raw compute unit*
+    shortfall against the F SKU ladder, which is denominated in Capacity Units.
+
+    The two differ by a factor of two -- `CapacityUnits` is real CU, while the
+    `DeployedUnits` / `UsedUnits` columns are CU / UNITS_PER_CU -- so every site
+    in the estate was told to buy one rung too much.
+
+    One F32 running at 100%: 32 CU deployed, 32 used, and 40 deployed needed to
+    sit at the 80% planning line, so it is short by 8 CU and an F8 covers it.
+    Read in raw units the same site looks short by 16 and asks for an F16, which
+    is twice the capacity and the next rung up the ladder.
+
+    `admission.build_dim_capacity_pool` has always converted before reading the
+    ladder; this asserts the site path does too.
+    """
+    one_f32_cu = admission.F_SKUS["F32"]
+    got = api._site_procurement(one_f32_cu, one_f32_cu)
+
+    assert got["procureSku"] == "F8", (
+        f"a full F32 site should buy an F8; got {got['procureSku']}. "
+        "A raw-unit shortfall matched against the CU ladder lands on F16.")
+    assert got["procureShortfallCU"] == pytest.approx(8.0)
+    assert got["procureSkuCU"] == admission.F_SKUS["F8"]
+
+    # Handed the raw compute units instead, the same site asks for twice as
+    # much. This is the mistake, stated so the caller's units stay deliberate.
+    wrong = api._site_procurement(one_f32_cu / admission.UNITS_PER_CU,
+                                  one_f32_cu / admission.UNITS_PER_CU)
+    assert wrong["procureSku"] == "F16"
+
+    # And through the endpoint, on a real one-F32 site.
+    dc07 = next(x for x in api.datacentres()["datacentres"]
+                if x["datacentre"] == "northcentralus-dc07")
+    assert [s["sku"] for s in dc07["skus"]] == ["F32"], "dc07 is no longer one F32"
+    assert dc07["totalCU"] == pytest.approx(32.0)
+    assert dc07["procureSku"] == "F8"
+    # The same figures, on the same site, through the Regions drill-down.
+    assert api._site_position("northcentralus-dc07")["smallestSkuStep"] == "F8"
+
+
+def test_every_site_buys_the_smallest_rung_that_covers_its_shortfall():
+    """The ladder lookup, asserted against the shortfall printed beside it, so a
+    unit slipping on either side of it shows up as a mismatched pair rather than
+    as a number nobody can check."""
+    ladder = sorted(admission.F_SKUS.items(), key=lambda kv: kv[1])
+    for x in api.datacentres()["datacentres"]:
+        short, sku = x["procureShortfallCU"], x["procureSku"]
+        if not short or short <= 0:
+            assert not sku, f"{x['datacentre']}: nothing short but asked for {sku}"
+            continue
+        smallest = next(name for name, cu in ladder if cu >= short)
+        assert sku == smallest, (
+            f"{x['datacentre']}: short by {short} CU, which an {smallest} covers, "
+            f"but the row asks for an {sku}")
+
+
+def test_the_cu_columns_are_capacity_units_not_raw_compute_units():
+    """`totalCU` prints under a header that says CU, beside a `capacityUnits`
+    subtitle that has always been real CU. They are the same quantity, so a row
+    holding one F32 reading "Total CU 64" next to "32 CU" was the same
+    raw-versus-CU confusion showing on screen.
+    """
+    rows = api.datacentres()["datacentres"]
+    assert rows
+    for x in rows:
+        assert x["totalCU"] == pytest.approx(x["capacityUnits"], abs=0.05), (
+            f"{x['datacentre']}: Total CU {x['totalCU']} disagrees with its own "
+            f"{x['capacityUnits']} CU subtitle")
+        # The per-SKU rows are in the same unit, and add back up to the site.
+        if x["skus"]:
+            assert sum(s["totalCU"] for s in x["skus"]) == pytest.approx(
+                x["totalCU"], abs=0.05), x["datacentre"]
+
+
+def test_a_one_capacity_site_reports_exactly_what_that_capacity_reports():
+    """A building with a single capacity in it *is* that capacity. It cannot
+    have a second opinion about how full it is.
+
+    It had one. The row's used figure came from `dim_datacentre.UsedUnits` --
+    the latest day's rate applied to the site's units -- while the SKU row
+    beneath it read the 30-day per-capacity record, so southcentralus-dc02
+    published 28 CU / 86.2% above a child saying 28.7 CU / 89.8% for the one
+    F32 that is the whole building.
+    """
+    singles = [x for x in api.datacentres()["datacentres"] if len(x["skus"]) == 1
+               and x["skus"][0]["capacityCount"] == 1]
+    assert singles, "no single-capacity site to check, so this guard is idle"
+    for x in singles:
+        child = x["skus"][0]
+        assert x["utilisedCU"] == child["utilisedCU"], (
+            f"{x['datacentre']}: row says {x['utilisedCU']} CU used, its only "
+            f"capacity says {child['utilisedCU']}")
+        assert x["siteUtilisationPct"] == child["utilisationPct"], (
+            f"{x['datacentre']}: row says {x['siteUtilisationPct']}%, its only "
+            f"capacity says {child['utilisationPct']}%")
+
+
+def test_every_site_is_the_cu_weighted_sum_of_its_own_sku_rows():
+    """The parent is derived from the children, so the column adds up on screen.
+    Weighted by CU, because an F2 at 90% and an F512 at 20% do not average to
+    55% of the building."""
+    for x in api.datacentres()["datacentres"]:
+        if not x["skus"]:
+            continue
+        assert sum(s["utilisedCU"] for s in x["skus"]) == pytest.approx(
+            x["utilisedCU"], abs=0.05), (
+            f"{x['datacentre']}: SKU rows use "
+            f"{sum(s['utilisedCU'] for s in x['skus'])} CU, row says "
+            f"{x['utilisedCU']}")
+        weighted = (sum(s["utilisationPct"] * s["totalCU"] for s in x["skus"])
+                    / sum(s["totalCU"] for s in x["skus"]))
+        assert weighted == pytest.approx(x["siteUtilisationPct"], abs=0.1), (
+            f"{x['datacentre']}: SKU rows weight to {weighted:.2f}%, row says "
+            f"{x['siteUtilisationPct']}%")
+
+
+def test_utilisation_is_not_capped_at_one_hundred_percent():
+    """`build_dim_datacentre` clipped the consumption rate at 1.0, so a site
+    consuming past its nameplate reported exactly 100.0% -- northcentralus-dc07
+    did, while the single capacity in it peaked above 110%. Bursting is a real
+    state that smoothing absorbs; capping it removes the signal this page is
+    for.
+    """
+    rows = api.datacentres()["datacentres"]
+    over = [x for x in rows if x["siteUtilisationPct"] > 100.0]
+    assert over, (
+        "no site reports above 100%, which is what the clip used to guarantee")
+    # And the clip is gone at source, not just routed around in the API.
+    sites = api.get_entities()["dim_datacentre"]
+    rate = sites["UsedUnits"] / sites["DeployedUnits"].replace(0, float("nan"))
+    assert (rate > 1.0).any(), "dim_datacentre.UsedUnits is still capped"
 
 
 def test_the_region_row_carries_its_site_count_and_utilised_cu():

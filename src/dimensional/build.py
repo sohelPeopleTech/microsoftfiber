@@ -235,7 +235,13 @@ def build_dim_datacentre(dim_region, usage=None, capacities=None,
         # site's own units so the column keeps the meaning the rest of the
         # product gives it.
         by = latest.groupby("DatacentreId")[["CuSecondsConsumed", "CuSecondsAvailable"]].sum()
-        rate = (by["CuSecondsConsumed"] / by["CuSecondsAvailable"].replace(0, pd.NA)).clip(upper=1.0)
+        # Not capped at 1.0. A Fabric capacity genuinely consumes past its
+        # nameplate -- that is bursting, and smoothing is what absorbs it -- so a
+        # rate above 1 is a reading, not an error. Clipping it reported
+        # northcentralus-dc07 at exactly 100.0% while the single capacity in it
+        # was running at 113% and peaking above 110%, which is precisely the
+        # overload the page exists to surface.
+        rate = by["CuSecondsConsumed"] / by["CuSecondsAvailable"].replace(0, pd.NA)
         dim["UsedUnits"] = (dim["DeployedUnits"]
                             * dim["DatacentreId"].map(rate).fillna(0.0)).round(1)
     else:
