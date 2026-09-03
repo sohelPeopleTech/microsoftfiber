@@ -162,6 +162,96 @@ h2.section { font-size: 1.05rem; font-weight: 600; margin: 2rem 0 .75rem; }
 .info:hover, .info:focus { background: var(--brand); color: #fff; outline: none; }
 thead th .info { margin-left: .25rem; }
 
+/* Sortable column headers (Regions table). Every column shows a caret so
+   click-to-sort is discoverable; the active column is marked solid. */
+th.sortable {
+  cursor: pointer; user-select: none;
+  white-space: nowrap;
+}
+th.sortable .th-sort-label { vertical-align: middle; }
+th.sortable .sort-ind {
+  display: inline-block; margin-left: .28rem;
+  font-size: .65rem; line-height: 1; vertical-align: middle;
+  color: var(--ink-3); opacity: .55;
+}
+th.sortable:hover .sort-ind,
+th.sortable:focus .sort-ind { opacity: 1; color: var(--ink-2); }
+th.sortable.sorted .sort-ind,
+th.sortable .sort-ind.asc,
+th.sortable .sort-ind.desc {
+  opacity: 1; color: var(--ink); font-weight: 700;
+}
+th.sortable:focus { outline: 2px solid var(--brand-ring); outline-offset: 2px; }
+
+/* Per-column filter caret on table headers (Excel-style). Distinct from the
+   info "i": the caret opens a value checklist; the "i" only explains the column. */
+.th-inner {
+  display: inline-flex; align-items: center; gap: .2rem;
+  white-space: nowrap;
+}
+.th-sort-btn {
+  display: inline-flex; align-items: center; gap: .22rem;
+  margin: 0; padding: 0; border: 0; background: none;
+  font: inherit; font-weight: inherit; color: inherit;
+  letter-spacing: inherit; text-transform: inherit;
+  cursor: pointer;
+}
+.th-sort-btn:hover .sort-ind { opacity: 1; color: var(--ink-2); }
+.col-filter-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; padding: 0; margin-left: .1rem;
+  border: 0; border-radius: 3px; background: transparent;
+  color: var(--ink-3); cursor: pointer; vertical-align: middle; flex: none;
+}
+.col-filter-btn svg { width: 10px; height: 10px; display: block; }
+.col-filter-btn:hover, .col-filter-btn[aria-expanded="true"] {
+  background: var(--rule); color: var(--ink);
+}
+.col-filter-btn.on { color: var(--brand); background: var(--brand-wash); }
+
+.col-filter-panel {
+  position: fixed; z-index: 80; width: 16.5rem; max-height: min(22rem, 70vh);
+  display: flex; flex-direction: column;
+  background: var(--card); border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
+  font-size: .82rem; color: var(--ink);
+}
+.col-filter-panel[hidden] { display: none; }
+.col-filter-head { padding: .55rem .6rem .35rem; border-bottom: 1px solid var(--rule); }
+.col-filter-q {
+  width: 100%; font: inherit; font-size: .82rem;
+  padding: .35rem .5rem; border: 1px solid var(--rule-strong);
+  border-radius: 4px; background: var(--card); color: var(--ink);
+}
+.col-filter-q:focus { outline: none; border-color: var(--brand); }
+.col-filter-actions {
+  display: flex; gap: .75rem; margin-top: .4rem;
+}
+.col-filter-actions button {
+  border: 0; background: none; padding: 0; font: inherit; font-size: .78rem;
+  color: var(--brand); cursor: pointer;
+}
+.col-filter-actions button:hover { text-decoration: underline; }
+.col-filter-list {
+  list-style: none; margin: 0; padding: .25rem 0;
+  overflow: auto; flex: 1 1 auto;
+}
+.col-filter-list li { margin: 0; }
+.col-filter-list label {
+  display: flex; align-items: flex-start; gap: .45rem;
+  padding: .28rem .7rem; cursor: pointer;
+}
+.col-filter-list label:hover { background: var(--surface-2); }
+.col-filter-list input { margin-top: .15rem; flex: none; }
+.col-filter-list span {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.col-filter-foot {
+  padding: .45rem .6rem; border-top: 1px solid var(--rule);
+  display: flex; justify-content: flex-end;
+}
+.col-filter-foot .btn { font-size: .78rem; padding: .3rem .7rem; }
+
 /* ------------------------------------------------------------------ panels */
 
 .panel {
@@ -192,6 +282,65 @@ thead th .info { margin-left: .25rem; }
 .funnel .step.wash .what { color: var(--warn); }
 .funnel .step.bad  { background: var(--bad-wash); }
 .funnel .step.bad .what { color: var(--bad); }
+
+/* Request outcomes: the total stays visible while the legend separates the
+   two action states from the successful requests kept for reconciliation. */
+.outcomes-panel > header { min-height: 3.8rem; }
+.outcomes-filter { margin-left: auto; }
+.outcomes-filter select {
+  min-width: 10.4rem; padding: .45rem 2rem .45rem .65rem;
+  border: 1px solid var(--rule-strong); border-radius: 4px;
+  background: var(--card); color: var(--ink-2); font: inherit;
+}
+.outcomes-body {
+  display: grid; grid-template-columns: 15rem minmax(18rem, 1fr) minmax(22rem, 1.2fr);
+  align-items: center; gap: 1.5rem; padding: 1.25rem 1.25rem 1.35rem;
+}
+.outcomes-chart { display: grid; place-items: center; }
+.outcomes-donut {
+  width: 13.3rem; aspect-ratio: 1; border-radius: 50%; display: grid;
+  place-content: center; justify-items: center; position: relative;
+  background: conic-gradient(
+    #ffca28 0 var(--late),
+    #f56b70 var(--late) calc(var(--late) + var(--unfulfilled)),
+    #42d77d calc(var(--late) + var(--unfulfilled)) 100%);
+}
+.outcomes-donut::after {
+  content: ""; position: absolute; inset: 1.45rem; border-radius: 50%;
+  background: var(--card);
+}
+.outcomes-donut strong, .outcomes-donut span { position: relative; z-index: 1; }
+.outcomes-donut strong { font-size: 2.1rem; line-height: 1.1; }
+.outcomes-donut span { color: var(--ink-2); font-size: .78rem; }
+.outcomes-legend { min-width: 0; }
+.outcome-item {
+  display: grid; grid-template-columns: 1rem 2rem minmax(0, 1fr);
+  align-items: center; gap: .7rem; min-height: 4.2rem;
+  border-bottom: 1px solid var(--rule); color: var(--ink-2);
+}
+.outcome-item b { color: var(--ink); font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.outcome-item span { font-size: .88rem; }
+.outcome-dot { width: .8rem; height: .8rem; border-radius: 50%; }
+.outcome-dot.late { background: #ffca28; }
+.outcome-dot.unfulfilled { background: #f56b70; }
+.outcome-dot.handled { background: #42d77d; }
+.outcomes-note {
+  padding: 1rem 1.1rem; border-radius: 8px; background: var(--brand-wash-2);
+  color: var(--ink-2); font-size: .82rem; line-height: 1.45;
+}
+.outcomes-note p { margin: 0; }
+@media (max-width: 900px) {
+  .outcomes-body { grid-template-columns: 12rem minmax(15rem, 1fr); }
+  .outcomes-note { grid-column: 1 / -1; }
+  .outcomes-donut { width: 10.5rem; }
+}
+@media (max-width: 620px) {
+  .outcomes-panel > header { align-items: flex-start; }
+  .outcomes-panel > header h3 { max-width: 13rem; }
+  .outcomes-body { grid-template-columns: 1fr; }
+  .outcomes-legend, .outcomes-note { grid-column: auto; }
+  .outcomes-chart { margin-bottom: .25rem; }
+}
 
 /* Group heading inside the outcome block -- Approved / Not approved. */
 .funnel .grp {
@@ -1482,6 +1631,32 @@ td.risk-cell span { white-space: nowrap; }
 }
 
 .panel.tabbed > header .hint { margin-left: auto; align-self: center; }
+
+/* Overview breakdowns use the flatter table treatment from the review view:
+   tabs, filters, and the table read as one continuous workspace. */
+#ov-tables { border-radius: 4px; box-shadow: none; }
+#ov-tables > header { background: var(--card); padding: 0 .9rem; }
+#ov-tables .tab { padding: .7rem .2rem; margin-right: 1.1rem; font-size: .9rem; }
+#ov-tables .tab-body { background: var(--card); }
+#ov-tables .overview-filter {
+  display: flex; align-items: center; gap: .55rem; padding: .75rem 1.1rem;
+  border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+  box-shadow: 0 2px 3px rgba(0, 0, 0, .08);
+}
+#ov-tables .overview-search { position: relative; width: min(28rem, 100%); }
+#ov-tables .overview-search span {
+  position: absolute; left: .75rem; top: 50%; transform: translateY(-53%);
+  color: var(--ink-2); font-size: 1.35rem; line-height: 1; pointer-events: none;
+}
+#ov-tables .overview-search input { width: 100%; padding-left: 2rem; }
+#ov-tables .overview-select select { min-width: 10.5rem; }
+#ov-tables table { font-size: .875rem; }
+#ov-tables thead th {
+  background: #f5f5f5; text-transform: none; letter-spacing: 0;
+  font-size: .78rem; padding: .75rem .9rem;
+}
+#ov-tables tbody td { padding: .75rem .9rem; }
+#ov-tables tbody tr[hidden] { display: none; }
 
 /* A long table scrolls inside its own panel rather than pushing everything
    below it off the screen, and its header row stays put while it does.

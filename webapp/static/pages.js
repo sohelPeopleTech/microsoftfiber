@@ -93,9 +93,16 @@ PAGES["/overview"] = async (view) => {
   // 60 reconciles, and are collapsed to one line rather than given the same
   // weight as the failures the tool exists to surface.
   const handled = (c.no_denial || 0) + (c.same_day_approved || 0);
-  const step = (n, label, cls) => `<div class="step ${cls}">
-      <span class="n">${num(n)}</span><span class="what">${esc(label)}</span></div>`;
-
+  const overviewRegions = [...new Set((d.regions || []).map((r) => r.region))].sort();
+  const overviewStatuses = [...new Set(attention.map((r) => r.status))].sort();
+  const overviewFilter = (id, placeholder, { region = false, status = false } = {}) => `
+    <div class="overview-filter" id="${id}">
+      <label class="overview-search"><span aria-hidden="true">⌕</span>
+        <input type="search" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}">
+      </label>
+      ${region ? `<label class="overview-select"><select aria-label="Region"><option value="">All Region</option>${overviewRegions.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join("")}</select></label>` : ""}
+      ${status ? `<label class="overview-select"><select aria-label="Status"><option value="">All Status</option>${overviewStatuses.map((s) => `<option value="${esc(s)}">${esc(STATUS_LABEL[s] || words(s))}</option>`).join("")}</select></label>` : ""}
+    </div>`;
   view.innerHTML = howto({
   answers: "<b>Portfolio view across all regions</b> — decisions, request outcomes, and revenue impact.",
   steps: [
@@ -122,15 +129,27 @@ PAGES["/overview"] = async (view) => {
     ${kpi("Revenue loss", money(k.exposure), `attributed to ${k.failed} failed requests`, "bad", "Microsoft revenue, not the customer\u2019s own. Each customer\u2019s ARR, apportioned by the share of their request left unfulfilled and how long it stayed unfulfilled. A severity ranking, not money written off.")}
   </div>
 
-  ${panel(`Request outcomes — ${num(k.failed)} of ${num(k.total)} require action`, `
-    <div class="funnel">
-      <div class="grp">In scope — ${num(k.failed)} failures</div>
-      ${step(c.denied_then_approved_late || 0, L.denied_then_approved_late, "wash")}
-      ${step(c.denied_unfulfilled || 0, L.denied_unfulfilled, "bad")}
-      <div class="grp" style="margin-top:1.1rem">Out of scope — ${num(handled)} handled within SLA</div>
-      ${step(handled, `Approved on the first pass or inside the customer's SLA`, "ok")}
-    </div>
-    <p style="color:var(--ink-2);font-size:.82rem;margin:0 1.15rem 1.15rem">
+  <section class="panel outcomes-panel">
+    <header><h3>Request outcomes — ${num(k.failed)} of ${num(k.total)} require action</h3>
+      <label class="outcomes-filter">
+        <select aria-label="Region"><option>All Region</option>
+          ${(d.regions || []).map((r) => `<option>${esc(r.region)}</option>`).join("")}
+        </select>
+      </label>
+    </header>
+    <div class="outcomes-body">
+      <div class="outcomes-chart" aria-label="${num(k.total)} total requests: ${num(c.denied_then_approved_late || 0)} denied then approved late, ${num(c.denied_unfulfilled || 0)} not approved, and ${num(handled)} approved within SLA" role="img">
+        <div class="outcomes-donut" style="--late:${(c.denied_then_approved_late || 0) / total * 100}%;--unfulfilled:${(c.denied_unfulfilled || 0) / total * 100}%">
+          <strong>${num(k.total)}</strong><span>Total requests</span>
+        </div>
+      </div>
+      <div class="outcomes-legend">
+        <div class="outcome-item"><i class="outcome-dot late"></i><b>${num(c.denied_then_approved_late || 0)}</b><span>${esc(L.denied_then_approved_late)}</span></div>
+        <div class="outcome-item"><i class="outcome-dot unfulfilled"></i><b>${num(c.denied_unfulfilled || 0)}</b><span>${esc(L.denied_unfulfilled)}</span></div>
+        <div class="outcome-item"><i class="outcome-dot handled"></i><b>${num(handled)}</b><span>Approved on the first pass or inside the customer's SLA</span></div>
+      </div>
+      <div class="outcomes-note">
+        <p>
       Only the two amber and red rows are targets. A request approved on the
       first pass, and one denied then approved inside that customer's SLA, are
       both normal turnaround — they are shown as a single line for reconciliation
@@ -146,8 +165,10 @@ PAGES["/overview"] = async (view) => {
       were approved in the end and only ${num(c.denied_unfulfilled || 0)} never
       were. The ${num(c.denied_then_approved_late || 0)} above is a <i>delay</i>
       that breached SLA, not a refusal.
-    </p>
-  `, { flush: true })}
+        </p>
+      </div>
+    </div>
+  </section>
 
   ${/* Three views of the same period, in one panel rather than stacked down
         the page. Read as three separate cards, the third sat a page-length
@@ -157,11 +178,11 @@ PAGES["/overview"] = async (view) => {
       label: "Demand by region",
       count: d.regionDistribution?.length || 0,
       hint: "highest volume first · click a row for detail",
-      body: `<div class="scroll-x"><table>
+      body: `${overviewFilter("ov-demand-filter", "Search regions (e.g., requests...)", { region: true })}<div class="scroll-x"><table>
         <thead><tr><th>Region</th><th class="n">Requests</th><th class="n">Share</th>
           <th class="n">Failed</th><th class="n">Customers</th>
           <th class="n">Data centres</th><th>Volume</th></tr></thead>
-        <tbody>${(d.regionDistribution || []).map((r) => `<tr class="clickable" data-region="${esc(r.region)}">
+        <tbody>${(d.regionDistribution || []).map((r) => `<tr class="clickable" data-region="${esc(r.region)}" data-search="${esc(`${r.region} ${r.requests} ${r.sharePct}`)}">
           <td><b>${esc(r.region)}</b></td>
           <td class="n">${num(r.requests)}</td>
           <td class="n">${pct(r.sharePct, 1)}</td>
@@ -175,10 +196,10 @@ PAGES["/overview"] = async (view) => {
       label: "Denial reasons",
       count: d.reasons?.length || 0,
       hint: "the fix depends on the cause",
-      body: `<div class="scroll-x"><table>
+      body: `${overviewFilter("ov-reasons-filter", "Search regions (e.g., requests, share...)")}<div class="scroll-x"><table>
         <thead><tr><th>Reason</th><th class="n">Incidents</th><th class="n">Share</th>
           <th>Definition</th><th>Recommended action</th></tr></thead>
-        <tbody>${(d.reasons || []).map((r) => `<tr>
+        <tbody>${(d.reasons || []).map((r) => `<tr data-search="${esc(`${r.reason} ${r.detail} ${r.action}`)}">
           <td><b>${esc(r.reason)}</b>${r.needsHuman
             ? ` <span class="pill warn">manual review</span>` : ""}</td>
           <td class="n">${num(r.count)}</td>
@@ -196,13 +217,13 @@ PAGES["/overview"] = async (view) => {
       label: "Regions requiring action",
       count: attention.length,
       hint: "click a row for detail",
-      body: attention.length ? `<div class="scroll-x"><table>
+      body: attention.length ? `${overviewFilter("ov-attention-filter", "Search regions (e.g., requests, share...)", { region: true, status: true })}<div class="scroll-x"><table>
         <thead><tr>
           <th>Region</th><th>Status</th><th>Flag rationale</th>
           <th class="n">Days to decide</th><th class="n">Revenue loss</th>
           <th>Why those requests failed</th><th class="n">Failed</th>
         </tr></thead>
-        <tbody>${attention.map((r) => `<tr class="clickable" data-region="${esc(r.region)}">
+        <tbody>${attention.map((r) => `<tr class="clickable" data-region="${esc(r.region)}" data-search="${esc(`${r.region} ${r.reason} ${r.status} ${r.failed}`)}" data-filter-region="${esc(r.region)}" data-filter-status="${esc(r.status)}">
           <td><b>${esc(r.region)}</b></td>
           <td>${statusPill(r.status)}<br>${refusingNow(r.throttling)}</td>
           <td class="why">${esc(r.reason)}</td>
@@ -219,6 +240,25 @@ PAGES["/overview"] = async (view) => {
 
   view.querySelectorAll("tr[data-region]").forEach((tr) =>
     (tr.onclick = () => navigate(`/region/${encodeURIComponent(tr.dataset.region)}`)));
+
+  view.querySelectorAll(".overview-filter").forEach((bar) => {
+    const search = bar.querySelector("input");
+    const selects = [...bar.querySelectorAll("select")];
+    const table = bar.nextElementSibling?.querySelector("table");
+    if (!table) return;
+    const apply = () => {
+      const term = search.value.trim().toLowerCase();
+      const region = selects.find((select) => select.getAttribute("aria-label") === "Region")?.value || "";
+      const status = selects.find((select) => select.getAttribute("aria-label") === "Status")?.value || "";
+      [...table.tBodies[0].rows].forEach((row) => {
+        row.hidden = !!(term && !(row.dataset.search || "").toLowerCase().includes(term))
+          || !!(region && row.dataset.filterRegion !== region)
+          || !!(status && row.dataset.filterStatus !== status);
+      });
+    };
+    search.addEventListener("input", apply);
+    selects.forEach((select) => select.addEventListener("change", apply));
+  });
 };
 
 /* ==================================================================== 2/6 */
@@ -2191,12 +2231,16 @@ PAGES["/regions"] = async (view) => {
     });
 
     /*
-     * Sorting arrow.
+     * Sorting arrow — every column shows a caret so it is obvious they all
+     * sort on click. The active column gets a solid marker; the others stay
+     * quiet until hovered or selected.
      */
-    const arrow = (c) =>
-      c.key === sort.key
-        ? (sort.asc ? " ▲" : " ▼")
-        : "";
+    const arrow = (c) => {
+      const on = c.key === sort.key;
+      const dir = on ? (sort.asc ? "asc" : "desc") : "idle";
+      const glyph = on ? (sort.asc ? "▲" : "▼") : "▾";
+      return `<span class="sort-ind ${dir}" aria-hidden="true">${glyph}</span>`;
+    };
 
     /*
      * Preserve filter state before rebuilding the table.
@@ -2252,11 +2296,17 @@ PAGES["/regions"] = async (view) => {
               <tr>
                 ${COLS.map((c) => `
                   <th
-                    class="${c.numeric ? "n " : ""}sortable"
+                    class="${c.numeric ? "n " : ""}sortable${c.key === sort.key ? " sorted" : ""}"
                     data-sort="${c.key}"
-                    style="cursor:pointer;user-select:none"
+                    scope="col"
+                    tabindex="0"
+                    role="columnheader"
+                    aria-sort="${c.key === sort.key
+                      ? (sort.asc ? "ascending" : "descending")
+                      : "none"}"
+                    title="Click to sort by ${esc(c.label)}"
                   >
-                    ${esc(c.label)}${arrow(c)}
+                    <span class="th-sort-label">${esc(c.label)}</span>${arrow(c)}
                   </th>
                 `).join("")}
               </tr>
@@ -2310,7 +2360,7 @@ PAGES["/regions"] = async (view) => {
         </div>`,
 
         {
-          hint: "click a row for detail",
+          hint: "click a column to sort · click a row for detail",
           flush: true
         }
       );
@@ -2319,31 +2369,33 @@ PAGES["/regions"] = async (view) => {
      * Wire table column sorting.
      *
      * Sorting rebuilds the table, so these handlers have to be
-     * attached every time draw() runs.
+     * attached every time draw() runs. Same column toggles direction;
+     * a new column starts useful-end-first (A→Z for names, high→low
+     * for the CU / utilisation figures).
      */
+    function sortBy(key) {
+      if (sort.key === key) {
+        sort.asc = !sort.asc;
+      } else {
+        sort.key = key;
+        sort.asc = key === "region";
+      }
+      draw();
+    }
+
     $("region-table")
       .querySelectorAll("th[data-sort]")
       .forEach((th) => {
-        th.onclick = () => {
-          const key = th.dataset.sort;
-
-          if (sort.key === key) {
-            /*
-             * Clicking the same column reverses the order.
-             */
-            sort.asc = !sort.asc;
-          } else {
-            /*
-             * New columns start ascending.
-             *
-             * Utilisation is the exception:
-             * highest utilisation first is more useful.
-             */
-            sort.key = key;
-            sort.asc = key !== "util";
+        th.onclick = (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          sortBy(th.dataset.sort);
+        };
+        th.onkeydown = (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            sortBy(th.dataset.sort);
           }
-
-          draw();
         };
       });
 
@@ -3559,45 +3611,116 @@ PAGES["/datacentres"] = async (view) => {
       allLabel: "All regions",
       options: [...new Set(d.datacentres.map((x) => x.region))].sort(),
     })
-    + `<div class="scroll-x"><table>
+    + `<div class="scroll-x"><table id="dc-table">
     <thead><tr>
-      <th>Region</th>
-      <th>Data centre</th>
+      ${th("Region", "Azure region this building sits in. Several data centres can "
+         + "share a region; scaling is always per capacity in a building, never for "
+         + "the region as a whole.", "", "region")}
+      ${th("Data centre", "The facility itself \u2014 the unit a capacity decision is "
+         + "taken against. Click the row for its forecast, SKU mix and incident list.",
+         "", "datacentre")}
       ${th("SKU", "The Fabric SKUs deployed in this building. Open a row to see "
          + "each one on its own line — CU does not pool between capacities, so "
-         + "an F64 at 40% does not lend headroom to an F8 that is throttling.")}
-      <th class="n">Capacities</th>
-      <th class="n">Total CU</th>
-      <th class="n">Utilised CU</th>
+         + "an F64 at 40% does not lend headroom to an F8 that is throttling.",
+         "", "sku")}
+      ${th("Capacities", "How many Fabric capacities run in this building, with their "
+         + "total Capacity Units underneath. Each capacity is sized to one SKU and "
+         + "does not share CU with its neighbours.", "n", "capacities")}
+      ${th("Total CU", "Capacity Units deployed across every Fabric capacity in this "
+         + "building. The ceiling the utilisation and threshold columns are measured "
+         + "against.", "n", "totalCu")}
+      ${th("Utilised CU", "Capacity Units currently in use at this site. Paired with "
+         + "Total CU it is the same ratio shown as Utilisation, expressed in absolute "
+         + "units rather than a percentage.", "n", "utilisedCu")}
       ${th("Utilisation", "Capacity Units in use over Capacity Units deployed at this "
          + "site. Unlike the region average above it, this is the figure a decision "
-         + "is actually taken on.", "n")}
+         + "is actually taken on.", "n", "utilisation")}
       ${th("Threshold", "The planning line the buy decision is taken against, fixed at "
          + "80% for every site so that \u2018overdue\u2019 means the same thing in every "
          + "row. Each building also has its own safety threshold, between 82.5% and 90%, "
-         + "which is what its forecast is judged against on its own page.", "n")}
+         + "which is what its forecast is judged against on its own page.", "n", "threshold")}
       ${th("Growth", "Percentage points of utilisation added per week, as the "
          + "least-squares trend of this building\u2019s own daily record. There is no "
          + "growth column in the source data \u2014 this is derived from the 150 days of "
-         + "CU consumption behind it, not read from a field.", "n")}
+         + "CU consumption behind it, not read from a field.", "n", "growth")}
       ${th("Lead time", "How long capacity takes to arrive once ordered. Fixed at 12 "
-         + "weeks across the estate.", "n")}
+         + "weeks across the estate.", "n", "leadTime")}
       ${th("Weeks to decide", "How long until this site reaches the 80% planning line at "
          + "its current growth rate. A dash means it is flat or shrinking, so there is no "
-         + "date to work back from.", "n")}
+         + "date to work back from.", "n", "weeksToDecide")}
       ${th("Status", "Overdue when the runway is shorter than the 12-week lead time \u2014 "
          + "capacity ordered today would arrive after the line is crossed, so the "
-         + "decision is already late.")}
+         + "decision is already late.", "", "status")}
       ${/* No Procurement column. It named a purchase -- "buy an F8" -- that
             Fabric does not have: you do not order capacity for a building, you
             scale the F SKU on a capacity, which is what the per-SKU rows
             underneath each site already say and what the site's own page
             recommends. The endpoint still computes `procureSku` and its
             shortfall; nothing on this table reads them. */""}
-      <th class="n">Requests</th><th class="n">Failed</th><th class="n">Customers</th>
-      <th class="n">Revenue loss</th><th>Primary denial reason</th><th>Risk score</th></tr></thead>
-    <tbody>${d.datacentres.map((x) => `<tr class="clickable" data-dc="${esc(x.datacentre)}"
+      ${th("Requests", "Capacity requests raised against this facility in the extract.",
+         "n", "requests")}
+      ${th("Failed", "Requests that were delayed past the 48-hour cut-off or never "
+         + "fulfilled. These are the rows that feed the revenue-loss figure.", "n", "failed")}
+      ${th("Customers", "Distinct customers with at least one request attributed to "
+         + "this facility.", "n", "customers")}
+      ${th("Revenue loss", "Risk-adjusted exposure from failed requests at this site "
+         + "\u2014 ARR \u00d7 capacity share \u00d7 days unavailable \u00f7 365. "
+         + "Illustrative while the ARR reference is placeholder data.", "n", "revenue")}
+      ${th("Primary denial reason", "The most frequent denial cause at this facility "
+         + "\u2014 the fastest indicator of whether the constraint is capacity, "
+         + "licensing or policy.", "", "reason")}
+      ${th("Risk score", "Composite score from this site\u2019s own incidents and "
+         + "utilisation. The highest-weighted component is named on the site page.",
+         "", "risk")}
+    </tr></thead>
+    <tbody>${d.datacentres.map((x) => {
+      const skuLabel = (x.skus && x.skus.length)
+        ? x.skus.map((s) => s.capacityCount > 1 ? `${s.capacityCount}×${s.sku}` : s.sku).join(" ")
+        : "—";
+      const growthLabel = x.growthPctPerWeek == null ? "—"
+        : (x.growthPctPerWeek > 0 ? "+" : "") + x.growthPctPerWeek.toFixed(2) + " pp/wk";
+      const weeksLabel = x.weeksToDecide == null ? "—"
+        : x.weeksToDecide <= 0 ? "now" : x.weeksToDecide.toFixed(1) + " wks";
+      const statusLabel = x.planningStatus === "overdue" ? "Overdue" : "OK";
+      const riskLabel = x.risk ? `${x.risk.score.toFixed(1)} ${x.risk.band}` : "—";
+      return `<tr class="clickable" data-dc="${esc(x.datacentre)}"
       data-region="${esc(x.region)}" data-filter="${esc(x.region)}"
+      data-cf-region="${esc(x.region)}"
+      data-cf-datacentre="${esc(x.datacentre)}"
+      data-cf-sku="${esc(skuLabel)}"
+      data-cf-capacities="${esc(x.capacityCount == null ? "—" : String(x.capacityCount))}"
+      data-cf-totalCu="${esc(String(Math.round(x.totalCU)))}"
+      data-cf-utilisedCu="${esc(cu1(x.utilisedCU))}"
+      data-cf-utilisation="${esc(pct(x.siteUtilisationPct, 1))}"
+      data-cf-threshold="${esc(pct(x.planningThresholdPct, 0))}"
+      data-cf-growth="${esc(growthLabel)}"
+      data-cf-leadTime="${esc(`${x.leadTimeWeeks}w`)}"
+      data-cf-weeksToDecide="${esc(weeksLabel)}"
+      data-cf-status="${esc(statusLabel)}"
+      data-cf-requests="${esc(String(x.requests ?? 0))}"
+      data-cf-failed="${esc(x.failed ? String(x.failed) : "—")}"
+      data-cf-customers="${esc(String(x.customers ?? 0))}"
+      data-cf-revenue="${esc(x.revenueLoss ? money(x.revenueLoss) : "—")}"
+      data-cf-reason="${esc(x.topReason || "—")}"
+      data-cf-risk="${esc(riskLabel)}"
+      data-sv-region="${esc(x.region)}"
+      data-sv-datacentre="${esc(x.datacentre)}"
+      data-sv-sku="${esc(skuLabel)}"
+      data-sv-capacities="${x.capacityCount == null ? "" : esc(String(x.capacityCount))}"
+      data-sv-totalCu="${esc(String(x.totalCU ?? 0))}"
+      data-sv-utilisedCu="${esc(String(x.utilisedCU ?? 0))}"
+      data-sv-utilisation="${esc(String(x.siteUtilisationPct ?? 0))}"
+      data-sv-threshold="${esc(String(x.planningThresholdPct ?? 0))}"
+      data-sv-growth="${x.growthPctPerWeek == null ? "" : esc(String(x.growthPctPerWeek))}"
+      data-sv-leadTime="${esc(String(x.leadTimeWeeks ?? 0))}"
+      data-sv-weeksToDecide="${x.weeksToDecide == null ? "" : esc(String(x.weeksToDecide))}"
+      data-sv-status="${esc(statusLabel)}"
+      data-sv-requests="${esc(String(x.requests ?? 0))}"
+      data-sv-failed="${esc(String(x.failed ?? 0))}"
+      data-sv-customers="${esc(String(x.customers ?? 0))}"
+      data-sv-revenue="${esc(String(x.revenueLoss ?? 0))}"
+      data-sv-reason="${esc(x.topReason || "")}"
+      data-sv-risk="${esc(String(x.risk?.score ?? 0))}"
       ${/* No `procureSku` here either: matching on a column the reader cannot
             see means typing "F8" pulls up a site with no F8 anywhere on its
             row. The SKUs it actually holds are still matched. */""}
@@ -3638,8 +3761,9 @@ PAGES["/datacentres"] = async (view) => {
       <td class="n">${x.revenueLoss ? money(x.revenueLoss) : "—"}</td>
       <td>${x.topReason ? esc(x.topReason) : "—"}</td>
       <td class="risk-cell">${riskCell(x.risk)}</td>
-    </tr>${dcSkuRows(x)}`).join("")}</tbody></table></div>`,
-    { hint: "click a row for detail · open a row for its SKUs", flush: true })}
+    </tr>${dcSkuRows(x)}`;
+    }).join("")}</tbody></table></div>`,
+    { hint: "click a column name to sort · click a row for detail", flush: true })}
   <div id="dc-detail"></div>`;
 
   view.querySelectorAll("tr[data-dc]").forEach((tr) =>
@@ -3666,13 +3790,22 @@ PAGES["/datacentres"] = async (view) => {
     });
   });
 
-  /* 110 sites is past the point where scrolling is a way of finding one. The
-     search matches the site name, its region, its denial reason and its SKUs
-     together, so "westeurope", "throttl" and "F64" all narrow the list; the
-     dropdown cuts to a single region, which is the question this page is most
-     often opened with. */
-  wireFilter("dc-filter", "#view tr[data-dc]", {
+  /* Search narrows the list; clicking a column name sorts ascending /
+     descending. Per-SKU rows stay attached to their parent when rows move. */
+  const dcTable = $("dc-table");
+  const applyAll = wireFilter("dc-filter", "#view tr[data-dc]", {
     noun: "data centres", onApply: syncSkuRows,
+  });
+  wireTableSort(dcTable, "#view tr[data-dc]", {
+    defaultKey: "risk",
+    defaultAsc: false,
+    numericKeys: [
+      "capacities", "totalCu", "utilisedCu", "utilisation", "threshold",
+      "growth", "leadTime", "weeksToDecide", "requests", "failed",
+      "customers", "revenue", "risk",
+    ],
+    groupAfter: (tr) => [...view.querySelectorAll(`tr[data-sub="${tr.dataset.dc}"]`)],
+    onSorted: () => applyAll && applyAll(),
   });
 };
 /* ==================================================================== deep */

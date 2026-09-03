@@ -403,9 +403,19 @@ function wireInfo() {
   window.addEventListener("scroll", hide, { passive: true });
 }
 
-/* Column heading with its own explanation. */
-function th(label, help, cls = "") {
-  return `<th${cls ? ` class="${cls}"` : ""}>${esc(label)}${help ? info(help) : ""}</th>`;
+/* Column heading with its own explanation and optional click-to-sort.
+   One caret only — click the name to toggle ascending / descending. */
+function th(label, help, cls = "", colKey = null) {
+  const classes = [cls, colKey ? "sortable" : ""].filter(Boolean).join(" ");
+  const labelHtml = colKey
+    ? `<button type="button" class="th-sort-btn" aria-label="Sort by ${esc(label)}">
+         <span class="th-label">${esc(label)}</span>
+         <span class="sort-ind idle" aria-hidden="true">▾</span>
+       </button>`
+    : `<span class="th-label">${esc(label)}</span>`;
+  return `<th${classes ? ` class="${classes}"` : ""}${
+    colKey ? ` data-sort="${esc(colKey)}" title="Click to sort by ${esc(label)}"` : ""}><span class="th-inner">
+    ${labelHtml}${help ? info(help) : ""}</span></th>`;
 }
 
 /* A search box and one dropdown, above a table.
@@ -456,8 +466,12 @@ function filterBar(id, { placeholder = "Search…", options = [],
 }
 
 /* Wires a `filterBar` to the rows beneath it. Returns the apply function so a
-   page can re-run it after redrawing its own table. */
-function wireFilter(id, rowSelector, { total = null, noun = "rows", onApply = null } = {}) {
+   page can re-run it after redrawing its own table.
+
+   `rowMatch(tr)` is optional: column filters (wireColFilters) pass one so the
+   search bar and the per-column menus share a single hide/show pass. */
+function wireFilter(id, rowSelector, { total = null, noun = "rows", onApply = null,
+                                       rowMatch = null } = {}) {
   const box = $(`${id}-q`), list = $(`${id}-list`), count = $(`${id}-count`);
   const toggle = $(`${id}-toggle`), clear = $(`${id}-clear`);
   if (!box) return () => {};
@@ -485,20 +499,24 @@ function wireFilter(id, rowSelector, { total = null, noun = "rows", onApply = nu
     const term = picked ? "" : box.value.trim().toLowerCase();
     const rows = [...document.querySelectorAll(rowSelector)];
     let shown = 0;
+    const anyCol = typeof rowMatch === "function" && rowMatch.active && rowMatch.active();
     rows.forEach((tr) => {
       const hay = (tr.dataset.search || tr.textContent || "").toLowerCase();
       const ok = (!term || hay.includes(term))
-              && (!picked || (tr.dataset.filter || "") === picked);
+              && (!picked || (tr.dataset.filter || "") === picked)
+              && (typeof rowMatch !== "function" || rowMatch(tr));
       tr.hidden = !ok;
       if (ok) shown++;
     });
     const all = total ?? rows.length;
     clear.hidden = !(box.value || picked);
     // Silent when nothing is filtered: a count that never moves is noise.
-    count.textContent = (term || picked)
+    // Column filters alone also update the count — otherwise a narrowed table
+    // looks unchanged above the fold.
+    count.textContent = (term || picked || anyCol)
       ? (shown ? `${shown} of ${all} ${noun}` : `No ${noun} match`)
       : "";
-    count.classList.toggle("empty-result", !!(term || picked) && !shown);
+    count.classList.toggle("empty-result", !!(term || picked || anyCol) && !shown);
     // A page with nested detail rows (e.g. the per-SKU rows under a data
     // centre) keeps them in step with their parent here.
     if (onApply) onApply();
@@ -534,6 +552,292 @@ function wireFilter(id, rowSelector, { total = null, noun = "rows", onApply = nu
 
   apply();
   return apply;
+}
+
+/* Per-column filter menus on a table header.
+
+   Each `<th data-col-filter="key">` gets a caret that opens a checklist of the
+   distinct values in that column (read from `data-cf-<key>` on each row). A
+   column with every value checked is treated as unfiltered. Returns a
+   `match(tr)` predicate for wireFilter so search and column menus AND together. */
+function wireColFilters(table, rowSelector, { onChange = null } = {}) {
+  if (!table) return Object.assign(() => true, { active: () => false });
+
+  // key -> Set of selected values, or null when the column is fully open.
+  const selected = new Map();
+
+  let panel = document.getElementById("col-filter-panel");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.id = "col-filter-panel";
+    panel.className = "col-filter-panel";
+    panel.hidden = true;
+    document.body.appendChild(panel);
+  }
+
+  let openKey = null;
+  let openBtn = null;
+
+  function active() {
+    for (const set of selected.values()) {
+      if (set) return true;
+    }
+    return false;
+  }
+
+  function match(tr) {
+    for (const [key, set] of selected) {
+      if (!set) continue;
+      const val = tr.getAttribute(`data-cf-${key}`) ?? "";
+      if (!set.has(val)) return false;
+    }
+    return true;
+  }
+  match.active = active;
+
+  function close() {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    if (openBtn) openBtn.setAttribute("aria-expanded", "false");
+    openBtn = null;
+    openKey = null;
+  }
+
+  function valuesFor(key) {
+    const rows = [...document.querySelectorAll(rowSelector)];
+    const seen = new Map();
+    rows.forEach((tr) => {
+      const raw = tr.getAttribute(`data-cf-${key}`);
+      const val = raw == null ? "" : raw;
+      if (!seen.has(val)) seen.set(val, val === "" ? "(blank)" : val);
+    });
+    return [...seen.entries()].sort((a, b) =>
+      String(a[1]).localeCompare(String(b[1]), undefined, { numeric: true }));
+  }
+
+  function paintBtn(key) {
+    const btn = table.querySelector(`th[data-col-filter="${key}"] .col-filter-btn`);
+    if (btn) btn.classList.toggle("on", !!selected.get(key));
+  }
+
+  function open(btn, key) {
+    if (openKey === key) { close(); return; }
+    close();
+    openKey = key;
+    openBtn = btn;
+    btn.setAttribute("aria-expanded", "true");
+
+    const opts = valuesFor(key);
+    const cur = selected.get(key);
+    const checked = (val) => !cur || cur.has(val);
+
+    panel.innerHTML = `
+      <div class="col-filter-head">
+        <input type="search" class="col-filter-q" placeholder="Search values…"
+          aria-label="Search filter values" autocomplete="off">
+        <div class="col-filter-actions">
+          <button type="button" data-act="all">Select all</button>
+          <button type="button" data-act="none">Clear</button>
+        </div>
+      </div>
+      <ul class="col-filter-list" role="listbox" aria-multiselectable="true">
+        ${opts.map(([val, label]) => `
+          <li>
+            <label>
+              <input type="checkbox" value="${esc(val)}" ${checked(val) ? "checked" : ""}>
+              <span>${esc(label)}</span>
+            </label>
+          </li>`).join("")}
+      </ul>
+      <div class="col-filter-foot">
+        <button type="button" class="btn" data-act="apply">Apply</button>
+      </div>`;
+
+    const rect = btn.getBoundingClientRect();
+    panel.hidden = false;
+    const pw = panel.offsetWidth || 220;
+    let left = rect.left;
+    if (left + pw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - pw - 8);
+    let top = rect.bottom + 4;
+    if (top + panel.offsetHeight > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - panel.offsetHeight - 4);
+    }
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+
+    const q = panel.querySelector(".col-filter-q");
+    q.focus();
+    q.addEventListener("input", () => {
+      const term = q.value.trim().toLowerCase();
+      panel.querySelectorAll(".col-filter-list li").forEach((li) => {
+        li.hidden = !!term && !li.textContent.toLowerCase().includes(term);
+      });
+    });
+
+    panel.onclick = (ev) => {
+      const act = ev.target.closest("[data-act]")?.dataset.act;
+      if (!act) return;
+      const boxes = [...panel.querySelectorAll('.col-filter-list input[type="checkbox"]')];
+      if (act === "all") boxes.forEach((c) => { c.checked = true; });
+      if (act === "none") boxes.forEach((c) => { c.checked = false; });
+      if (act === "apply") {
+        const picked = boxes.filter((c) => c.checked).map((c) => c.value);
+        if (picked.length === 0 || picked.length === opts.length) {
+          selected.set(key, null);
+        } else {
+          selected.set(key, new Set(picked));
+        }
+        paintBtn(key);
+        close();
+        if (onChange) onChange();
+      }
+    };
+  }
+
+  table.querySelectorAll("th[data-col-filter] .col-filter-btn").forEach((btn) => {
+    const key = btn.closest("th").dataset.colFilter;
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      open(btn, key);
+    });
+  });
+
+  if (!document.__colFilterWired) {
+    document.__colFilterWired = true;
+    document.addEventListener("click", (ev) => {
+      const p = document.getElementById("col-filter-panel");
+      if (!p || p.hidden) return;
+      if (p.contains(ev.target)) return;
+      if (ev.target.closest?.(".col-filter-btn")) return;
+      p.hidden = true;
+      p.innerHTML = "";
+      document.querySelectorAll(".col-filter-btn[aria-expanded='true']")
+        .forEach((b) => b.setAttribute("aria-expanded", "false"));
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Escape") return;
+      const p = document.getElementById("col-filter-panel");
+      if (!p || p.hidden) return;
+      p.hidden = true;
+      p.innerHTML = "";
+      document.querySelectorAll(".col-filter-btn[aria-expanded='true']")
+        .forEach((b) => b.setAttribute("aria-expanded", "false"));
+    });
+  }
+
+  return match;
+}
+
+/* Click-to-sort on column headers that carry `data-sort`.
+
+   Sorts the matching rows in the DOM (no refetch). When `groupAfter(tr)` is
+   set, satellite rows (e.g. per-SKU breakdown under a data centre) travel with
+   their parent so the table never splits a group. Raw compare values live in
+   `data-sv-<key>` — prefer numbers there so "96.0%" sorts as 96, not as text. */
+function wireTableSort(table, rowSelector, {
+  defaultKey = null,
+  defaultAsc = true,
+  numericKeys = [],
+  groupAfter = null,
+  onSorted = null,
+} = {}) {
+  if (!table) return;
+  const numeric = new Set(numericKeys);
+  const state = {
+    key: defaultKey,
+    asc: defaultAsc,
+  };
+
+  function valueOf(tr, key) {
+    const raw = tr.getAttribute(`data-sv-${key}`);
+    if (raw == null || raw === "") return numeric.has(key) ? null : "";
+    if (numeric.has(key)) {
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : null;
+    }
+    return raw;
+  }
+
+  function paint() {
+    table.querySelectorAll("th[data-sort]").forEach((th) => {
+      const on = th.dataset.sort === state.key;
+      th.classList.toggle("sorted", on);
+      th.setAttribute("aria-sort",
+        on ? (state.asc ? "ascending" : "descending") : "none");
+      const ind = th.querySelector(".sort-ind");
+      if (!ind) return;
+      ind.className = `sort-ind ${on ? (state.asc ? "asc" : "desc") : "idle"}`;
+      ind.textContent = on ? (state.asc ? "▲" : "▼") : "▾";
+    });
+  }
+
+  function apply() {
+    if (!state.key) { paint(); return; }
+    const tbody = table.tBodies[0];
+    if (!tbody) return;
+    const rows = [...tbody.querySelectorAll(rowSelector)];
+    const key = state.key;
+    const asc = state.asc;
+    const isNum = numeric.has(key);
+
+    rows.sort((a, b) => {
+      const x = valueOf(a, key);
+      const y = valueOf(b, key);
+      let cmp;
+      if (isNum) {
+        const xn = x == null, yn = y == null;
+        if (xn && yn) cmp = 0;
+        else if (xn) cmp = 1;
+        else if (yn) cmp = -1;
+        else cmp = x - y;
+      } else {
+        cmp = String(x).localeCompare(String(y), undefined, { numeric: true });
+      }
+      return asc ? cmp : -cmp;
+    });
+
+    const frag = document.createDocumentFragment();
+    rows.forEach((tr) => {
+      frag.appendChild(tr);
+      if (groupAfter) {
+        const sats = groupAfter(tr);
+        if (sats && sats.length) sats.forEach((s) => frag.appendChild(s));
+      }
+    });
+    tbody.appendChild(frag);
+    paint();
+    if (onSorted) onSorted();
+  }
+
+  table.querySelectorAll("th[data-sort] .th-sort-btn").forEach((btn) => {
+    btn.onclick = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const th = btn.closest("th[data-sort]");
+      if (!th) return;
+      const key = th.dataset.sort;
+      if (state.key === key) state.asc = !state.asc;
+      else {
+        state.key = key;
+        // Numbers: high first. Names: A→Z.
+        state.asc = !numeric.has(key);
+      }
+      apply();
+    };
+  });
+
+  // Allow clicking the th padding (not only the label button).
+  table.querySelectorAll("th[data-sort]").forEach((th) => {
+    th.addEventListener("click", (ev) => {
+      if (ev.target.closest(".info, .th-sort-btn")) return;
+      const btn = th.querySelector(".th-sort-btn");
+      if (btn) btn.click();
+    });
+  });
+
+  apply();
+  return { apply, state };
 }
 
 function panel(heading, inner, { hint = "", flush = false } = {}) {
