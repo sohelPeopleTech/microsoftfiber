@@ -115,7 +115,7 @@ def capacity_inventory(dim_region: pd.DataFrame,
     worth, and the tests hold it to that.
 
     Hardware class varies between the sites of a region. The UI already tells
-    readers that "a region holds ten data centres that may run Intel, AMD or
+    readers that "a region holds ten capacity pools that may run Intel, AMD or
     GPU-class"; until now the data made that sentence false.
     """
     rng = _rng(11)

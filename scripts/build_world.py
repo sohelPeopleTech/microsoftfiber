@@ -128,7 +128,7 @@ with open(out, "w") as fh:
         f"const WORLD_PATH = \"{blob}\";\n"
         "\n"
         "/* Full extent is 360x180. The map is drawn cropped: Antarctica is gone\n"
-        "   and there are no data centres above the Arctic circle, so a third of\n"
+        "   and there are no capacity pools above the Arctic circle, so a third of\n"
         "   the full frame is empty ocean that only shrinks everything else. */\n"
         "const WORLD_VIEWBOX = { x: 0, y: 16, w: 360, h: 132 };\n"
     )

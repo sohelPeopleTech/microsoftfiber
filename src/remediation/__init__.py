@@ -160,7 +160,7 @@ def _scale_remediation(entities, site, reason: str, count: int) -> tuple[str, li
     here = caps[caps["DatacentreId"].astype(str) == dc]
     if here.empty:
         return (f"{count} request(s) failed at {dc} for {reason.lower()}. "
-                f"No Fabric capacities are recorded in this data centre."), []
+                f"No Fabric capacities are recorded in this capacity pool."), []
 
     health = recommend._health(entities).set_index("CapacityId")
 

@@ -578,7 +578,7 @@ def test_a_healthy_region_that_carries_loss_did_not_run_out_of_capacity():
         c = r["failureCause"]
         assert c["landedOnAFullSite"] == 0, (
             f"{r['region']} is {r['status']} but {c['landedOnAFullSite']} of its "
-            f"failures landed on a data centre over its own threshold -- the "
+            f"failures landed on a capacity pool over its own threshold -- the "
             f"Overview explainer says that never happens")
 
 
@@ -596,9 +596,9 @@ def test_a_breached_region_is_allowed_to_be_a_capacity_problem():
 def test_the_failure_column_separates_where_they_failed_from_what_the_region_holds():
     """Two different questions, and conflating them printed something false.
 
-    The column said "no data centre here is over its line today" whenever no
+    The column said "no capacity pool here is over its line today" whenever no
     failure had landed on a full site. Those are not the same claim. westeurope
-    had neither of its failures on a full building *and* two data centres over
+    had neither of its failures on a full building *and* two capacity pools over
     their own line -- dc04 at 100% with nothing free -- so the Overview asserted
     something the region page disproved one click later.
 
@@ -623,7 +623,7 @@ def test_the_failure_column_separates_where_they_failed_from_what_the_region_hol
                  if r["failureCause"]["sitesOverLine"] > 0
                  and r["failureCause"]["landedOnAFullSite"] == 0]
     assert diverging, (
-        "no region holds a full data centre while its failures landed elsewhere, "
+        "no region holds a full capacity pool while its failures landed elsewhere, "
         "so the two figures are indistinguishable here and the column's wording "
         "is not being exercised")
 
@@ -632,7 +632,7 @@ def test_a_region_can_average_comfortably_and_still_hold_a_full_data_centre():
     """The thing the regional average hides, asserted rather than assumed.
 
     This is the case that made a reader distrust the page: westeurope reads
-    83.1% against a 90% line and looks fine, while one of its data centres is at
+    83.1% against a 90% line and looks fine, while one of its capacity pools is at
     100% with zero free.
     """
     for r in api.overview()["regions"]:
@@ -645,7 +645,7 @@ def test_a_region_can_average_comfortably_and_still_hold_a_full_data_centre():
             assert worst["utilisationPct"] > worst["thresholdPct"]
             return
     raise AssertionError(
-        "no region under its own line holds a data centre over that site's line -- "
+        "no region under its own line holds a capacity pool over that site's line -- "
         "the case the column exists to surface does not occur in this data")
 
 
@@ -772,13 +772,13 @@ def test_the_shortfall_is_quoted_as_a_sku_that_can_be_bought():
 
 
 # --------------------------------------------------------------------------
-# a region is the sum of its data centres
+# a region is the sum of its capacity pools
 # --------------------------------------------------------------------------
 
 
 def test_a_region_reports_the_room_left_in_the_sites_that_have_any():
-    """Review: "the threshold should be part of a data centre, not at a region
-    level. First look at a data centre, then roll it up."
+    """Review: "the threshold should be part of a capacity pool, not at a region
+    level. First look at a capacity pool, then roll it up."
 
     A region with ten sites where one is full is not constrained -- the work
     goes to one of the other nine, and a customer picks a region rather than a
@@ -837,7 +837,7 @@ def test_no_endpoint_builds_a_dict_with_the_same_key_twice():
     """Python keeps the last, so the earlier value vanishes without a word.
 
     A roll-up was added to the map marker under "sites", which already held the
-    count of data centres. The dict replaced the number, `num()` was handed an
+    count of capacity pools. The dict replaced the number, `num()` was handed an
     object, and the card read "27 capacities in 0 sites" -- correct syntax,
     correct types, wrong answer, and nothing anywhere to catch it.
     """

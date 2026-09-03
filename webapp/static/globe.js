@@ -1,7 +1,7 @@
 /* An orthographic globe, hand-authored, with no library behind it.
 
    Review asked for the map to be three-dimensional: regions on a globe, and
-   clicking one turns the globe to it and shows that region's data centres.
+   clicking one turns the globe to it and shows that region's capacity pools.
 
    The usual way to do this is three.js or globe.gl, which would be the first
    external script in an application that has none, and the first vendored
@@ -146,7 +146,7 @@ function spoke(s, hit, markerR) {
        + `y2="${(s.y - (dy / len) * far).toFixed(1)}"`;
 }
 
-/* The globe, with regions on it and optionally one region's data centres.
+/* The globe, with regions on it and optionally one region's capacity pools.
 
    `view` carries where the viewer is (lon0, lat0) and how far in (zoom), so
    the caller owns the animation and this stays a pure render. */
@@ -170,7 +170,7 @@ function globeMap(d, view, focus) {
      the true bearing and relative spacing of those coordinates, not a hash of
      the name.
 
-     The one liberty taken is scale. A data centre sits within ~75 km of its
+     The one liberty taken is scale. A capacity pool sits within ~75 km of its
      region's point, which is under a degree, and a globe cannot resolve a
      degree without zooming past the point of a globe -- ten markers would stack
      on the region dot. So the offset from the region is magnified by a constant
@@ -250,7 +250,7 @@ function globeMap(d, view, focus) {
   })();
 
   return `<svg class="chart globe" viewBox="0 0 ${S} ${S}" role="img"
-      aria-label="${hit ? `Data centres in ${esc(focus.region)}, on a globe`
+      aria-label="${hit ? `Capacity pools in ${esc(focus.region)}, on a globe`
                         : "Capacity by region, on a globe"}">
     <defs>
       <radialGradient id="globe-lit" cx="34%" cy="30%" r="78%">

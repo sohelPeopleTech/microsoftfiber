@@ -321,8 +321,8 @@ def test_the_working_out_line_reconciles_when_a_reader_checks_it():
 
 
 def test_every_ticket_is_attributed_to_a_datacentre_in_its_own_region():
-    """Region -> data centre -> ticket is the drill-down an engineer works in.
-    A ticket attributed to a data centre in the wrong region would make the
+    """Region -> capacity pool -> ticket is the drill-down an engineer works in.
+    A ticket attributed to a capacity pool in the wrong region would make the
     region totals and the data-centre totals disagree."""
     import dimensional
 
@@ -330,7 +330,7 @@ def test_every_ticket_is_attributed_to_a_datacentre_in_its_own_region():
     fact, dim = entities["fact_capacity_request"], entities["dim_datacentre"]
     by_dc = dict(zip(dim["DatacentreId"], dim["Region"], strict=True))
 
-    assert fact["DatacentreId"].notna().all(), "every ticket needs a data centre"
+    assert fact["DatacentreId"].notna().all(), "every ticket needs a capacity pool"
     for row in fact.itertuples():
         assert by_dc[row.DatacentreId] == row.Region, row.IncidentId
 
@@ -565,7 +565,7 @@ def test_methodology_publishes_the_weights_the_run_used():
 def test_every_ticket_row_carries_its_site_and_reason():
     """Module 5 loads tickets through its own ingest path, which never sees the
     two columns the dimensional model adds. Reading them off that frame with getattr
-    silently produced "" for every row -- the Data centre column rendered blank
+    silently produced "" for every row -- the Capacity pool column rendered blank
     and every Reason showed a dash, while the panel directly above the table
     listed the same reasons correctly.
     """
@@ -610,7 +610,7 @@ def test_every_explainer_supplies_every_field_it_renders():
 def test_the_scale_calculator_works_on_a_capacity_not_a_building():
     """You scale a capacity, not a country and not a building.
 
-    The calculator this replaced asked which data centre to take offline and
+    The calculator this replaced asked which capacity pool to take offline and
     which hardware class to convert it to. Fabric exposes neither, and the unit
     an admin actually changes is one capacity's F SKU.
     """
@@ -752,7 +752,7 @@ def test_every_site_in_the_region_is_listed():
     threshold. The page leads with threshold status, so a table filtered by
     failures was answering a different question from the one in the heading.
 
-    A data centre over its line with nothing yet failed is precisely the case
+    A capacity pool over its line with nothing yet failed is precisely the case
     worth seeing, because it is the one still cheap to fix.
     """
     entities = api.get_entities()
@@ -960,7 +960,7 @@ def test_no_screen_shows_a_placeholder_price_beside_a_real_one():
 
 
 def test_the_region_view_carries_a_recommendation_per_site():
-    """Review: the recommendation must sit beside the data centre scope. The
+    """Review: the recommendation must sit beside the capacity pool scope. The
     region page is where someone decides which building to open, and a cause
     on its own does not support that decision."""
     for region in api.overview()["regions"]:
@@ -1555,7 +1555,7 @@ def test_a_site_forecast_and_the_region_table_cannot_disagree():
 
     The Regions tab and the Forecast tab once each fitted their own and
     disagreed by up to ten days about the same region. The columns that moved
-    down to the data centres must not reintroduce that: `hitsThresholdIn` on the
+    down to the capacity pools must not reintroduce that: `hitsThresholdIn` on the
     region page has to be the same forecast the site page draws.
     """
     import pandas as pd
@@ -1782,7 +1782,7 @@ def test_a_facility_is_not_described_with_its_regions_utilisation():
 
 
 def test_the_assistant_sees_every_facility_not_only_the_busy_ones():
-    """Asked how many of southcentralus's data centres were over their
+    """Asked how many of southcentralus's capacity pools were over their
     threshold, the assistant answered from the 45 sites with activity while the
     region page listed all ten. A building over its line with nothing yet failed
     is exactly the one worth asking about, and it was invisible by construction."""
@@ -1827,7 +1827,7 @@ def test_the_fallback_answers_rather_than_raising():
 
 
 def test_the_assistant_is_given_counts_rather_than_asked_to_count():
-    """Asked how many data centres in southcentralus were in risk, the model
+    """Asked how many capacity pools in southcentralus were in risk, the model
     counted the facility rows itself and answered "seven" against an actual ten.
     Models read reliably and count badly, so the counts are computed here."""
     snap = api.get_snapshot()

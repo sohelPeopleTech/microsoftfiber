@@ -101,7 +101,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           }
           // Without the Foundry three the assistant falls back to a keyword
           // router, which answers a different question with the same sentence --
-          // it answered "which data centres are in risk" with the region summary
+          // it answered "which capacity pools are in risk" with the region summary
           // because both mentioned the region. Configured, it reasons over the
           // whole snapshot and its answers are checked against it.
           env: concat(

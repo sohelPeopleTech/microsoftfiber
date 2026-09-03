@@ -455,7 +455,7 @@ def _failure_causes(entities) -> dict[str, dict]:
     They can be true because the two columns look in opposite directions. The
     status is a forecast about the region's ceiling; the loss is history about
     individual requests. Across the whole extract, every failure in a region
-    that is currently green landed on a data centre that had room -- they
+    that is currently green landed on a capacity pool that had room -- they
     failed on maintenance windows, quota policy, network faults and tickets
     nobody actioned.
 
@@ -485,7 +485,7 @@ def _failure_causes(entities) -> dict[str, dict]:
         # `landedOnAFullSite` asks where the failures happened. `sitesOverLine`
         # asks what the region contains. westeurope answers 0 and 2: none of its
         # failures hit a full building, and yet dc04 sits at 100% with nothing
-        # free. The column said "no data centre here is over its line", which
+        # free. The column said "no capacity pool here is over its line", which
         # was a claim about the region made from a measurement about the
         # failures, and the region page contradicted it one click later.
         on_full = sum(1 for dc in grp["DatacentreId"].astype(str) if over_its_line(dc))
@@ -1069,7 +1069,7 @@ def _forecast(region: str, threshold: float):
 
 @lru_cache(maxsize=1)
 def _site_usage_daily():
-    """Daily utilisation per data centre, from the CU record.
+    """Daily utilisation per capacity pool, from the CU record.
 
     This endpoint used to say there was no per-site utilisation series and that
     splitting the region curve across ten buildings would draw ten identical
@@ -1184,7 +1184,7 @@ def _site_growth_rates() -> dict:
 
 @lru_cache(maxsize=1)
 def _sites_per_region() -> dict:
-    """Region -> how many data centres it holds. Every site, not only the ones
+    """Region -> how many capacity pools it holds. Every site, not only the ones
     that have seen a request: the question is how many places the region could
     place work in, and a quiet building still counts."""
     sites = get_entities()["dim_datacentre"]
@@ -1236,7 +1236,7 @@ def _site_planning(datacentre_id: str, utilisation_pct: float) -> dict:
 
 @lru_cache(maxsize=1)
 def _sku_usage_daily():
-    """Daily utilisation per (data centre, F SKU), on the CU-seconds basis.
+    """Daily utilisation per (capacity pool, F SKU), on the CU-seconds basis.
 
     `_site_usage_daily` sums the seconds across every capacity in a building;
     this does the same one level finer, so a building's F64 line and its F16
@@ -1762,7 +1762,7 @@ def _site_procurement(deployed_cu: float, used_cu: float) -> dict:
 
 
 def _site_utilisation(site) -> float:
-    """A data centre's own utilisation, from the capacities standing in it.
+    """A capacity pool's own utilisation, from the capacities standing in it.
 
     Reads `_site_cu_positions` rather than the site's `UsedUnits` column so the
     marker on the map is coloured by the same number the site's row and its SKU
@@ -1775,10 +1775,10 @@ def _site_utilisation(site) -> float:
 
 @lru_cache(maxsize=1)
 def _region_site_rollup() -> dict[str, dict]:
-    """A region read as the sum of its data centres, not as one average.
+    """A region read as the sum of its capacity pools, not as one average.
 
-    Review's objection: "the threshold should be part of a data centre, not at
-    a region level. First look at a data centre, then roll it up." A region
+    Review's objection: "the threshold should be part of a capacity pool, not at
+    a region level. First look at a capacity pool, then roll it up." A region
     holding ten sites where one is full is not a constrained region -- the work
     goes to one of the other nine, and the customer, who only ever picks a
     region, never notices. His analogy: no Home Depot in Bellevue is not a
@@ -1917,7 +1917,7 @@ def capacity_map():
     """Every region as a point, with enough to decide without opening it.
 
     The landing screen review asked for: "you yourself think you're a capacity
-    manager, you are sitting in front of all your data centres, you have your
+    manager, you are sitting in front of all your capacity pools, you have your
     map in front". A marker therefore carries the four things that would
     otherwise be four tabs -- how full, whether it crosses its line and when,
     what is waiting to be bought, and what Fabric will not run there.
@@ -1998,7 +1998,7 @@ def capacity_map():
         "asOf": str(entities["fact_usage_daily"]["Date"].max()),
         "provenance": {
             "coordinates": "REAL - Azure Resource Manager region metadata",
-            "siteCoordinates": ("GENERATED - each data centre is its region's real "
+            "siteCoordinates": ("GENERATED - each capacity pool is its region's real "
                                 "point plus a deterministic offset of up to 75 km; "
                                 "Azure publishes no per-building location"),
             "featureAvailability": "REAL - Microsoft Learn Fabric region availability",
@@ -2064,7 +2064,7 @@ def map_region(region: str):
             "backgroundRejected": int(here["BackgroundRejected"].sum()) if len(here) else 0,
             "freeViewerCapable": int(here["SupportsFreeViewers"].sum()) if len(here) else 0,
             # The site's own safety line, and where it stands against it. The
-            # threshold lives on the data centre -- review was explicit -- so a
+            # threshold lives on the capacity pool -- review was explicit -- so a
             # site drawn on the map has to be coloured by its own line rather
             # than inherit the region's.
             "thresholdPct": round(float(getattr(s_, "ThresholdPct", 0) or 0), 1),
@@ -2168,7 +2168,7 @@ def capacities(region: Annotated[str | None, Query()] = None,
     """The Fabric capacities themselves: SKU, hardware, how full, how healthy.
 
     The grain review kept asking for and the product did not have -- "these are
-    the SKUs there in this data centre, this is the capacity available, this is
+    the SKUs there in this capacity pool, this is the capacity available, this is
     what we don't have".
     """
     health = _capacity_health()
@@ -2644,7 +2644,7 @@ def region_detail(name: str):
             "oldestOpenDays": round(max(open_days), 1) if open_days else None,
             "topReason": (denied["DenialReason"].mode().iloc[0] if len(denied) else ""),
             "reasonCount": int(denied["DenialReason"].nunique()),
-            # Review asked for the recommendation to sit beside the data centre
+            # Review asked for the recommendation to sit beside the capacity pool
             # scope, not only on the site's own page: the region view is where
             # someone decides which building to open, and they cannot decide
             # that from a cause alone.
@@ -2795,7 +2795,7 @@ def convert(region: str, to_sku: str, mode: str = "same_footprint"):
 def scale_options_index():
     """Which capacities can be scaled, and what each is running now.
 
-    Replaces `/api/swap-options`, which listed every data centre with the
+    Replaces `/api/swap-options`, which listed every capacity pool with the
     hardware class it ran so a target class could be picked. The thing a Fabric
     admin actually changes is one capacity's SKU, so that is the unit here.
 
@@ -2879,7 +2879,7 @@ def region_recommendation(region: str):
     """What to do about a region, as opposed to about one of its buildings.
 
     Review drew the line clearly: a region recommendation is about the safety
-    threshold and where the region's own spare capacity is; a data centre
+    threshold and where the region's own spare capacity is; a capacity pool
     recommendation is about swapping that facility's hardware. Mixing them
     produced advice nobody owned. Everything here is computed from the region's
     own numbers -- no sentence is written in advance.
@@ -3543,7 +3543,7 @@ def _snapshot_datacentres() -> list:
     """Every facility, not only the ones a ticket landed on.
 
     The assistant was given the 45 sites with activity, so asked how many of
-    southcentralus's data centres were over their threshold it answered from six
+    southcentralus's capacity pools were over their threshold it answered from six
     while the region page listed ten. A building over its safety line with
     nothing yet failed is exactly the one worth asking about, and it was
     invisible to the assistant by construction.
@@ -3609,9 +3609,9 @@ def get_snapshot():
         provenance=_records(dimensional.sources(entities.tables)),
         customers=customers()["customers"],
         conversions=_conversion_readiness(entities),
-        # Asked "which data centres in eastus2 are in risk", the assistant
+        # Asked "which capacity pools in eastus2 are in risk", the assistant
         # correctly said it could not tell -- the snapshot held regions and
-        # incidents but never the facilities, so a question the Data centres tab
+        # incidents but never the facilities, so a question the Capacity pools tab
         # answers in one glance was unanswerable here.
         datacentres=_snapshot_datacentres(),
         cores_pending=_cores_pending_by_region(),

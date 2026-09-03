@@ -740,7 +740,7 @@ table.caps td .t3 { display: block; color: var(--ink-3); font-size: .74rem; font
    asked for the separate Utilisation card to be folded into this one. */
 .kpi .kpi-of { font-size: .55em; font-weight: 400; color: var(--ink-3); }
 
-/* A data centre on the zoomed map. Sites are drawn on a ring anchored to the
+/* A capacity pool on the zoomed map. Sites are drawn on a ring anchored to the
    region because their real positions are not published -- the legend says so
    whenever the map is zoomed. */
 .site-mk { cursor: pointer; transition: r .12s ease; }
@@ -1392,7 +1392,7 @@ button:focus-visible, a.iconbtn:focus-visible, .nav a:focus-visible {
 
 /* ---- /datacentres: per-SKU breakdown rows -------------------------------- */
 
-/* The SKU cell on a data centre row: a disclosure caret plus the mix it holds
+/* The SKU cell on a capacity pool row: a disclosure caret plus the mix it holds
    ("3×F64 2×F32"), smallest rung first. */
 .sku-cell { white-space: nowrap; }
 .sku-expand {
@@ -1408,7 +1408,7 @@ tr.open .sku-expand { transform: rotate(90deg); color: var(--brand); }
 .sku-mix { font-size: .78rem; color: var(--ink-2); vertical-align: middle; }
 tr.open .sku-mix { color: var(--brand); font-weight: 650; }
 
-/* A SKU sub-row reads as a continuation of the data centre above it, not as a
+/* A SKU sub-row reads as a continuation of the capacity pool above it, not as a
    row in its own right: quieter ground, a rule up the left edge tying it to the
    parent, and the demand/risk columns left empty because those belong to the
    building. */

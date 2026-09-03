@@ -1,7 +1,7 @@
 """What moving a capacity along the F-SKU ladder would actually do.
 
 This replaces module 2's migration calculator, which answered a question Fabric
-cannot be asked. That model took a data centre offline, converted it from one
+cannot be asked. That model took a capacity pool offline, converted it from one
 hardware class to another, costed the conversion and quoted a provisioning lead
 time. A Fabric customer has none of those things: there is no server, no vendor,
 nothing to take offline, and no wait.

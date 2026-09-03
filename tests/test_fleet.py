@@ -201,7 +201,7 @@ def test_every_region_has_real_coordinates(entities):
 
 
 def test_every_datacentre_is_placed_near_its_region(entities):
-    """The extract has no per-site location, so each data centre is its region's
+    """The extract has no per-site location, so each capacity pool is its region's
     real point plus a small generated offset. Every site must land within a
     metro-sized radius of its region -- a bad offset that put a building an ocean
     away would read as a real location and mislead."""

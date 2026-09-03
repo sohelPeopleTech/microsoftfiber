@@ -33,14 +33,14 @@ cd webapp && python3 -m uvicorn api:app --port 8899
 ```
 
 Six tabs behind a sign-in, in this order: **Fleet map** (the landing page, at
-`/`), **Overview** (`/overview`), **Regions**, **Data centres**, **Customers**
+`/`), **Overview** (`/overview`), **Regions**, **Capacity pools**, **Customers**
 and **Methodology**.
 
 Regions carries only how full each region is. Everything that can be acted on —
 each site's own safety threshold, when it crosses it, what it would take to stay
-under, what it owes and who is waiting — sits on the data centres inside it,
+under, what it owes and who is waiting — sits on the capacity pools inside it,
 because a region is a geography and cannot be scaled while a capacity in a
-building can. For the same reason there is no forecasting tab: each data centre
+building can. For the same reason there is no forecasting tab: each capacity pool
 is forecast on its own daily CU record, on its own page, beside the capacities
 that would be changed to move the date.
 

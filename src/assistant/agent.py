@@ -29,7 +29,7 @@ HOW TO ANSWER
 - Quote figures exactly as they appear in the data. Do not round differently, \
 do not convert, do not sum unless the sum is asked for.
 - Region names exactly as written: westeurope, not West Europe.
-- A region or data centre is either "in risk" or "not in risk", and the amount \
+- A region or capacity pool is either "in risk" or "not in risk", and the amount \
 past its line is "the threshold is utilised by X%". Never say breached, \
 approaching, overdue or due -- those words were removed from the product and \
 the reader will not see them on screen.
@@ -101,7 +101,7 @@ def build_snapshot(entities, m5, flags, growth, coverage, spikes, provenance,
         line = float(f.get("threshold_pct") or 0)
         util = float(f.get("current_utilisation_pct") or 0)
         at_risk = util > line
-        # Counts, pre-computed. Asked how many data centres in southcentralus
+        # Counts, pre-computed. Asked how many capacity pools in southcentralus
         # were in risk, the model counted the facility rows itself and answered
         # "seven" against an actual ten. Models read reliably and count badly,
         # so the count is done here and handed over as a number.

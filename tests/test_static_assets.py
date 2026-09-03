@@ -474,7 +474,7 @@ def test_site_tie_lines_stop_short_of_the_region_marker():
 def test_the_three_browsable_pages_all_carry_a_filter():
     """110 sites and 11 regions is past the point where scrolling finds one.
 
-    Data centres, Regions and the Fleet map each get a search box and a
+    Capacity pools, Regions and the Fleet map each get a search box and a
     dropdown, built from one shared component rather than three near-copies
     that drift apart.
     """
@@ -491,9 +491,9 @@ def test_filterable_rows_carry_the_attributes_the_filter_reads():
     falls back to its rendered text, which silently matches on things like a
     revenue figure -- so the pages that filter must set them explicitly."""
     assert 'data-search="${esc(`${x.datacentre} ${x.region}' in JS, (
-        "data centre rows no longer carry the text the search matches")
+        "capacity pool rows no longer carry the text the search matches")
     assert 'data-filter="${esc(x.region)}"' in JS, (
-        "data centre rows no longer carry the region the dropdown filters on")
+        "capacity pool rows no longer carry the region the dropdown filters on")
     assert 'data-filter="${r.at_risk ? "risk" : "ok"}"' in JS, (
         "region rows no longer carry the threshold state the dropdown filters on")
 
@@ -601,5 +601,5 @@ def test_the_planning_columns_are_on_the_data_centre_table():
 
 
 def test_the_region_table_says_what_its_average_is_an_average_of():
-    assert 'label: "Data centres"' in JS, "the site count column is missing"
+    assert 'label: "Capacity pools"' in JS, "the site count column is missing"
     assert 'label: "Utilised CU"' in JS, "the utilised CU column is missing"

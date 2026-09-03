@@ -211,7 +211,7 @@ def build_dim_datacentre(dim_region, usage=None, capacities=None,
 
     # Per-site safety line and how much of the site is already committed.
     # Review asked for both: "call out what cores they already have, how many
-    # are still left, and the threshold for each data centre".
+    # are still left, and the threshold for each capacity pool".
     dim["ThresholdPct"] = [attribution.site_threshold(d) for d in dim["DatacentreId"]]
 
     if capacities is not None and len(capacities):
@@ -263,7 +263,7 @@ def build_dim_datacentre(dim_region, usage=None, capacities=None,
     return dim
 
 
-#: How far a data centre may sit from its region's published point. Azure gives
+#: How far a capacity pool may sit from its region's published point. Azure gives
 #: one coordinate per region -- itself an approximate central point -- and none
 #: per building, so the sites are scattered within a metro-sized radius of it.
 #: 75 km keeps every region's sites on the right landmass while still giving the
@@ -272,9 +272,9 @@ SITE_SPREAD_KM = 75.0
 
 
 def attach_datacentre_coordinates(dim: pd.DataFrame, geo: pd.DataFrame) -> pd.DataFrame:
-    """Give every data centre a latitude and longitude.
+    """Give every capacity pool a latitude and longitude.
 
-    The extract has none: a data centre in this model is a generated name under
+    The extract has none: a capacity pool in this model is a generated name under
     a region. `dim_region_geography` carries a real coordinate per *region*
     (`az account list-locations`), but nothing per building, so each site is
     placed at its region's point plus a small deterministic offset -- a bearing
@@ -557,7 +557,7 @@ def build(
         tables["dim_region"]["Region"].map(_weighted).round(1)
     )
 
-    # Put each data centre on the map. Needs both tables, and dim_region_geography
+    # Put each capacity pool on the map. Needs both tables, and dim_region_geography
     # is built above, so like the threshold roll-up this happens here rather than
     # inside the datacentre builder.
     tables["dim_datacentre"] = attach_datacentre_coordinates(

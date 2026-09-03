@@ -27,13 +27,13 @@ const $ = (id) => document.getElementById(id);
    those routes is still registered, still served and still backed by its
    endpoints, so a saved link or a demo bookmark still opens the page; it is
    simply no longer offered here. Forecasting in particular did not go away, it
-   moved: it is now on each data centre, beside the thing being forecast. */
+   moved: it is now on each capacity pool, beside the thing being forecast. */
 const NAV = [
   { path: "/",             icon: "◍", label: "Fleet map" },
   { path: "/overview",     icon: "▦", label: "Overview" },
   null,
   { path: "/regions",      icon: "◈", label: "Regions" },
-  { path: "/datacentres",  icon: "▤", label: "Data centres" },
+  { path: "/datacentres",  icon: "▤", label: "Capacity pools" },
   { path: "/customers",    icon: "◉", label: "Customers" },
   null,
   { path: "/methodology",  icon: "ⓘ", label: "Methodology" },
@@ -267,7 +267,7 @@ function closeHowto() {
    are separate strings concatenated in fourteen places -- so they are joined
    here, after the view exists, rather than by touching any of them. The button
    goes *beside* the h1 rather than inside it: inside, its label joins the
-   heading's accessible name and a screen reader announces "Data centres, How
+   heading's accessible name and a screen reader announces "Capacity pools, How
    to read this page". */
 function wireHowto() {
   closeHowto();
