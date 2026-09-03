@@ -55,6 +55,17 @@ const money = (v) => {
 const pct = (v, digits = 0) => `${(Number(v) || 0).toFixed(digits)}%`;
 const num = (v) => (Number(v) || 0).toLocaleString();
 
+/* Capacity Units to one decimal place.
+
+   Whole numbers hid the arithmetic on any grouped table: eastus2-dc02's three
+   capacities use 1.3, 12.3 and 40.8 CU, which round to 1 + 12 + 41 = 54 under a
+   parent showing 55. The rows were right and looked wrong. A tenth of a CU is
+   below anything anyone acts on, so it costs nothing to show and lets a reader
+   add the column up. */
+const cu1 = (v) => (Number(v) || 0).toLocaleString(undefined, {
+  minimumFractionDigits: 1, maximumFractionDigits: 1,
+});
+
 /* Titlecase a snake_case status without pretending it is prose. */
 const words = (s) => String(s ?? "").replace(/_/g, " ");
 
@@ -92,36 +103,219 @@ async function post(url, body) {
  * glance at the block it refers to. Definitions come after the walkthrough --
  * a word means more once you have seen where it is used.
  */
-/* Collapsed by default.
-
-   It sat open on every page, so every page opened on half a screen of
+/* It sat open on every page, so every page opened on half a screen of
    instructions and the reader scrolled past them to reach the thing they came
-   for. Read once, it is not needed again; left open, it pushes the table below
-   the fold on arrival. The summary stays visible so it is one click away. */
+   for. Collapsing it to a summary line helped; taking it off the page entirely
+   is the honest version of the same fix. It is now a slide-over, opened from a
+   help button beside the page heading, so it costs nothing until it is asked
+   for and covers the page rather than pushing it down.
+
+   What this returns is an inert carrier, not the panel. It renders wherever
+   the page already put it -- above the heading, in most cases -- takes no
+   layout, and is moved into the panel by `wireHowto()` after the view is
+   built. That keeps this function's signature and every one of its fourteen
+   call sites exactly as they were. */
 function howto({ answers, steps, words = [], next, sources }) {
-  return `<details class="howto">
-    <summary>How to read this page</summary>
-    <div class="body">
+  return `<div class="howto-src" hidden>
+    <section>
+      <h3>What this page answers</h3>
       <p class="lede">${answers}</p>
+    </section>
 
-      <ol class="walk">${steps.map((s) =>
-        `<li><b>${s.what}</b> — ${s.is}</li>`).join("")}</ol>
+    ${/* One card per item, rather than one column of prose. The reader is
+          looking at a block on the screen and wants the paragraph about that
+          block; a bordered card is findable by eye, a run-on list is not.
 
-      ${words.length ? `<h4>Definitions</h4>
-        <ul class="terms">${words.map((w) =>
-          `<li><b>${w.term}</b> — ${w.means}</li>`).join("")}</ul>` : ""}
+          Still an <ol>: the steps are a walk down the page in order, and the
+          numbering is the point of the section. The list markers are off and a
+          counter draws them inside the card, so the order survives for a
+          screen reader as well as on screen. */""}
+    <section>
+      <h3>Walking down the screen</h3>
+      <ol class="howto-cards walk">${steps.map((s) =>
+        `<li class="howto-card"><b>${s.what}</b><p>${s.is}</p></li>`).join("")}</ol>
+    </section>
 
-      <h4>Recommended next steps</h4>
+    ${words.length ? `<section>
+      <h3>Definitions</h3>
+      <ul class="howto-cards">${words.map((w) =>
+        `<li class="howto-card"><b>${w.term}</b><p>${w.means}</p></li>`).join("")}</ul>
+    </section>` : ""}
+
+    <section>
+      <h3>Recommended next steps</h3>
       <p>${next}</p>
+    </section>
 
-      <p class="src">Data sources: ${sources}
+    <section>
+      <h3>Data sources</h3>
+      <p class="src">${sources}
         <a href="/methodology">See exactly how →</a></p>
-    </div>
-  </details>`;
+    </section>
+  </div>`;
 }
 
 function title(h1, sub) {
   return `<h1 class="page-title">${esc(h1)}</h1><p class="page-sub">${esc(sub)}</p>`;
+}
+
+/* ------------------------------------------------- the "how to read" panel */
+
+/* One panel for the whole app, mounted on <body> and refilled per page.
+
+   On <body> deliberately: `main > *` carries a transform animation, and an
+   animating transform makes an ancestor the containing block for anything
+   `position: fixed` inside it -- the panel would be trapped in the content
+   column for the length of the view transition. The assistant panel sits on
+   <body> for the same reason.
+
+   Built once, listeners bound once; `wireHowto()` below is safe to call after
+   every render. */
+function howtoPanel() {
+  let host = $("howto-panel");
+  if (host) return host;
+
+  const wrap = document.createElement("div");
+  wrap.innerHTML = `
+    <div class="howto-overlay" id="howto-overlay" hidden></div>
+    <aside class="howto-panel" id="howto-panel" hidden
+           role="dialog" aria-modal="true" aria-labelledby="howto-panel-title">
+      <header>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div>
+          <b id="howto-panel-title">How to read this page</b>
+          <span id="howto-panel-sub"></span>
+        </div>
+        <button type="button" class="iconbtn howto-close" id="howto-close"
+                aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </header>
+      <div class="howto-body" id="howto-body" tabindex="-1"></div>
+      <p class="howto-hint">Press <kbd>ESC</kbd> to close</p>
+    </aside>`;
+  while (wrap.firstElementChild) document.body.appendChild(wrap.firstElementChild);
+
+  $("howto-close").addEventListener("click", () => closeHowto());
+  $("howto-overlay").addEventListener("click", () => closeHowto());
+
+  /* Escape closes, and Tab is held inside the panel while it is open -- an
+     aria-modal dialog that lets focus wander back to the page behind it is
+     lying about being modal. */
+  document.addEventListener("keydown", (ev) => {
+    if ($("howto-panel").hidden) return;
+    if (ev.key === "Escape") { ev.preventDefault(); closeHowto(); return; }
+    if (ev.key !== "Tab") return;
+    const focusable = $("howto-panel").querySelectorAll(
+      'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])');
+    if (!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (ev.shiftKey && document.activeElement === first) {
+      ev.preventDefault(); last.focus();
+    } else if (!ev.shiftKey && document.activeElement === last) {
+      ev.preventDefault(); first.focus();
+    }
+  });
+  return $("howto-panel");
+}
+
+//: The button that opened the panel, so focus can be handed back to it.
+let howtoOpener = null;
+
+function openHowto(trigger) {
+  const panel = howtoPanel();
+  howtoOpener = trigger;
+  $("howto-overlay").hidden = false;
+  panel.hidden = false;
+  // Two frames: the element has to be laid out at its off-screen position
+  // before the class that slides it in can animate from anywhere.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    $("howto-overlay").classList.add("on");
+    panel.classList.add("on");
+  }));
+  document.body.classList.add("howto-open");   // the page behind must not scroll
+  if (trigger) trigger.setAttribute("aria-expanded", "true");
+  $("howto-body").focus();
+}
+
+function closeHowto() {
+  const panel = $("howto-panel");
+  if (!panel || panel.hidden) return;
+  panel.classList.remove("on");
+  $("howto-overlay").classList.remove("on");
+  document.body.classList.remove("howto-open");
+  if (howtoOpener) {
+    howtoOpener.setAttribute("aria-expanded", "false");
+    howtoOpener.focus();
+    howtoOpener = null;
+  }
+  // Hidden only once it has slid out, or it vanishes instead of leaving.
+  const done = () => { panel.hidden = true; $("howto-overlay").hidden = true; };
+  const ms = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 220;
+  setTimeout(done, ms);
+}
+
+/* Attaches this page's explainer to this page's heading.
+
+   The heading is rendered by the page, the explainer by `howto()`, and the two
+   are separate strings concatenated in fourteen places -- so they are joined
+   here, after the view exists, rather than by touching any of them. The button
+   goes *beside* the h1 rather than inside it: inside, its label joins the
+   heading's accessible name and a screen reader announces "Data centres, How
+   to read this page". */
+function wireHowto() {
+  closeHowto();
+  const view = $("view");
+  const h1 = view.querySelector("h1.page-title");
+
+  // Every page gets the wrapper, so the heading sits in the same structure
+  // whether or not it has an explainer to offer.
+  if (h1 && !h1.parentElement.classList.contains("page-head")) {
+    const head = document.createElement("div");
+    head.className = "page-head";
+    h1.replaceWith(head);
+    head.appendChild(h1);
+  }
+
+  const src = view.querySelector(".howto-src");
+  if (!src || !h1) return;
+
+  /* Labelled, not a bare icon: a lone "?" beside a heading is a guess, and the
+     one thing this control must not be is a puzzle.
+
+     No `aria-label` -- the visible text is the accessible name. Setting one
+     would replace "How to read" with something else in the accessibility tree,
+     and anyone driving the page by voice would be saying a label the screen
+     does not show. The fuller phrasing goes in `title`, which supplements
+     rather than replaces. */
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "howto-trigger";
+  trigger.id = "howto-trigger";
+  trigger.setAttribute("aria-expanded", "false");
+  trigger.setAttribute("aria-haspopup", "dialog");
+  trigger.title = "How to read this page";
+  trigger.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10"/>
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+      <line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>How to read</span>`;
+  h1.parentElement.appendChild(trigger);
+
+  howtoPanel();
+  $("howto-panel-sub").textContent = h1.textContent;
+  $("howto-body").innerHTML = src.innerHTML;
+  src.remove();                       // the carrier has done its job
+
+  trigger.addEventListener("click", () => {
+    if ($("howto-panel").hidden) openHowto(trigger); else closeHowto();
+  });
 }
 
 /* `help` renders an info marker carrying the explanation. Review asked for one
@@ -263,7 +457,7 @@ function filterBar(id, { placeholder = "Search…", options = [],
 
 /* Wires a `filterBar` to the rows beneath it. Returns the apply function so a
    page can re-run it after redrawing its own table. */
-function wireFilter(id, rowSelector, { total = null, noun = "rows" } = {}) {
+function wireFilter(id, rowSelector, { total = null, noun = "rows", onApply = null } = {}) {
   const box = $(`${id}-q`), list = $(`${id}-list`), count = $(`${id}-count`);
   const toggle = $(`${id}-toggle`), clear = $(`${id}-clear`);
   if (!box) return () => {};
@@ -305,6 +499,9 @@ function wireFilter(id, rowSelector, { total = null, noun = "rows" } = {}) {
       ? (shown ? `${shown} of ${all} ${noun}` : `No ${noun} match`)
       : "";
     count.classList.toggle("empty-result", !!(term || picked) && !shown);
+    // A page with nested detail rows (e.g. the per-SKU rows under a data
+    // centre) keeps them in step with their parent here.
+    if (onApply) onApply();
   }
 
   box.addEventListener("input", () => { picked = ""; openList(true); apply(); });
@@ -344,6 +541,108 @@ function panel(heading, inner, { hint = "", flush = false } = {}) {
     <header><h3>${esc(heading)}</h3>${hint ? `<span class="hint">${esc(hint)}</span>` : ""}</header>
     <div class="body${flush ? " flush" : ""}">${inner}</div>
   </section>`;
+}
+
+/* Several tables that answer related questions, in one panel instead of a
+   column of panels.
+
+   Three tables stacked down the Overview meant the third was a page-length
+   scroll away from the first, and nothing on screen said they were three views
+   of the same period rather than three unrelated blocks. As tabs they occupy
+   one screen and the relationship is the layout.
+
+   The tab strip *is* the panel header -- same surface, same height, same place
+   the heading used to be -- so this reads as one card rather than a card with a
+   toolbar bolted on. `items` is [{ label, count, hint, body }]; `count` and
+   `hint` are optional, and `hint` replaces the header hint as tabs change. */
+function tabPanel(id, items, { label = "" } = {}) {
+  const tab = (t, i) => `<button type="button" class="tab" role="tab"
+      id="${id}-tab-${i}" aria-controls="${id}-body-${i}"
+      aria-selected="${i === 0}" tabindex="${i === 0 ? 0 : -1}"
+      data-hint="${esc(t.hint || "")}">${esc(t.label)}${
+      t.count == null ? "" : `<span class="tab-n">${num(t.count)}</span>`}</button>`;
+
+  return `<section class="panel tabbed" id="${id}">
+    <header role="tablist"${label ? ` aria-label="${esc(label)}"` : ""}>
+      ${items.map(tab).join("")}
+      <span class="hint" data-tab-hint>${esc(items[0]?.hint || "")}</span>
+    </header>
+    <div class="body flush">
+      ${items.map((t, i) => `<div class="tab-body" role="tabpanel"
+        id="${id}-body-${i}" aria-labelledby="${id}-tab-${i}"${i ? " hidden" : ""}
+        >${t.body}</div>`).join("")}
+    </div>
+  </section>`;
+}
+
+//: How many rows a table shows before it scrolls inside itself rather than
+//: pushing the page down. Twenty is about a screen, and a reader who wants the
+//: twenty-first is looking for something specific and will scroll for it.
+const TABLE_ROW_CAP = 20;
+
+/* Caps a table at TABLE_ROW_CAP rows and lets it scroll on its own.
+   Measured rather than assumed: rows here wrap to two and three lines
+   depending on the prose in them, so a fixed pixel height would show fifteen
+   rows on one table and twenty-eight on another. Runs when the table is
+   visible -- a hidden tab measures zero. */
+function capTableHeight(box) {
+  if (!box || box.dataset.capped) return;
+  const table = box.querySelector("table");
+  // Visible rows only. The data-centre table carries its per-SKU rows collapsed
+  // in the DOM, and a hidden row measures zero -- counting them capped the
+  // table at the height of rows nobody can see.
+  const rows = table && table.tBodies[0]
+    ? [...table.tBodies[0].rows].filter((r) => !r.hidden) : [];
+  // A table that fits is left alone entirely -- no cap, no inner scrollbar,
+  // and no sticky header it does not need.
+  if (rows.length <= TABLE_ROW_CAP) { box.dataset.capped = "1"; return; }
+  const head = table.tHead ? table.tHead.getBoundingClientRect().height : 0;
+  const top = rows[0].getBoundingClientRect().top;
+  const cut = rows[TABLE_ROW_CAP].getBoundingClientRect().top;
+  if (cut <= top) return;             // not laid out yet; measure again later
+  box.style.maxHeight = `${Math.round(head + cut - top)}px`;
+  box.classList.add("table-capped");  // pairs the scrolling with the height
+  box.dataset.capped = "1";
+}
+
+function wireTabs(root) {
+  root.querySelectorAll(".panel.tabbed").forEach((panel) => {
+    const tabs = [...panel.querySelectorAll('[role="tab"]')];
+    const hint = panel.querySelector("[data-tab-hint]");
+
+    const show = (idx, focus = false) => {
+      tabs.forEach((t, i) => {
+        const on = i === idx;
+        t.setAttribute("aria-selected", String(on));
+        t.tabIndex = on ? 0 : -1;
+        document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+      });
+      if (hint) hint.textContent = tabs[idx].dataset.hint || "";
+      // Measured on reveal, for the same reason it is measured at all.
+      const body = document.getElementById(tabs[idx].getAttribute("aria-controls"));
+      body.querySelectorAll(".scroll-x, .tablewrap").forEach(capTableHeight);
+      if (focus) tabs[idx].focus();
+    };
+
+    tabs.forEach((t, i) => t.addEventListener("click", () => show(i)));
+
+    /* Arrow keys move between tabs, which is what a tablist is expected to do
+       once it has taken the tab stop for itself. */
+    panel.querySelector('[role="tablist"]').addEventListener("keydown", (ev) => {
+      const at = tabs.indexOf(document.activeElement);
+      if (at < 0) return;
+      const to = { ArrowRight: at + 1, ArrowLeft: at - 1,
+                   Home: 0, End: tabs.length - 1 }[ev.key];
+      if (to === undefined) return;
+      ev.preventDefault();
+      show((to + tabs.length) % tabs.length, true);
+    });
+
+    show(tabs.findIndex((t) => t.getAttribute("aria-selected") === "true") || 0);
+  });
+
+  // Tables outside a tabbed panel get the same cap.
+  root.querySelectorAll(".scroll-x, .tablewrap").forEach(capTableHeight);
 }
 
 /* Status -> pill class. Shared because Overview, Regions and Actions all show
@@ -533,6 +832,8 @@ async function route() {
       `<p class="error">Could not load this page: ${esc(err.message)}</p>`;
   }
   wireInfo();   // idempotent; listens on the document, so late markup is covered
+  wireHowto();  // joins this page's explainer to this page's heading
+  wireTabs($("view"));
 }
 
 /* Header badge: how many regions need an order placed. Shown app-wide because
