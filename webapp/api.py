@@ -662,10 +662,14 @@ def datacentres():
         denied = denied[denied["DenialReason"] != ""]
         loss = sum(float(priced.get(str(i), {}).get("exposure", 0)) for i in grp["IncidentId"])
         site = sites_by_id.get(str(dc))
-        site_dep = float(site["DeployedUnits"]) if site is not None else 0.0
-        site_used = float(site["UsedUnits"]) if site is not None else 0.0
         site_thr = float(site["ThresholdPct"]) if site is not None else 0.0
-        site_util = (site_used / site_dep * 100.0) if site_dep else 0.0
+        # The building read as the sum of the capacities in it, in CU. Every
+        # figure on the row that depends on how full this site is comes from
+        # here, so the row and the SKU rows beneath it cannot disagree.
+        pos = _site_cu_positions().get(str(dc), {"cu": 0.0, "usedCU": 0.0,
+                                                 "utilisationPct": 0.0})
+        site_cu, site_used_cu = pos["cu"], pos["usedCU"]
+        site_util = pos["utilisationPct"]
         rows.append({
             "datacentre": str(dc),
             "region": region,
@@ -679,13 +683,17 @@ def datacentres():
             # southcentralus-dc01 meant it correctly answered that it had no
             # such figure -- while the figure sat on screen beside it.
             "thresholdPct": round(site_thr, 1),
-            "siteUtilisationPct": round(site_util, 1),
+            "siteUtilisationPct": site_util,
             "overThreshold": bool(site_util > site_thr),
             # What the building holds and uses, in its own right. The list
             # previously showed only capacity *counts*, so a site with one F512
             # and a site with one F2 read identically.
-            "totalCU": round(site_dep, 1),
-            "utilisedCU": round(site_used, 1),
+            #
+            # In Capacity Units, and summed from the SKU rows below -- see
+            # `_site_cu_positions`. These print under a header that says CU,
+            # beside a `capacityUnits` subtitle that has always been real CU.
+            "totalCU": site_cu,
+            "utilisedCU": site_used_cu,
             # Where the building is, for the map: region point + generated offset.
             "lat": _clean(site["Latitude"]) if site is not None else None,
             "lon": _clean(site["Longitude"]) if site is not None else None,
@@ -694,7 +702,12 @@ def datacentres():
             **_site_planning(str(dc), site_util),
             # And what the buy is: the CU short of the planning line, and the
             # smallest real F SKU that covers it -- CU is not bought loose.
-            **_site_procurement(site_dep, site_used),
+            **_site_procurement(site_cu, site_used_cu),
+            # One entry per F SKU deployed in this building, smallest rung
+            # first. The row above is the building; these are what it is built
+            # from. Demand and risk are not repeated here -- they belong to the
+            # building, not to a SKU.
+            "skus": _all_site_sku_breakdowns().get(str(dc), []),
             "requests": int(len(grp)),
             "failed": int(len(denied)),
             "customers": int(grp["SubscriptionId"].nunique()),
@@ -1178,23 +1191,16 @@ def _sites_per_region() -> dict:
     return {str(k): int(v) for k, v in sites.groupby("Region").size().items()}
 
 
-def _site_planning(datacentre_id: str, utilisation_pct: float) -> dict:
-    """When the buy decision has to be taken for one building.
+def _planning_from(utilisation_pct: float, growth: float | None) -> dict:
+    """Weeks-to-decide and status from a utilisation level and a weekly growth
+    rate. Factored out of `_site_planning` so a per-SKU row inside a building is
+    judged against the planning line exactly the way the building is.
 
-    `weeksToDecide` is the runway to the planning threshold at the building's
-    current growth rate. Status compares that runway with the procurement lead
-    time: if the capacity would arrive after the line is crossed, the decision
-    is already late, which is what `overdue` means here.
-
-    Three cases produce no answer rather than a misleading one -- a site already
-    past the line, a site that is flat or shrinking, and a site without enough
-    history to have a trend. Printing "999 weeks" for a flat site would read as
-    comfort; a dash reads as what it is.
+    Three cases produce no answer rather than a misleading one -- already past
+    the line, flat or shrinking, and no trend at all. Printing "999 weeks" for a
+    flat series would read as comfort; a dash reads as what it is.
     """
-    growth = _site_growth_rates().get(str(datacentre_id))
     out = {
-        "planningThresholdPct": PLANNING_THRESHOLD_PCT,
-        "leadTimeWeeks": PROCUREMENT_LEAD_WEEKS,
         "growthPctPerWeek": growth,
         "weeksToDecide": None,
         "planningStatus": "ok",
@@ -1205,12 +1211,188 @@ def _site_planning(datacentre_id: str, utilisation_pct: float) -> dict:
         out["planningStatus"] = "overdue"
         return out
     if not growth or growth <= 0:
-        out["planningStatus"] = "ok"
         return out
-
     weeks = (PLANNING_THRESHOLD_PCT - float(utilisation_pct)) / growth
     out["weeksToDecide"] = round(weeks, 1)
     out["planningStatus"] = "overdue" if weeks < PROCUREMENT_LEAD_WEEKS else "ok"
+    return out
+
+
+def _site_planning(datacentre_id: str, utilisation_pct: float) -> dict:
+    """When the buy decision has to be taken for one building.
+
+    `weeksToDecide` is the runway to the planning threshold at the building's
+    current growth rate. Status compares that runway with the procurement lead
+    time: if the capacity would arrive after the line is crossed, the decision
+    is already late, which is what `overdue` means here.
+    """
+    growth = _site_growth_rates().get(str(datacentre_id))
+    return {
+        "planningThresholdPct": PLANNING_THRESHOLD_PCT,
+        "leadTimeWeeks": PROCUREMENT_LEAD_WEEKS,
+        **_planning_from(utilisation_pct, growth),
+    }
+
+
+@lru_cache(maxsize=1)
+def _sku_usage_daily():
+    """Daily utilisation per (data centre, F SKU), on the CU-seconds basis.
+
+    `_site_usage_daily` sums the seconds across every capacity in a building;
+    this does the same one level finer, so a building's F64 line and its F16
+    line are separate series. Consumed over available, because an F2 at 90% and
+    an F512 at 20% are not 55% of anything.
+    """
+    cu = get_entities()["fact_capacity_cu_daily"]
+    grouped = (cu.groupby(["DatacentreId", "FabricSku", "Date"], as_index=False)
+                 .agg(Available=("CuSecondsAvailable", "sum"),
+                      Consumed=("CuSecondsConsumed", "sum")))
+    grouped["UtilisationPct"] = np.where(
+        grouped["Available"] > 0,
+        grouped["Consumed"] / grouped["Available"] * 100.0, 0.0)
+    grouped["Date"] = pd.to_datetime(grouped["Date"]).dt.date.astype(str)
+    return grouped.sort_values(["DatacentreId", "FabricSku", "Date"])
+
+
+@lru_cache(maxsize=1)
+def _sku_growth_rates() -> dict:
+    """(datacentre_id, sku) -> utilisation growth in points per week.
+
+    Same least-squares slope over the whole record that `_site_growth_rates`
+    takes for a building, so the per-SKU rows and the site row are the same
+    quantity measured the same way.
+    """
+    df = _sku_usage_daily()
+    out: dict[tuple[str, str], float | None] = {}
+    for (dc, sku), grp in df.groupby(["DatacentreId", "FabricSku"], sort=False):
+        y = grp["UtilisationPct"].to_numpy(dtype=float)
+        if len(y) < 14:
+            out[(str(dc), str(sku))] = None
+            continue
+        x = np.arange(len(y), dtype=float)
+        slope_per_day = float(np.polyfit(x, y, 1)[0])
+        out[(str(dc), str(sku))] = round(slope_per_day * 7.0, 3)
+    return out
+
+
+@lru_cache(maxsize=1)
+def _all_site_sku_breakdowns() -> dict:
+    """{datacentre_id: [sku_row, ...]} -- every F SKU deployed in a building,
+    rolled up from the capacities on it.
+
+    Computed once for the whole estate. `recommend._health` scans the entire
+    daily CU record, and `capacity_scale_view` prices every rung for every
+    capacity; the data-centre list has dozens of rows and would otherwise pay
+    that cost per row. `_site_capacity_counts` exists for the same reason.
+
+    A SKU row carries only what the SKU owns: how many capacities, the CU they
+    hold and use, their utilisation and its trend, throttling, and the rung the
+    short ones should move to. The demand and risk columns stay on the building
+    -- a capacity denial is never tagged with an F SKU.
+    """
+    entities = get_entities()
+    caps = entities["dim_capacity"]
+    health = recommend._health(entities).set_index("CapacityId")
+    growth = _sku_growth_rates()
+
+    out: dict[str, list] = {}
+    for dc_id, here in caps.groupby(caps["DatacentreId"].astype(str), sort=False):
+        by_sku: dict[str, list] = {}
+        for _, cap in here.iterrows():
+            cid = str(cap["CapacityId"])
+            if cid not in health.index:
+                continue
+            view = scale.capacity_scale_view(cap, health.loc[cid])
+            by_sku.setdefault(str(cap["FabricSku"]), []).append(view)
+
+        rows = []
+        for sku, views in by_sku.items():
+            # `capacity_scale_view` reads `CapacityUnits`, so this is already
+            # real CU -- the raw-unit `DeployedUnits` column is deliberately not
+            # summed here. See `_units_to_cu`.
+            cu = sum(v["current"]["capacityUnits"] for v in views)
+            wmean = (sum(v["current"]["meanPct"] * v["current"]["capacityUnits"]
+                         for v in views) / cu) if cu else 0.0
+            peak = max((v["current"]["peakPct"] for v in views), default=0.0)
+
+            # The rung each short capacity of this SKU should move to. Same
+            # test capacity_scale_view uses; the target shown is the one most
+            # of them land on.
+            targets = [v["recommended"] for v in views
+                       if v["needsMore"] and v["recommended"]
+                       and v["recommended"] != v["current"]["sku"]]
+            procure_sku = max(set(targets), key=targets.count) if targets else ""
+
+            rows.append({
+                "sku": sku,
+                "capacityCount": len(views),
+                "capacityUnits": int(cu),
+                "totalCU": round(cu, 1),
+                "utilisedCU": round(wmean / 100.0 * cu, 1),
+                "utilisationPct": round(wmean, 1),
+                "peakPct": round(peak, 1),
+                "throttling": sum(1 for v in views
+                                  if v["current"]["throttledDays"] > 0),
+                "freeViewerCapable": sum(1 for v in views
+                                         if v["current"]["freeViewers"]),
+                "scaleUpCount": len(targets),
+                "procureSku": procure_sku,
+                "procureSkuCU": admission.F_SKUS.get(procure_sku) if procure_sku else None,
+                "planningThresholdPct": PLANNING_THRESHOLD_PCT,
+                "leadTimeWeeks": PROCUREMENT_LEAD_WEEKS,
+                **_planning_from(wmean, growth.get((str(dc_id), sku))),
+            })
+
+        # Smallest rung first, on the real ladder -- not "F128, F16, F2".
+        rows.sort(key=lambda r: admission.F_SKUS.get(r["sku"], 0))
+        out[str(dc_id)] = rows
+    return out
+
+
+@lru_cache(maxsize=1)
+def _site_cu_positions() -> dict:
+    """{datacentre_id: {"cu", "usedCU", "utilisationPct"}} -- a building read as
+    the sum of the capacities standing in it.
+
+    One source, not two. `dim_datacentre.UsedUnits` is a separate estimate --
+    the latest day's consumption rate applied to the site's units -- while the
+    per-SKU rows underneath read the 30-day per-capacity record. A site holding
+    a single F32 therefore published two different utilisations for the same
+    capacity: 86.2% on the row and 89.8% on the child beneath it. One capacity
+    cannot have two utilisation figures.
+
+    Aggregating the children makes the parent the sum of its parts by
+    construction. A one-capacity site reports that capacity's numbers exactly;
+    a multi-capacity site reports their CU-weighted mean, weighted because an F2
+    at 90% and an F512 at 20% do not average to 55% of the building.
+
+    Nothing is capped at 100%. Bursting past the nameplate is a real state that
+    smoothing absorbs, and hiding it removes the signal the page is for.
+
+    The dimensional columns remain the fallback for a building with no
+    capacities recorded on it -- the only case where they are still the best
+    answer available.
+    """
+    sites = get_entities()["dim_datacentre"]
+    by_sku = _all_site_sku_breakdowns()
+
+    out: dict[str, dict] = {}
+    for r in sites.itertuples():
+        dc = str(r.DatacentreId)
+        rows = by_sku.get(dc, [])
+        if rows:
+            cu = sum(s["totalCU"] for s in rows)
+            # The children's own published figures, summed -- so the column
+            # visibly adds up on screen rather than merely agreeing in principle.
+            used = sum(s["utilisedCU"] for s in rows)
+            util = (sum(s["utilisationPct"] * s["totalCU"] for s in rows) / cu
+                    if cu else 0.0)
+        else:
+            cu = _units_to_cu(getattr(r, "DeployedUnits", 0) or 0)
+            used = _units_to_cu(getattr(r, "UsedUnits", 0) or 0)
+            util = (used / cu * 100.0) if cu else 0.0
+        out[dc] = {"cu": round(cu, 1), "usedCU": round(used, 1),
+                   "utilisationPct": round(util, 1)}
     return out
 
 
@@ -1237,8 +1419,13 @@ def _site_position(datacentre_id: str) -> dict:
         return {}
     site = row.iloc[0]
 
-    deployed = float(site["DeployedUnits"] or 0)
-    used = float(site["UsedUnits"] or 0)
+    # In CU, from the capacities in the building -- the same source the data
+    # centre row uses. The shortfall below is published as `cuToStayUnder` and
+    # handed to the CU-denominated SKU ladder, and reading `DeployedUnits`
+    # directly would both double the figure and put this page back on a
+    # different measurement from the one the site's own row shows.
+    pos = _site_cu_positions().get(str(datacentre_id), {"cu": 0.0, "usedCU": 0.0})
+    deployed, used = pos["cu"], pos["usedCU"]
     target = float(site["ThresholdPct"] or 0)
     # Utilisation is used over deployed, so to sit at or under T% the site needs
     # used * 100 / T deployed, and it is short by that less what it holds. Zero
@@ -1513,6 +1700,9 @@ def _smallest_sku_covering(units: float) -> str:
     110; the ladder doubles and it takes an F128. Saying so stops a CU figure
     being read as a purchase order -- though the honest answer needs the SKU
     mix of the requests themselves, which this extract does not carry.
+
+    The argument is Capacity Units. Anything read out of a `*Units` column is
+    not -- see `_units_to_cu`.
     """
     if units <= 0:
         return ""
@@ -1522,8 +1712,32 @@ def _smallest_sku_covering(units: float) -> str:
     return max(admission.F_SKUS, key=lambda k: admission.F_SKUS[k])
 
 
+def _units_to_cu(units: float) -> float:
+    """Raw compute units -> Capacity Units.
+
+    Two units for the same thing run through this model and they differ by a
+    factor of two. `CapacityUnits` holds real CU -- an F32 is 32, which is what
+    the F SKU ladder is denominated in and what a customer is billed for. The
+    `DeployedUnits` / `UsedUnits` columns on `dim_datacentre` and `dim_capacity`
+    hold *raw compute units*, which the synthetic layer produces as
+    ``CU / UNITS_PER_CU``.
+
+    `admission.build_dim_capacity_pool` converts before it reads the ladder.
+    Anything that reaches `_smallest_sku_covering` -- or prints a figure under a
+    header that says CU -- from a `*Units` column has to do the same, or it
+    names a rung twice the size of the one actually needed.
+    """
+    return float(units) * admission.UNITS_PER_CU
+
+
 def _site_procurement(deployed_cu: float, used_cu: float) -> dict:
     """What a site would have to buy to sit back under the planning line.
+
+    **Both arguments are Capacity Units.** The SKU ladder is a CU ladder, and
+    this was once handed the raw compute units off `dim_datacentre`, which
+    recommended one rung too high for every site in the estate -- an F32 site at
+    100% was told to buy an F16 when an F8 covers it. The caller now sources both
+    figures from `_site_cu_positions`, which is in CU by construction.
 
     Utilisation is used over deployed, so to come back under
     ``PLANNING_THRESHOLD_PCT`` a site needs ``used * 100 / threshold`` deployed
@@ -1548,10 +1762,15 @@ def _site_procurement(deployed_cu: float, used_cu: float) -> dict:
 
 
 def _site_utilisation(site) -> float:
-    """A data centre's own utilisation, from its own deployed and used units."""
-    deployed = float(getattr(site, "DeployedUnits", 0) or 0)
-    used = float(getattr(site, "UsedUnits", 0) or 0)
-    return (used / deployed * 100.0) if deployed else 0.0
+    """A data centre's own utilisation, from the capacities standing in it.
+
+    Reads `_site_cu_positions` rather than the site's `UsedUnits` column so the
+    marker on the map is coloured by the same number the site's row and its SKU
+    rows show. It took the column directly, and a building could be amber on the
+    map and green on the page.
+    """
+    dc = str(getattr(site, "DatacentreId", "") or "")
+    return _site_cu_positions().get(dc, {}).get("utilisationPct", 0.0)
 
 
 @lru_cache(maxsize=1)
@@ -2402,10 +2621,15 @@ def region_detail(name: str):
         open_days = [x.get("days", 0) for x in failed
                      if "unfulfilled" in str(x.get("outcomeLabel", "")).lower()]
         meta = sites.loc[dc] if dc in sites.index else None
-        dep = float(meta["DeployedUnits"]) if meta is not None else 0.0
-        used = float(meta["UsedUnits"]) if meta is not None else 0.0
         thr = float(meta["ThresholdPct"]) if meta is not None else 0.0
-        util = (used / dep * 100.0) if dep else 0.0
+        # Same source as the site's own row on /datacentres and as the
+        # `cuToStayUnder` that `_site_position` adds below: the capacities in
+        # the building, in CU. Reading `DeployedUnits` here instead put a
+        # utilisation from one measurement beside a shortfall from another.
+        s_pos = _site_cu_positions().get(str(dc), {"cu": 0.0, "usedCU": 0.0,
+                                                   "utilisationPct": 0.0})
+        dep, used = s_pos["cu"], s_pos["usedCU"]
+        util = s_pos["utilisationPct"]
         datacentres.append({
             "datacentre": str(dc),
             "utilisationPct": round(util, 1),
@@ -2428,10 +2652,14 @@ def region_detail(name: str):
                 r.to_dict() for r in remediation.for_site(
                     entities, str(dc), denied, crossing_for=_forecast_crossing)
             ],
-            "capacityUnits": _clean(meta["DeployedUnits"]) if meta is not None else None,
-            "capacityUnitsFree": _clean(meta["FreeUnits"]) if meta is not None else None,
+            # In CU, from the same position as the utilisation above it, so the
+            # "free" figure and the percentage cannot tell different stories. A
+            # site consuming past its nameplate reports negative free CU, which
+            # is what bursting is.
+            "capacityUnits": dep,
+            "capacityUnitsFree": round(dep - used, 1),
             "thresholdPct": _clean(meta["ThresholdPct"]) if meta is not None else None,
-            "headroom": _clean(meta["HeadroomToThreshold"]) if meta is not None else None,
+            "headroom": round(dep * thr / 100.0 - used, 1),
             # Moved down from the Regions tab. What this building still owes and
             # who is waiting on it -- counted from the failed requests raised
             # here, not from a region total divided across its sites.
@@ -3322,20 +3550,23 @@ def _snapshot_datacentres() -> list:
     """
     entities = get_entities()
     scored = {r["datacentre"]: r for r in datacentres()["datacentres"]}
+    positions = _site_cu_positions()
     out = []
     for row in entities["dim_datacentre"].itertuples():
         dc = str(row.DatacentreId)
-        dep, used = float(row.DeployedUnits), float(row.UsedUnits)
+        # The same CU position the two pages read, so the assistant cannot
+        # answer "how full is it" differently from the screen beside it.
+        pos = positions.get(dc, {"cu": 0.0, "usedCU": 0.0, "utilisationPct": 0.0})
+        dep, used, util = pos["cu"], pos["usedCU"], pos["utilisationPct"]
         thr = float(row.ThresholdPct)
-        util = (used / dep * 100.0) if dep else 0.0
         s = scored.get(dc, {})
         entry = {
             "datacentre": dc,
             "region": str(row.Region),
             "thresholdPct": round(thr, 1),
-            "utilisationPct": round(util, 1),
+            "utilisationPct": util,
             "thresholdStatus": "In risk" if util > thr else "Not in risk",
-            "capacityUnitsDeployed": round(dep, 1),
+            "capacityUnitsDeployed": dep,
             "capacityUnitsFree": round(dep - used, 1),
         }
         # 65 of the 110 sites have never had a request. Carrying nulls for

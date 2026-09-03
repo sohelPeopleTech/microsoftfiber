@@ -149,57 +149,72 @@ PAGES["/overview"] = async (view) => {
     </p>
   `, { flush: true })}
 
-  ${panel("Demand distribution by region", `<div class="scroll-x"><table>
-    <thead><tr><th>Region</th><th class="n">Requests</th><th class="n">Share</th>
-      <th class="n">Failed</th><th class="n">Customers</th>
-      <th class="n">Data centres</th><th>Volume</th></tr></thead>
-    <tbody>${(d.regionDistribution || []).map((r) => `<tr class="clickable" data-region="${esc(r.region)}">
-      <td><b>${esc(r.region)}</b></td>
-      <td class="n">${num(r.requests)}</td>
-      <td class="n">${pct(r.sharePct, 1)}</td>
-      <td class="n">${r.failed ? `<b style="color:var(--bad)">${num(r.failed)}</b>` : "—"}</td>
-      <td class="n">${num(r.customers)}</td>
-      <td class="n">${num(r.datacentres)}</td>
-      <td><span class="bar" style="width:${(r.requests / (d.regionDistribution[0]?.requests || 1)) * 100}%"></span></td>
-    </tr>`).join("")}</tbody></table></div>`,
-    { hint: `${d.regionDistribution?.length || 0} regions · highest volume first`, flush: true })}
-
-  ${panel("Denial reason analysis", `<div class="scroll-x"><table>
-    <thead><tr><th>Reason</th><th class="n">Incidents</th><th class="n">Share</th>
-      <th>Definition</th><th>Recommended action</th></tr></thead>
-    <tbody>${(d.reasons || []).map((r) => `<tr>
-      <td><b>${esc(r.reason)}</b>${r.needsHuman
-        ? ` <span class="pill warn">manual review</span>` : ""}</td>
-      <td class="n">${num(r.count)}</td>
-      <td class="n">${pct(r.sharePct, 1)}</td>
-      <td class="why">${esc(r.detail)}</td>
-      <td class="why">${esc(r.action)}</td>
-    </tr>`).join("")}</tbody></table></div>
-    <p style="color:var(--ink-2);font-size:.82rem;margin:.75rem 1.15rem 1.15rem">
-      Counted across every request that was refused at least once, including
-      those later approved. Reasons marked <b>manual review</b> have no automated
-      fix — the right next step is a conversation, not a calculation.
-    </p>`,
-    { hint: "the fix depends on the cause", flush: true })}
-
-  ${panel("Regions requiring action", attention.length ? `<div class="scroll-x"><table>
-    <thead><tr>
-      <th>Region</th><th>Status</th><th>Flag rationale</th>
-      <th class="n">Days to decide</th><th class="n">Revenue loss</th>
-      <th>Why those requests failed</th><th class="n">Failed</th>
-    </tr></thead>
-    <tbody>${attention.map((r) => `<tr class="clickable" data-region="${esc(r.region)}">
-      <td><b>${esc(r.region)}</b></td>
-      <td>${statusPill(r.status)}<br>${refusingNow(r.throttling)}</td>
-      <td class="why">${esc(r.reason)}</td>
-      <td class="n">${r.daysUntilAction == null ? "—" :
-        `<b style="color:${r.daysUntilAction < 0 ? "var(--bad)" : "inherit"}">${r.daysUntilAction}</b>`}</td>
-      <td class="n">${money(r.exposure)}</td>
-      <td class="why">${failureCause(r)}</td>
-      <td class="n">${num(r.failed)}</td>
-    </tr>`).join("")}</tbody></table></div>`
-    : `<p class="empty">No region is currently flagged.</p>`,
-    { hint: "click a row for detail", flush: true })}
+  ${/* Three views of the same period, in one panel rather than stacked down
+        the page. Read as three separate cards, the third sat a page-length
+        scroll below the first and nothing said they belonged together. */""}
+  ${tabPanel("ov-tables", [
+    {
+      label: "Demand by region",
+      count: d.regionDistribution?.length || 0,
+      hint: "highest volume first · click a row for detail",
+      body: `<div class="scroll-x"><table>
+        <thead><tr><th>Region</th><th class="n">Requests</th><th class="n">Share</th>
+          <th class="n">Failed</th><th class="n">Customers</th>
+          <th class="n">Data centres</th><th>Volume</th></tr></thead>
+        <tbody>${(d.regionDistribution || []).map((r) => `<tr class="clickable" data-region="${esc(r.region)}">
+          <td><b>${esc(r.region)}</b></td>
+          <td class="n">${num(r.requests)}</td>
+          <td class="n">${pct(r.sharePct, 1)}</td>
+          <td class="n">${r.failed ? `<b style="color:var(--bad)">${num(r.failed)}</b>` : "—"}</td>
+          <td class="n">${num(r.customers)}</td>
+          <td class="n">${num(r.datacentres)}</td>
+          <td><span class="bar" style="width:${(r.requests / (d.regionDistribution[0]?.requests || 1)) * 100}%"></span></td>
+        </tr>`).join("")}</tbody></table></div>`,
+    },
+    {
+      label: "Denial reasons",
+      count: d.reasons?.length || 0,
+      hint: "the fix depends on the cause",
+      body: `<div class="scroll-x"><table>
+        <thead><tr><th>Reason</th><th class="n">Incidents</th><th class="n">Share</th>
+          <th>Definition</th><th>Recommended action</th></tr></thead>
+        <tbody>${(d.reasons || []).map((r) => `<tr>
+          <td><b>${esc(r.reason)}</b>${r.needsHuman
+            ? ` <span class="pill warn">manual review</span>` : ""}</td>
+          <td class="n">${num(r.count)}</td>
+          <td class="n">${pct(r.sharePct, 1)}</td>
+          <td class="why">${esc(r.detail)}</td>
+          <td class="why">${esc(r.action)}</td>
+        </tr>`).join("")}</tbody></table></div>
+        <p style="color:var(--ink-2);font-size:.82rem;margin:.75rem 1.15rem 1.15rem">
+          Counted across every request that was refused at least once, including
+          those later approved. Reasons marked <b>manual review</b> have no automated
+          fix — the right next step is a conversation, not a calculation.
+        </p>`,
+    },
+    {
+      label: "Regions requiring action",
+      count: attention.length,
+      hint: "click a row for detail",
+      body: attention.length ? `<div class="scroll-x"><table>
+        <thead><tr>
+          <th>Region</th><th>Status</th><th>Flag rationale</th>
+          <th class="n">Days to decide</th><th class="n">Revenue loss</th>
+          <th>Why those requests failed</th><th class="n">Failed</th>
+        </tr></thead>
+        <tbody>${attention.map((r) => `<tr class="clickable" data-region="${esc(r.region)}">
+          <td><b>${esc(r.region)}</b></td>
+          <td>${statusPill(r.status)}<br>${refusingNow(r.throttling)}</td>
+          <td class="why">${esc(r.reason)}</td>
+          <td class="n">${r.daysUntilAction == null ? "—" :
+            `<b style="color:${r.daysUntilAction < 0 ? "var(--bad)" : "inherit"}">${r.daysUntilAction}</b>`}</td>
+          <td class="n">${money(r.exposure)}</td>
+          <td class="why">${failureCause(r)}</td>
+          <td class="n">${num(r.failed)}</td>
+        </tr>`).join("")}</tbody></table></div>`
+        : `<p class="empty">No region is currently flagged.</p>`,
+    },
+  ], { label: "Overview breakdowns" })}
   `;
 
   view.querySelectorAll("tr[data-region]").forEach((tr) =>
@@ -1647,7 +1662,14 @@ view.innerHTML = howto({
   ],
   next: "Start with red markers, then amber regions with move recommendations.",
   sources: "Azure region locations and Fabric availability use real published data. Capacity usage and throttling data are generated and marked with provenance.",
-}) + `
+}) + title("Fleet map",
+  /* Scale and scope, not status: the markers and the legend below already carry
+     which regions are in trouble, and the strip that used to say so in words is
+     gone for exactly that reason. Summed from the payload rather than written
+     down, so it stays true as the fleet changes. */
+  `${num(d.points.length)} regions · ${
+     num(d.points.reduce((n, p) => n + (p.sites || 0), 0))} data centres · ${
+     num(d.points.reduce((n, p) => n + (p.capacityUnits || 0), 0))} CU deployed`) + `
 
 
   <section class="panel">
@@ -3373,6 +3395,46 @@ function riskCell(risk) {
     ${basis}`;
 }
 
+/* The per-SKU rows that sit under one data centre on /datacentres.
+
+   A building is not one thing -- it runs several Fabric capacities, each on its
+   own F SKU, and CU does not pool between them. These rows break the building
+   into its SKUs: how many capacities on each, the CU they hold and use, the
+   utilisation and its weekly trend, and the rung the short ones should move to.
+   The demand and risk columns belong to the building, not to a SKU, so they are
+   left blank here rather than repeated. Hidden until the row is opened. */
+function dcSkuRows(x) {
+  if (!x.skus || !x.skus.length) return "";
+  const growth = (g) => g == null ? `<span class="t3">—</span>`
+    : g > 0 ? `+${g.toFixed(2)}<span class="t3"> pp/wk</span>`
+    : `<span class="t3">${g.toFixed(2)} pp/wk</span>`;
+  return x.skus.map((s) => `<tr class="sku-sub" data-sub="${esc(x.datacentre)}" hidden>
+    <td class="sku-sub-lead"></td>
+    <td></td>
+    <td><b>${esc(s.sku)}</b></td>
+    <td class="n">${num(s.capacityCount)}<br><span class="t3">${num(s.capacityUnits)} CU</span></td>
+    <td class="n">${num(Math.round(s.totalCU))}</td>
+    <td class="n">${cu1(s.utilisedCU)}</td>
+    <td class="n"><b${s.utilisationPct >= s.planningThresholdPct ? ` class="t-bad"` : ""}>${
+      pct(s.utilisationPct, 1)}</b>${s.peakPct > 100
+        ? `<br><span class="t3">peak ${pct(s.peakPct, 0)}</span>` : ""}</td>
+    <td></td>
+    <td class="n">${growth(s.growthPctPerWeek)}</td>
+    <td class="n t3">${s.leadTimeWeeks}w</td>
+    <td class="n">${s.weeksToDecide == null ? `<span class="t3">—</span>`
+      : s.weeksToDecide <= 0 ? `<b class="t-bad">now</b>`
+      : `<b${s.planningStatus === "overdue" ? ` class="t-bad"` : ""}>${
+           s.weeksToDecide.toFixed(1)}</b><span class="t3"> wks</span>`}</td>
+    <td>${s.planningStatus === "overdue"
+      ? `<span class="pill bad">Overdue</span>`
+      : `<span class="pill good">OK</span>`}</td>
+    ${/* The Procurement column is gone from the header, so it goes from here
+          too -- a stray cell here shunts every SKU row one column right of the
+          site row above it. */""}
+    <td class="n"></td><td class="n"></td><td class="n"></td><td class="n"></td><td></td><td></td>
+  </tr>`).join("");
+}
+
 // PAGES["/datacentres"] = async (view) => {
 //   const d = await get("/api/datacentres");
 //   const solid = d.datacentres.filter((x) => !x.lowEvidence);
@@ -3484,7 +3546,7 @@ PAGES["/datacentres"] = async (view) => {
     words: [
       { term: "How the score is built", is: "", means: `${Object.entries(d.weights).map(([k, w]) => `${Math.round(w * 100)}% ${esc(words(k))}`).join(", ")}. Each site is scored from its own rows — this is not a region total divided up.` },
       { term: "Primary denial reason", means: "The most frequent denial cause at that facility \u2014 the fastest indicator of whether the constraint is capacity, licensing or policy." },
-      { term: "Procurement", means: "The CU a site is short of the 80% planning line, rounded up to the smallest F SKU that covers it. CU is not sold loose, so the answer is always a real rung on the ladder \u2014 a site short by 110 CU takes an F128." },
+      { term: "What to do about a full site", means: "Open the row. Each F SKU in the building is listed on its own line with how full it is, and scaling the SKU on a capacity is the change that applies \u2014 there is nothing to order for a building as a whole." },
     ],
     next: `Rank by score, but read the evidence line beneath it before acting: ${solid.length} of ${d.datacentres.length} sites here have three or more requests, so for most of them the ranking is driven by utilisation and throttling — which are measured continuously — rather than by a failure rate drawn from one or two tickets.`,
     sources: "ICM capacity requests attributed to a facility, and the Fabric capacities in it.",
@@ -3499,9 +3561,12 @@ PAGES["/datacentres"] = async (view) => {
     })
     + `<div class="scroll-x"><table>
     <thead><tr>
-      <th>Data centre</th>
       <th>Region</th>
-      <th class="n">Capacities</th> 
+      <th>Data centre</th>
+      ${th("SKU", "The Fabric SKUs deployed in this building. Open a row to see "
+         + "each one on its own line — CU does not pool between capacities, so "
+         + "an F64 at 40% does not lend headroom to an F8 that is throttling.")}
+      <th class="n">Capacities</th>
       <th class="n">Total CU</th>
       <th class="n">Utilised CU</th>
       ${th("Utilisation", "Capacity Units in use over Capacity Units deployed at this "
@@ -3523,22 +3588,34 @@ PAGES["/datacentres"] = async (view) => {
       ${th("Status", "Overdue when the runway is shorter than the 12-week lead time \u2014 "
          + "capacity ordered today would arrive after the line is crossed, so the "
          + "decision is already late.")}
-      ${th("Procurement", "What this site would have to buy to sit back under the 80% "
-         + "planning line: the CU it is short by, rounded up to the smallest real "
-         + "F SKU that covers it \u2014 CU is not sold loose, so the ladder (F2, F4, "
-         + "F8 \u2026) doubles at each rung. A dash means the site is under its line "
-         + "and needs nothing.", "n")}
+      ${/* No Procurement column. It named a purchase -- "buy an F8" -- that
+            Fabric does not have: you do not order capacity for a building, you
+            scale the F SKU on a capacity, which is what the per-SKU rows
+            underneath each site already say and what the site's own page
+            recommends. The endpoint still computes `procureSku` and its
+            shortfall; nothing on this table reads them. */""}
       <th class="n">Requests</th><th class="n">Failed</th><th class="n">Customers</th>
       <th class="n">Revenue loss</th><th>Primary denial reason</th><th>Risk score</th></tr></thead>
     <tbody>${d.datacentres.map((x) => `<tr class="clickable" data-dc="${esc(x.datacentre)}"
       data-region="${esc(x.region)}" data-filter="${esc(x.region)}"
-      data-search="${esc(`${x.datacentre} ${x.region} ${x.topReason || ""} ${x.planningStatus} ${x.procureSku || ""}`)}">
-      <td class="mono"><b>${esc(x.datacentre)}</b></td>
+      ${/* No `procureSku` here either: matching on a column the reader cannot
+            see means typing "F8" pulls up a site with no F8 anywhere on its
+            row. The SKUs it actually holds are still matched. */""}
+      data-search="${esc(`${x.datacentre} ${x.region} ${x.topReason || ""} ${x.planningStatus} ${(x.skus || []).map((s) => s.sku).join(" ")}`)}">
       <td>${esc(x.region)}</td>
+      <td class="mono"><b>${esc(x.datacentre)}</b></td>
+      <td class="sku-cell">${(x.skus && x.skus.length)
+        ? `<button type="button" class="sku-expand" aria-expanded="false"
+             aria-label="Show the SKU breakdown for ${esc(x.datacentre)}"><svg viewBox="0 0 16 16"
+             aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+           <span class="sku-mix">${x.skus.map((s) => s.capacityCount > 1
+             ? `${num(s.capacityCount)}&times;${esc(s.sku)}` : esc(s.sku)).join(" ")}</span>`
+        : `<span class="t3">—</span>`}</td>
       <td class="n">${x.capacityCount == null ? "—"
         : `${num(x.capacityCount)}<br><span class="t3">${num(x.capacityUnits)} CU</span>`}</td>
       <td class="n">${num(Math.round(x.totalCU))}</td>
-      <td class="n">${num(Math.round(x.utilisedCU))}</td>
+      <td class="n">${cu1(x.utilisedCU)}</td>
       <td class="n"><b${x.siteUtilisationPct >= x.planningThresholdPct
         ? ` class="t-bad"` : ""}>${pct(x.siteUtilisationPct, 1)}</b></td>
       <td class="n t3">${pct(x.planningThresholdPct, 0)}</td>
@@ -3555,30 +3632,48 @@ PAGES["/datacentres"] = async (view) => {
       <td>${x.planningStatus === "overdue"
         ? `<span class="pill bad">Overdue</span>`
         : `<span class="pill good">OK</span>`}</td>
-      <td class="n"${x.procureShortfallCU > 0
-        ? ` title="${num(Math.round(x.procureShortfallCU))} CU short of the 80% planning line"` : ""}>${
-        x.procureSku && x.procureShortfallCU > 0
-          ? `<b>${esc(x.procureSku)}</b><br><span class="t3">${num(x.procureSkuCU)} CU`
-            + ` · ${num(Math.round(x.procureShortfallCU))} short</span>`
-          : `<span class="t3">—</span>`}</td>
       <td class="n">${num(x.requests)}</td>
       <td class="n">${x.failed ? `<b style="color:var(--bad)">${num(x.failed)}</b>` : "—"}</td>
       <td class="n">${num(x.customers)}</td>
       <td class="n">${x.revenueLoss ? money(x.revenueLoss) : "—"}</td>
       <td>${x.topReason ? esc(x.topReason) : "—"}</td>
-      <td>${riskCell(x.risk)}</td>
-    </tr>`).join("")}</tbody></table></div>`,
-    { hint: "click a row for detail", flush: true })}
+      <td class="risk-cell">${riskCell(x.risk)}</td>
+    </tr>${dcSkuRows(x)}`).join("")}</tbody></table></div>`,
+    { hint: "click a row for detail · open a row for its SKUs", flush: true })}
   <div id="dc-detail"></div>`;
 
   view.querySelectorAll("tr[data-dc]").forEach((tr) =>
     (tr.onclick = () => navigate(`/datacentre/${encodeURIComponent(tr.dataset.dc)}`)));
 
+  /* The per-SKU rows sit in the DOM right after their data centre. They are
+     shown only when that row is open, and hidden the moment the filter takes
+     the parent out -- otherwise a search would leave orphaned SKU rows behind. */
+  function syncSkuRows() {
+    view.querySelectorAll("tr[data-dc]").forEach((tr) => {
+      const open = tr.classList.contains("open");
+      view.querySelectorAll(`tr[data-sub="${tr.dataset.dc}"]`).forEach((s) => {
+        s.hidden = tr.hidden || !open;
+      });
+    });
+  }
+  view.querySelectorAll(".sku-expand").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();               // the row itself navigates; this does not
+      const tr = btn.closest("tr[data-dc]");
+      const open = tr.classList.toggle("open");
+      btn.setAttribute("aria-expanded", String(open));
+      syncSkuRows();
+    });
+  });
+
   /* 110 sites is past the point where scrolling is a way of finding one. The
-     search matches the site name, its region and its denial reason together, so
-     "westeurope" and "throttl" both narrow the list; the dropdown cuts to a
-     single region, which is the question this page is most often opened with. */
-  wireFilter("dc-filter", "#view tr[data-dc]", { noun: "data centres" });
+     search matches the site name, its region, its denial reason and its SKUs
+     together, so "westeurope", "throttl" and "F64" all narrow the list; the
+     dropdown cuts to a single region, which is the question this page is most
+     often opened with. */
+  wireFilter("dc-filter", "#view tr[data-dc]", {
+    noun: "data centres", onApply: syncSkuRows,
+  });
 };
 /* ==================================================================== deep */
 /* One data centre — its own page, reachable from Regions or Data centres.    */
