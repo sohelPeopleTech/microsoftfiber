@@ -3418,7 +3418,10 @@ function dcSkuRows(x) {
     <td class="n"><b${s.utilisationPct >= s.planningThresholdPct ? ` class="t-bad"` : ""}>${
       pct(s.utilisationPct, 1)}</b>${s.peakPct > 100
         ? `<br><span class="t3">peak ${pct(s.peakPct, 0)}</span>` : ""}</td>
-    <td></td>
+    ${/* The threshold used to sit on the site row and be left blank here. The
+          site row no longer carries capacity figures, so it is stated per SKU
+          -- otherwise the column is empty in every row of the table. */""}
+    <td class="n t3">${s.planningThresholdPct == null ? "" : pct(s.planningThresholdPct, 0)}</td>
     <td class="n">${growth(s.growthPctPerWeek)}</td>
     <td class="n t3">${s.leadTimeWeeks}w</td>
     <td class="n">${s.weeksToDecide == null ? `<span class="t3">—</span>`
@@ -3569,25 +3572,26 @@ PAGES["/datacentres"] = async (view) => {
       <th class="n">Capacities</th>
       <th class="n">Total CU</th>
       <th class="n">Utilised CU</th>
-      ${th("Utilisation", "Capacity Units in use over Capacity Units deployed at this "
-         + "site. Unlike the region average above it, this is the figure a decision "
-         + "is actually taken on.", "n")}
+      ${th("Utilisation", "Capacity Units in use over Capacity Units deployed, stated per "
+         + "SKU \u2014 open a row to see them. There is no site figure here on purpose: "
+         + "CU does not pool between capacities, so a building average hides the one "
+         + "that is throttling.", "n")}
       ${th("Threshold", "The planning line the buy decision is taken against, fixed at "
-         + "80% for every site so that \u2018overdue\u2019 means the same thing in every "
-         + "row. Each building also has its own safety threshold, between 82.5% and 90%, "
-         + "which is what its forecast is judged against on its own page.", "n")}
-      ${th("Growth", "Percentage points of utilisation added per week, as the "
-         + "least-squares trend of this building\u2019s own daily record. There is no "
-         + "growth column in the source data \u2014 this is derived from the 150 days of "
-         + "CU consumption behind it, not read from a field.", "n")}
+         + "80% so that \u2018overdue\u2019 means the same thing in every row. Each "
+         + "building also has its own safety threshold, between 82.5% and 90%, which is "
+         + "what its forecast is judged against on its own page.", "n")}
+      ${th("Growth", "Percentage points of utilisation added per week per SKU, as the "
+         + "least-squares trend of that SKU\u2019s own daily record. There is no growth "
+         + "column in the source data \u2014 this is derived from the 150 days of CU "
+         + "consumption behind it, not read from a field.", "n")}
       ${th("Lead time", "How long capacity takes to arrive once ordered. Fixed at 12 "
          + "weeks across the estate.", "n")}
-      ${th("Weeks to decide", "How long until this site reaches the 80% planning line at "
-         + "its current growth rate. A dash means it is flat or shrinking, so there is no "
+      ${th("Weeks to decide", "How long until that SKU reaches the 80% planning line at its "
+         + "current growth rate. A dash means it is flat or shrinking, so there is no "
          + "date to work back from.", "n")}
-      ${th("Status", "Overdue when the runway is shorter than the 12-week lead time \u2014 "
-         + "capacity ordered today would arrive after the line is crossed, so the "
-         + "decision is already late.")}
+      ${th("Status", "Overdue when a SKU\u2019s runway is shorter than the 12-week lead "
+         + "time \u2014 capacity ordered today would arrive after the line is crossed, so "
+         + "the decision is already late.")}
       ${/* No Procurement column. It named a purchase -- "buy an F8" -- that
             Fabric does not have: you do not order capacity for a building, you
             scale the F SKU on a capacity, which is what the per-SKU rows
@@ -3601,7 +3605,11 @@ PAGES["/datacentres"] = async (view) => {
       ${/* No `procureSku` here either: matching on a column the reader cannot
             see means typing "F8" pulls up a site with no F8 anywhere on its
             row. The SKUs it actually holds are still matched. */""}
-      data-search="${esc(`${x.datacentre} ${x.region} ${x.topReason || ""} ${x.planningStatus} ${(x.skus || []).map((s) => s.sku).join(" ")}`)}">
+      ${/* The site status is no longer a column, so it is no longer matched here.
+            Each SKU carries its own, and those are what the row now shows when
+            it is opened -- typing "overdue" should find the sites that have an
+            overdue SKU in them. */""}
+      data-search="${esc(`${x.datacentre} ${x.region} ${x.topReason || ""} ${(x.skus || []).map((s) => s.sku + " " + s.planningStatus).join(" ")}`)}">
       <td>${esc(x.region)}</td>
       <td class="mono"><b>${esc(x.datacentre)}</b></td>
       <td class="sku-cell">${(x.skus && x.skus.length)
@@ -3612,26 +3620,24 @@ PAGES["/datacentres"] = async (view) => {
            <span class="sku-mix">${x.skus.map((s) => s.capacityCount > 1
              ? `${num(s.capacityCount)}&times;${esc(s.sku)}` : esc(s.sku)).join(" ")}</span>`
         : `<span class="t3">—</span>`}</td>
-      <td class="n">${x.capacityCount == null ? "—"
-        : `${num(x.capacityCount)}<br><span class="t3">${num(x.capacityUnits)} CU</span>`}</td>
-      <td class="n">${num(Math.round(x.totalCU))}</td>
-      <td class="n">${cu1(x.utilisedCU)}</td>
-      <td class="n"><b${x.siteUtilisationPct >= x.planningThresholdPct
-        ? ` class="t-bad"` : ""}>${pct(x.siteUtilisationPct, 1)}</b></td>
-      <td class="n t3">${pct(x.planningThresholdPct, 0)}</td>
-      ${/* Derived, not read: no growth column exists in the extract. */ ""}
-      <td class="n">${x.growthPctPerWeek == null ? `<span class="t3">—</span>`
-        : x.growthPctPerWeek > 0
-          ? `+${x.growthPctPerWeek.toFixed(2)}<span class="t3"> pp/wk</span>`
-          : `<span class="t3">${x.growthPctPerWeek.toFixed(2)} pp/wk</span>`}</td>
-      <td class="n t3">${x.leadTimeWeeks}w</td>
-      <td class="n">${x.weeksToDecide == null ? `<span class="t3">—</span>`
-        : x.weeksToDecide <= 0 ? `<b class="t-bad">now</b>`
-        : `<b${x.planningStatus === "overdue" ? ` class="t-bad"` : ""}>${
-             x.weeksToDecide.toFixed(1)}</b><span class="t3"> wks</span>`}</td>
-      <td>${x.planningStatus === "overdue"
-        ? `<span class="pill bad">Overdue</span>`
-        : `<span class="pill good">OK</span>`}</td>
+      ${/* The capacity columns are deliberately empty on the site row. A building
+            runs several F SKUs and CU does not pool between them, so a site
+            total is an average of things that cannot lend each other headroom:
+            an F64 at 40% next to an F8 at 95% reads as comfortable, and the
+            capacity that is actually throttling disappears into the mean. The
+            figures live on the per-SKU rows underneath, where the decision is
+            taken; open the row to see them. Requests, failures, customers,
+            revenue loss and risk stay here — those are the building’s own
+            incident record, not a sum over its SKUs. */ ""}
+      <td class="n"></td>
+      <td class="n"></td>
+      <td class="n"></td>
+      <td class="n"></td>
+      <td class="n"></td>
+      <td class="n"></td>
+      <td class="n"></td>
+      <td class="n"></td>
+      <td></td>
       <td class="n">${num(x.requests)}</td>
       <td class="n">${x.failed ? `<b style="color:var(--bad)">${num(x.failed)}</b>` : "—"}</td>
       <td class="n">${num(x.customers)}</td>
@@ -3639,7 +3645,7 @@ PAGES["/datacentres"] = async (view) => {
       <td>${x.topReason ? esc(x.topReason) : "—"}</td>
       <td class="risk-cell">${riskCell(x.risk)}</td>
     </tr>${dcSkuRows(x)}`).join("")}</tbody></table></div>`,
-    { hint: "click a row for detail · open a row for its SKUs", flush: true })}
+    { hint: "click a row for detail · open a row for its SKUs and their figures", flush: true })}
   <div id="dc-detail"></div>`;
 
   view.querySelectorAll("tr[data-dc]").forEach((tr) =>
