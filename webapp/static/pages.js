@@ -1650,30 +1650,35 @@ function mapDetail(d) {
 
       <h3 class="sec">When does it hit the threshold?</h3>
       ${whenBlock(d)}
-
-      <h3 class="sec">What has to change, and why?</h3>
-      ${changeBlock(d)}
-
-      <h3 class="sec">What is in each data centre?</h3>
-      ${sitesBlock(d)}
-
-      <!-- Was "N of M sites are past their own line", reading a totals field
-           nothing sends, so it read "0 of 10" everywhere. It could not be
-           fixed by supplying the field: a site has no line of its own in the
-           Fabric model. CU does not pool, so a data centre is not a thing that
-           fills up -- each capacity in it throttles on its own consumption.
-           What is countable, and what an admin acts on, is how many sites hold
-           a capacity that is throttling. -->
-      <p class="prov">
-        ${num((d.sites || []).filter((s) => s.throttlingCapacities > 0).length)}
-        of ${num(t.sites)} data centres hold at least one throttling capacity.
-        ${t.freeViewerCapable} of ${num(t.capacities)} capacities are F64 or larger, so Power BI
-        content on the rest needs a Pro or PPU licence per viewer.
-        Capacities, their CU consumption and their throttling history are generated;
-        the Fabric SKU ladder, the F64 rule and the workload availability above are real.
-      </p>
     </div>
-  </section>`;
+  </section>
+  ${tabPanel("map-detail-tabs", [
+    {
+      label: "What has to change, and why?",
+      body: `<div class="detail-tab-body">
+        ${changeBlock(d)}
+      </div>`,
+    },
+    {
+      label: "What is in each data centre?",
+      body: `<div class="detail-tab-body">
+        ${sitesBlock(d)}
+        <!-- Was "N of M sites are past their own line", reading a totals field
+             nothing sends, so it read "0 of 10" everywhere. It could not be
+             fixed by supplying the field: a site has no line of its own in the
+             Fabric model. CU does not pool, so a data centre is not a thing that
+             fills up -- each capacity in it throttles on its own consumption. -->
+        <p class="prov">
+          ${num((d.sites || []).filter((s) => s.throttlingCapacities > 0).length)}
+          of ${num(t.sites)} data centres hold at least one throttling capacity.
+          ${t.freeViewerCapable} of ${num(t.capacities)} capacities are F64 or larger, so Power BI
+          content on the rest needs a Pro or PPU licence per viewer.
+          Capacities, their CU consumption and their throttling history are generated;
+          the Fabric SKU ladder, the F64 rule and the workload availability above are real.
+        </p>
+      </div>`,
+    },
+  ], { label: "Region detail" })}`;
 }
 
 PAGES["/map"] = async (view) => {
@@ -1905,6 +1910,7 @@ view.innerHTML = howto({
         spinTo(camera, target, 620, (cam) => drawMap(next, cam));
       }
       detail.innerHTML = mapDetail(d);
+      wireTabs(detail);
       const close = $("detail-close");
       if (close) close.onclick = (ev) => { ev.preventDefault(); detail.innerHTML = ""; };
     } catch (err) {

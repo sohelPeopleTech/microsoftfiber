@@ -1105,7 +1105,7 @@ td.n, th.n { font-variant-numeric: tabular-nums; }
 .map-side .combo { flex: 1 1 100%; min-width: 0; }
 #map-side-body { padding: .85rem .95rem; }
 
-/* The dotted fence around a selected region and its sites. */
+/* The filled boundary around a selected region and its sites. */
 .fleet-map .region-fence, svg.globe .region-fence {
   pointer-events: none;
 }
@@ -1631,6 +1631,16 @@ td.risk-cell span { white-space: nowrap; }
 }
 
 .panel.tabbed > header .hint { margin-left: auto; align-self: center; }
+
+/* Region detail follows the review layout: the summary is one card, while
+  long recommendation and inventory tables occupy one focused tab at a time. */
+#map-detail-tabs { margin-top: 1.5rem; box-shadow: none; }
+#map-detail-tabs > header { padding: 0 1.25rem; }
+#map-detail-tabs .tab { font-size: .9rem; padding: .8rem .2rem; }
+#map-detail-tabs .detail-tab-body { padding: 1.25rem; }
+#map-detail-tabs .detail-tab-body > .change-group:last-child,
+#map-detail-tabs .detail-tab-body > .sites-note:last-child { margin-bottom: 0; }
+#map-detail-tabs .tablewrap { overflow-x: auto; }
 
 /* Overview breakdowns use the flatter table treatment from the review view:
    tabs, filters, and the table read as one continuous workspace. */

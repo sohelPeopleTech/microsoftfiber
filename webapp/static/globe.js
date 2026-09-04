@@ -28,6 +28,21 @@
 
 const RAD = Math.PI / 180;
 
+/* Simplified India mainland outline, in longitude/latitude. The map uses
+   Azure region names rather than country names, so centralindia is the
+   region that owns this geography. */
+const INDIA_BOUNDARY = [
+  [68.1, 23.7], [68.8, 22.0], [70.2, 20.5], [72.0, 20.0],
+  [72.8, 18.7], [73.5, 16.0], [74.2, 13.0], [75.4, 10.5],
+  [77.0, 8.3], [78.5, 8.2], [79.5, 10.4], [80.5, 12.2],
+  [80.3, 14.4], [81.4, 16.0], [83.0, 17.6], [84.8, 18.5],
+  [86.5, 19.8], [88.0, 21.4], [89.8, 22.2], [88.7, 24.0],
+  [89.8, 25.3], [88.2, 26.5], [88.2, 27.7], [86.7, 28.8],
+  [84.5, 28.4], [82.5, 29.8], [80.5, 30.5], [78.5, 30.8],
+  [76.5, 32.0], [74.5, 31.2], [72.5, 30.0], [70.7, 28.0],
+  [69.4, 26.0], [68.1, 23.7],
+];
+
 /* The coastlines as longitude/latitude rings, parsed once.
 
    Kept lazily rather than at load: the map is one screen of twelve, and
@@ -221,32 +236,51 @@ function globeMap(d, view, focus) {
     return { st, ringDeg, ...project(lon, lat, lon0, lat0, r, cx, cy) };
   });
 
-  /* A dotted boundary enclosing the region and everything in it.
+  /* A filled boundary enclosing the selected marker and its sites.
 
-     With the sites scattered rather than ringed, nothing said where the region
-     ended -- a scattered site and an unrelated neighbouring region marker look
-     the same. The ring is drawn in true longitude and latitude, so it curves
-     and foreshortens with the globe instead of being a flat circle pasted on
-     top, and it is sized to enclose the furthest site with a margin. */
+     The old dotted circle described a radius around the cluster, but it did
+     not read as a selected geography. A padded convex hull gives the selected
+     region a country-like silhouette that follows the actual site spread and
+     stays stable while the globe rotates. */
   const boundary = (() => {
-    if (!hit || !sitePts.length) return "";
-    const span = Math.max(...sitePts.map((s) => s.ringDeg)) + 1.9;
-    const pts = [];
-    for (let k = 0; k <= 72; k++) {
-      const a = (k / 72) * Math.PI * 2;
-      const lat = hit.lat + Math.sin(a) * span;
-      const lon = hit.lon + Math.cos(a) * span / Math.max(0.25, Math.cos(hit.lat * RAD));
-      const q = project(lon, lat, lon0, lat0, r, cx, cy);
-      // Points past the horizon are dropped; the ring is closed by whatever
-      // remains, so a region near the limb shows the part of its boundary that
-      // is actually facing the reader rather than a line across the globe.
-      if (q.front > 0) pts.push(`${q.x.toFixed(1)},${q.y.toFixed(1)}`);
+    if (hit && focus.region === "centralindia") {
+      const points = INDIA_BOUNDARY.map(([lon, lat]) => {
+        const point = project(lon, lat, lon0, lat0, r, cx, cy);
+        return `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+      }).join(" ");
+      return `<polygon class="region-fence country-fence" points="${points}"
+        fill="var(--brand)" fill-opacity=".14"
+        stroke="var(--brand)" stroke-width="1.8" stroke-dasharray="6 5"
+        stroke-linejoin="round" opacity=".92" pointer-events="none"/>`;
     }
-    if (pts.length < 8) return "";
-    return `<polygon class="region-fence" points="${pts.join(" ")}"
-      fill="var(--brand)" fill-opacity=".05"
-      stroke="var(--brand)" stroke-width="1.4" stroke-dasharray="5 4"
-      stroke-linejoin="round" opacity=".75" pointer-events="none"/>`;
+    if (!hit || !sitePts.length) return "";
+    const source = [{ x: hit.x, y: hit.y }, ...sitePts.map((s) => ({ x: s.x, y: s.y }))];
+    const sorted = source.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+    const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    const lower = [];
+    sorted.forEach((p) => {
+      while (lower.length > 1 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+      lower.push(p);
+    });
+    const upper = [];
+    sorted.slice().reverse().forEach((p) => {
+      while (upper.length > 1 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+      upper.push(p);
+    });
+    const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
+    if (hull.length < 3) return "";
+    const centre = hull.reduce((sum, p) => ({
+      x: sum.x + p.x / hull.length, y: sum.y + p.y / hull.length,
+    }), { x: 0, y: 0 });
+    const padded = hull.map((p) => {
+      const dx = p.x - centre.x, dy = p.y - centre.y;
+      const length = Math.hypot(dx, dy) || 1;
+      return `${(p.x + dx / length * 14).toFixed(1)},${(p.y + dy / length * 14).toFixed(1)}`;
+    });
+    return `<polygon class="region-fence" points="${padded.join(" ")}"
+      fill="var(--brand)" fill-opacity=".13"
+      stroke="var(--brand)" stroke-width="1.8" stroke-dasharray="6 5"
+      stroke-linejoin="round" opacity=".92" pointer-events="none"/>`;
   })();
 
   return `<svg class="chart globe" viewBox="0 0 ${S} ${S}" role="img"
@@ -269,6 +303,7 @@ function globeMap(d, view, focus) {
     </g>
     <circle cx="${cx}" cy="${cy}" r="${r.toFixed(1)}" fill="none"
       stroke="var(--globe-rim)" stroke-width="1"/>
+    ${boundary}
     ${pts.filter((p) => p.front > 0).map((p) => `
       <circle class="mk" data-region="${esc(p.region)}"
         cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${radius(p.capacityUnits).toFixed(1)}"
@@ -277,7 +312,6 @@ function globeMap(d, view, focus) {
         aria-label="${esc(p.region)}, ${p.utilisation}% used${
           p.lat != null ? `, at ${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}` : ""}">
       </circle>`).join("")}
-    ${boundary}
     ${sitePts.filter((s) => s.front > 0).map((s) => `
       <line ${spoke(s, hit, radius(hit.capacityUnits))}
         stroke="var(--globe-rim)" stroke-width=".8" opacity=".4"/>
