@@ -159,6 +159,14 @@ function title(h1, sub) {
   return `<h1 class="page-title">${esc(h1)}</h1><p class="page-sub">${esc(sub)}</p>`;
 }
 
+function breadcrumbs(items) {
+  return `<nav class="breadcrumbs" aria-label="Breadcrumb">
+    ${items.map((item, i) => `${i ? `<span class="breadcrumbs-sep" aria-hidden="true">›</span>` : ""}${item.href
+      ? `<a href="${esc(item.href)}" data-nav>${esc(item.label)}</a>`
+      : `<span aria-current="page">${esc(item.label)}</span>`}`).join("")}
+  </nav>`;
+}
+
 /* ------------------------------------------------- the "how to read" panel */
 
 /* One panel for the whole app, mounted on <body> and refilled per page.
@@ -344,7 +352,11 @@ function kpi(label, value, sub, tone = "", help = "") {
    tooltip is still better than silence. */
 function info(text) {
   return ` <span class="info" tabindex="0" role="button" aria-label="${esc(text)}"
-    data-info="${esc(text)}" title="${esc(text)}">i</span>`;
+    data-info="${esc(text)}" title="${esc(text)}"><svg viewBox="0 0 16 16"
+      aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none"
+      stroke="currentColor" stroke-width="1.5"/><path d="M8 7.2v4"
+      stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="8" cy="4.7" r=".8" fill="currentColor"/></svg></span>`;
 }
 
 /* One tooltip element, and one set of listeners on the document.
@@ -410,7 +422,7 @@ function th(label, help, cls = "", colKey = null) {
   const labelHtml = colKey
     ? `<button type="button" class="th-sort-btn" aria-label="Sort by ${esc(label)}">
          <span class="th-label">${esc(label)}</span>
-         <span class="sort-ind idle" aria-hidden="true">▾</span>
+         <span class="sort-ind idle" aria-hidden="true">▲</span>
        </button>`
     : `<span class="th-label">${esc(label)}</span>`;
   return `<th${classes ? ` class="${classes}"` : ""}${

@@ -2244,7 +2244,7 @@ PAGES["/regions"] = async (view) => {
     const arrow = (c) => {
       const on = c.key === sort.key;
       const dir = on ? (sort.asc ? "asc" : "desc") : "idle";
-      const glyph = on ? (sort.asc ? "▲" : "▼") : "▾";
+      const glyph = on ? (sort.asc ? "▲" : "▼") : "▲";
       return `<span class="sort-ind ${dir}" aria-hidden="true">${glyph}</span>`;
     };
 
@@ -2684,7 +2684,7 @@ PAGES["/region"] = async (view, name, showAll = false) => {
     <a href="/datacentres">All data centres</a></p>`);
 
   view.querySelectorAll("tr[data-dc]").forEach((tr) =>
-    (tr.onclick = () => navigate(`/datacentre/${encodeURIComponent(tr.dataset.dc)}`)));
+    (tr.onclick = () => navigate(`/datacentre/${encodeURIComponent(tr.dataset.dc)}?from=region`)));
   wireRegisterToggle(view, "region", () => PAGES["/region"](view, name, true));
 };
 
@@ -3228,7 +3228,10 @@ PAGES["/capacity"] = async (view, id) => {
   const h = d.health;
   const bad = h.throttledDays > 0;
 
-  view.innerHTML = title(d.capacityId,
+  view.innerHTML = breadcrumbs([
+    { label: "Fleet Map", href: "/" },
+    { label: d.capacityId },
+  ]) + title(d.capacityId,
     `${d.fabricSku} · ${num(d.capacityUnits)} Capacity Units · in ${d.datacentre}, ${d.region}`) + `
 
   <div class="kpis">
@@ -3252,49 +3255,71 @@ PAGES["/capacity"] = async (view, id) => {
       <div class="sub">${num(h.interactiveRejected)} interactive · ${num(h.backgroundRejected)} background</div></div>
   </div>
 
-  ${d.recommendations.length ? panel("What to do about it",
-    changeBlock({ region: d.region, recommendations: d.recommendations.reduce((a, r) => {
-      (a[r.kind] = a[r.kind] || []).push(r); return a; }, {}) }), { flush: true }) : ""}
-
-  ${panel("How it consumes capacity", `
-    <div class="tablewrap"><table class="grid"><tbody>
-      <tr><th>SKU</th><td><b>${esc(d.fabricSku)}</b> — ${num(d.capacityUnits)} Capacity Units</td></tr>
-      <tr><th>A day of it</th><td>${num(d.cuSecondsPerDay)} CU seconds
-        <span class="t3">(${num(d.capacityUnits)} CU × 86,400 seconds)</span></td></tr>
-      <tr><th>Free viewers</th><td>${d.supportsFreeViewers
-        ? `<span class="pill good">F64+</span> a Free licence can read Power BI here`
-        : `<span class="pill wash">Pro needed</span> below F64, every Power BI viewer needs Pro or PPU`}</td></tr>
-    </tbody></table></div>
-    <p style="color:var(--ink-3);font-size:.78rem;margin:.6rem 0 0">${esc(h.policy)}</p>`)}
-
-  ${panel(`Workspaces — ${d.workspaces.length}`, d.workspaces.length ? `
-    <div class="tablewrap"><table class="grid">
-      <thead><tr><th>Workspace</th><th>Primary workload</th><th class="n">Share of this capacity</th></tr></thead>
-      <tbody>${d.workspaces.map((w) => `<tr>
-        <td><b>${esc(w.WorkspaceName)}</b><span class="t3">${esc(w.WorkspaceId)}</span></td>
-        <td>${esc(w.PrimaryWorkload)}</td>
-        <td class="n ${w.ShareOfCapacityPct >= 55 ? "t-warn" : ""}">${pct(w.ShareOfCapacityPct, 0)}</td>
-      </tr>`).join("")}</tbody></table></div>`
-    : `<p class="empty">No workspaces assigned.</p>`)}
-
-  ${panel(`Throttling events — ${d.throttlingEvents.length}`, d.throttlingEvents.length ? `
-    <div class="tablewrap"><table class="grid">
-      <thead><tr><th>Date</th><th>Stage</th><th class="n">Into future capacity</th>
-        <th class="n">Interactive refused</th><th class="n">Background refused</th><th>Effect</th></tr></thead>
-      <tbody>${d.throttlingEvents.map((e) => `<tr>
-        <td>${esc(e.Date)}</td>
-        <td>${stageCell(e.Stage, (e.Stage || "").replace(/_/g, " "))}</td>
-        <td class="n">${num(Math.round(e.FutureCapacityMinutes))} min</td>
-        <td class="n">${num(e.InteractiveRejected)}</td>
-        <td class="n">${num(e.BackgroundRejected)}</td>
-        <td class="t3">${esc(e.Effect)}</td>
-      </tr>`).join("")}</tbody></table></div>`
-    : `<p class="empty">This capacity has never throttled.</p>`)}
+  ${tabPanel("capacity-detail-tabs", [
+    {
+      label: "What to do about it",
+      count: d.recommendations.length,
+      hint: "recommended actions for this capacity",
+      body: `<div class="capacity-tab-body">${d.recommendations.length
+        ? changeBlock({ region: d.region, recommendations: d.recommendations.reduce((a, r) => {
+            (a[r.kind] = a[r.kind] || []).push(r); return a;
+          }, {}) })
+        : `<p class="empty">Nothing outstanding here.</p>`}</div>`,
+    },
+    {
+      label: "How it consumes capacity",
+      hint: "SKU, CU usage, and viewer licensing",
+      body: `<div class="capacity-tab-body">
+        <div class="tablewrap"><table class="grid"><tbody>
+          <tr><th>SKU</th><td><b>${esc(d.fabricSku)}</b> — ${num(d.capacityUnits)} Capacity Units</td></tr>
+          <tr><th>A day of it</th><td>${num(d.cuSecondsPerDay)} CU seconds
+            <span class="t3">(${num(d.capacityUnits)} CU × 86,400 seconds)</span></td></tr>
+          <tr><th>Free viewers</th><td>${d.supportsFreeViewers
+            ? `<span class="pill good">F64+</span> a Free licence can read Power BI here`
+            : `<span class="pill wash">Pro needed</span> below F64, every Power BI viewer needs Pro or PPU`}</td></tr>
+        </tbody></table></div>
+        <p class="capacity-note">${esc(h.policy)}</p>
+      </div>`,
+    },
+    {
+      label: "Workspaces",
+      count: d.workspaces.length,
+      hint: "workloads assigned to this capacity",
+      body: `<div class="capacity-tab-body">${d.workspaces.length ? `
+        <div class="tablewrap"><table class="grid">
+          <thead><tr><th>Workspace</th><th>Primary workload</th><th class="n">Share of this capacity</th></tr></thead>
+          <tbody>${d.workspaces.map((w) => `<tr>
+            <td><b>${esc(w.WorkspaceName)}</b><span class="t3">${esc(w.WorkspaceId)}</span></td>
+            <td>${esc(w.PrimaryWorkload)}</td>
+            <td class="n ${w.ShareOfCapacityPct >= 55 ? "t-warn" : ""}">${pct(w.ShareOfCapacityPct, 0)}</td>
+          </tr>`).join("")}</tbody></table></div>`
+        : `<p class="empty">No workspaces assigned.</p>`}</div>`,
+    },
+    {
+      label: "Throttling events",
+      count: d.throttlingEvents.length,
+      hint: "recorded throttling history",
+      body: `<div class="capacity-tab-body">${d.throttlingEvents.length ? `
+        <div class="tablewrap"><table class="grid">
+          <thead><tr><th>Date</th><th>Stage</th><th class="n">Into future capacity</th>
+            <th class="n">Interactive refused</th><th class="n">Background refused</th><th>Effect</th></tr></thead>
+          <tbody>${d.throttlingEvents.map((e) => `<tr>
+            <td>${esc(e.Date)}</td>
+            <td>${stageCell(e.Stage, (e.Stage || "").replace(/_/g, " "))}</td>
+            <td class="n">${num(Math.round(e.FutureCapacityMinutes))} min</td>
+            <td class="n">${num(e.InteractiveRejected)}</td>
+            <td class="n">${num(e.BackgroundRejected)}</td>
+            <td class="t3">${esc(e.Effect)}</td>
+          </tr>`).join("")}</tbody></table></div>`
+        : `<p class="empty">This capacity has never throttled.</p>`}</div>`,
+    },
+  ], { label: "Capacity detail" })}
 
   <p style="margin:1.5rem 0 0">
     <a href="/datacentre/${encodeURIComponent(d.datacentre)}">← ${esc(d.datacentre)}</a>
     &nbsp;·&nbsp; <a href="/region/${encodeURIComponent(d.region)}">${esc(d.region)}</a>
   </p>`;
+  wireTabs(view);
 };
 
 PAGES["/methodology"] = async (view) => {
@@ -3773,7 +3798,7 @@ PAGES["/datacentres"] = async (view) => {
   <div id="dc-detail"></div>`;
 
   view.querySelectorAll("tr[data-dc]").forEach((tr) =>
-    (tr.onclick = () => navigate(`/datacentre/${encodeURIComponent(tr.dataset.dc)}`)));
+    (tr.onclick = () => navigate(`/datacentre/${encodeURIComponent(tr.dataset.dc)}?from=datacentres`)));
 
   /* The per-SKU rows sit in the DOM right after their data centre. They are
      shown only when that row is open, and hidden the moment the filter takes
@@ -3820,6 +3845,7 @@ PAGES["/datacentres"] = async (view) => {
 PAGES["/datacentre"] = async (view, id, showAll = false) => {
   if (!id) { view.innerHTML = `<p class="error">No data centre selected.</p>`; return; }
   const x = await get(`/api/datacentre/${encodeURIComponent(id)}`);
+  const fromRegion = typeof showAll === "string" && new URLSearchParams(showAll).get("from") === "region";
   const labels = x.componentLabels || {};
   const over = x.headroom != null && x.headroom < 0;
 
@@ -3839,7 +3865,14 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
     ],
     next: "Read the crossing date, then the capacity list beneath it — that is what would be scaled to move the date. Action the remediation for the highest-cost cause; causes marked manual review require engineering or account-team engagement.",
     sources: "ICM capacity requests attributed to this facility, the Fabric capacities in it, and this facility's own daily CU consumption record.",
-  }) + title(`Data centre: ${x.datacentre}`,
+  }) + breadcrumbs(fromRegion ? [
+    { label: "Region", href: `/region/${encodeURIComponent(x.region)}` },
+    { label: x.region },
+    { label: x.datacentre },
+  ] : [
+    { label: "Data centres", href: "/datacentres" },
+    { label: x.datacentre },
+  ]) + title(`Data centre: ${x.datacentre}`,
              `In ${x.region} · ${num(x.fabric.capacityCount)} Fabric capacities · ${num(x.fabric.capacityUnits)} CU`
              + (x.fabric.throttling ? ` · ${num(x.fabric.throttling)} throttling` : "")) + `
 
@@ -3865,6 +3898,7 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
     therefore driven mainly by utilisation and throttling, which are measured
     continuously, until this facility has more history behind it.</p>` : ""}
 
+  <div id="dc-detail-grid-source">
   ${panel(`What is in this data centre — ${num(x.fabric.capacityCount)} Fabric capacities`,
     x.fabric.capacityCount ? `
     <p style="margin:0 0 .9rem;color:var(--ink-2);font-size:.88rem">
@@ -3983,6 +4017,7 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
   <div id="dc-forecast"></div>
   <div id="dc-caps"></div>
   <div id="dc-demand"></div>
+  </div>
 
   <p style="margin:1.5rem 0 0">
     <a href="/region/${encodeURIComponent(x.region)}">← Back to ${esc(x.region)}</a>
@@ -4002,6 +4037,33 @@ PAGES["/datacentre"] = async (view, id, showAll = false) => {
   $("dc-caps").innerHTML = await capacityPanel("datacentre", id);
   $("dc-demand").innerHTML = await demandPanels("datacentre", id);
   wireCharts($("dc-demand"));
+
+  const gridSource = $("dc-detail-grid-source");
+  const gridItems = [
+    { label: "What is in this data centre", hint: "Fabric capacities and their current state", node: gridSource.querySelector(".panel") },
+    { label: "Recommended remediation", hint: "Actions to reduce risk and revenue loss", node: [...gridSource.querySelectorAll(".panel")][1] },
+    { label: "Risk index breakdown", hint: "How this site's risk score is formed", node: [...gridSource.querySelectorAll(".panel")][2] },
+    { label: "Incident register", hint: "Requests and revenue-loss evidence", node: [...gridSource.querySelectorAll(".panel")][3] },
+    { label: "Forecast", hint: "When this data centre reaches its threshold", node: $("dc-forecast") },
+    { label: "Capacity history", hint: "Utilisation history and projection", node: $("dc-caps") },
+    { label: "Demand and utilisation", hint: "Requested capacity against actual usage", node: $("dc-demand") },
+  ].filter((item) => item.node);
+  const tabSection = document.createElement("section");
+  tabSection.className = "panel tabbed datacentre-detail-tabs";
+  tabSection.id = "datacentre-detail-tabs";
+  tabSection.innerHTML = `<header role="tablist" aria-label="Data centre detail">
+    ${gridItems.map((item, i) => `<button type="button" class="tab" role="tab"
+      id="datacentre-detail-tab-${i}" aria-controls="datacentre-detail-body-${i}"
+      aria-selected="${i === 0}" tabindex="${i === 0 ? 0 : -1}"
+      data-hint="${esc(item.hint)}">${esc(item.label)}${item.label === "What is in this data centre" ? ` <span class="tab-n">${num(x.fabric.capacityCount)}</span>` : ""}</button>`).join("")}
+    <span class="hint" data-tab-hint>${esc(gridItems[0]?.hint || "")}</span>
+  </header><div class="body flush">
+    ${gridItems.map((item, i) => `<div class="tab-body" role="tabpanel"
+      id="datacentre-detail-body-${i}" aria-labelledby="datacentre-detail-tab-${i}"${i ? " hidden" : ""}></div>`).join("")}
+  </div>`;
+  gridItems.forEach((item, i) => tabSection.querySelector(`#datacentre-detail-body-${i}`).appendChild(item.node));
+  gridSource.replaceWith(tabSection);
+  wireTabs(view);
 
   wireRegisterToggle(view, "dc", () => PAGES["/datacentre"](view, id, true));
 };
