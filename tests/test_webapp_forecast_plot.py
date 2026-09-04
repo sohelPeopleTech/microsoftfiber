@@ -183,7 +183,7 @@ def test_no_forecast_axis_goes_above_full():
 
 def test_the_forecast_title_never_prints_a_null_threshold():
     """`thresholdPct` is null in the normal case -- every region is judged
-    against the line its own data centres hold, and only the what-if control
+    against the line its own capacity pools hold, and only the what-if control
     forces one figure on all of them. Interpolated raw it read "11 regions
     projected against a null% safety line"."""
     import sys

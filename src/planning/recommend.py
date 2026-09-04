@@ -3,7 +3,7 @@
 Each answers a question the utilisation figure cannot on its own:
 
     scale_up      it is throttling -- users are being delayed or refused
-    load_balance  one workspace is the whole problem; move that, not the SKU
+    load_balance  one workload is the whole problem; move that, not the SKU
     scale_down    it is idle, and an F SKU bills per second whether used or not
     licensing     it is fine, but only paid licences can read Power BI on it
 
@@ -17,7 +17,8 @@ from __future__ import annotations
 import pandas as pd
 
 from . import (
-    DOMINANT_WORKSPACE_PCT,
+    DOMINANT_WORKLOAD_PCT,
+    SITE_TYPE_DEDICATED,
     FREE_VIEWER_CU,
     FREE_VIEWER_SKU,
     F_SKUS,
@@ -134,14 +135,20 @@ def scale_up(entities, window_days: int = 30) -> list[Recommendation]:
 
 
 def load_balance(entities, window_days: int = 30) -> list[Recommendation]:
-    """Throttling capacities where one workspace is most of the consumption.
+    """Throttling capacities where one workload is most of the consumption.
 
     Microsoft names load balancing across capacities alongside scaling, and it
-    is the cheaper answer when the cause is concentrated: moving one workspace
+    is the cheaper answer when the cause is concentrated: moving one workload
     costs nothing per second, where the next SKU up bills continuously.
 
+    **Shared sites only.** On a dedicated site each capacity carries exactly one
+    workload at 100% of it, so a rule that fires on share alone would fire on
+    every capacity in half the fleet and recommend a move that means nothing --
+    the workload *is* the capacity, and moving it does not relieve anything, it
+    empties one building into another. Scaling the rung is the lever there.
+
     Only offered when there is somewhere to move to -- a quieter capacity in the
-    same region with room for the workspace. Advice to move something nowhere is
+    same region with room for the workload. Advice to move something nowhere is
     not advice.
     """
     health = _health(entities, window_days)
@@ -152,15 +159,21 @@ def load_balance(entities, window_days: int = 30) -> list[Recommendation]:
     for c in health.itertuples():
         if c.ThrottledDays < THROTTLED_DAYS_FOR_SCALE:
             continue
+        # Dedicated sites are out by construction, not by accident: their
+        # capacities carry one workload at 100%, which is the shape of the site
+        # rather than a concentration anybody can act on.
+        if str(getattr(c, "SiteType", "")) == SITE_TYPE_DEDICATED:
+            continue
         here = ws[ws["CapacityId"] == c.CapacityId]
-        # Balancing needs something to balance. A capacity hosting one
-        # workspace at 100% cannot be rebalanced -- moving it empties the
-        # capacity, which is a consolidation decision and a different
-        # conversation from "spread this load".
+        # Balancing needs something to balance. A capacity hosting one workload
+        # at 100% cannot be rebalanced -- moving it empties the capacity, which
+        # is a consolidation decision and a different conversation from "spread
+        # this load". Kept as well as the site-type guard, so a shared capacity
+        # that happens to hold one workload is excluded too.
         if len(here) < 2:
             continue
         top = here.sort_values("ShareOfCapacityPct", ascending=False).iloc[0]
-        if float(top["ShareOfCapacityPct"]) < DOMINANT_WORKSPACE_PCT:
+        if float(top["ShareOfCapacityPct"]) < DOMINANT_WORKLOAD_PCT:
             continue
 
         # Somewhere quieter in the same region, with room for what moves.
@@ -175,15 +188,16 @@ def load_balance(entities, window_days: int = 30) -> list[Recommendation]:
 
         out.append(Recommendation(
             kind="load_balance", scope="capacity", target=c.CapacityId,
-            headline=(f"Move {top['WorkspaceName']} off {c.CapacityId} — one "
-                      f"workspace is {top['ShareOfCapacityPct']:.0f}% of it"),
+            headline=(f"Move {top['WorkloadName']} off {c.CapacityId} — one "
+                      f"workload is {top['ShareOfCapacityPct']:.0f}% of it"),
             detail=(
                 f"{c.CapacityId} threw {STAGE_LABEL.get(c.WorstStage, c.WorstStage)} "
-                f"on {c.ThrottledDays} of {c.WindowDays} days, and one workspace "
-                f"— {top['WorkspaceName']}, running {top['PrimaryWorkload']} — "
+                f"on {c.ThrottledDays} of {c.WindowDays} days, and one workload "
+                f"— {top['WorkloadName']}, running {top['FabricWorkloadType']} — "
                 f"accounts for {top['ShareOfCapacityPct']:.0f}% of what it "
-                f"consumes, with {len(here) - 1} other workspace(s) sharing the "
-                f"rest. Moving that one to {dest.CapacityId} "
+                f"consumes, with {len(here) - 1} other workload(s) sharing the "
+                f"rest. This is a shared site, so that is a move it can absorb. "
+                f"Moving that one to {dest.CapacityId} "
                 f"({dest.FabricSku}, averaging {dest.MeanUtilisationPct:.0f}% and "
                 f"not throttling) rebalances without changing either SKU, which "
                 f"costs nothing per second where scaling up bills continuously. "
@@ -195,11 +209,12 @@ def load_balance(entities, window_days: int = 30) -> list[Recommendation]:
             evidence={
                 "region": c.Region, "datacentre": c.DatacentreId,
                 "fabricSku": c.FabricSku, "capacityUnits": int(c.CapacityUnits),
-                "workspace": top["WorkspaceName"],
-                "workspaceId": top["WorkspaceId"],
-                "workspaceWorkload": top["PrimaryWorkload"],
-                "workspaceSharePct": float(top["ShareOfCapacityPct"]),
-                "workspacesOnCapacity": int(len(here)),
+                "siteType": str(getattr(c, "SiteType", "")),
+                "workload": top["WorkloadName"],
+                "workloadId": top["WorkspaceId"],
+                "workloadType": top["FabricWorkloadType"],
+                "workloadSharePct": float(top["ShareOfCapacityPct"]),
+                "workloadsOnCapacity": int(len(here)),
                 "moveTo": dest.CapacityId,
                 "moveToSku": dest.FabricSku,
                 "moveToUtilisationPct": float(dest.MeanUtilisationPct),
@@ -296,7 +311,7 @@ def licensing(entities, window_days: int = 30) -> list[Recommendation]:
         if cap.CapacityUnits >= FREE_VIEWER_CU or step != FREE_VIEWER_SKU:
             continue
         here = ws[ws["CapacityId"] == cap.CapacityId]
-        pbi = here[here["PrimaryWorkload"] == "Power BI"]
+        pbi = here[here["FabricWorkloadType"] == "Power BI"]
         out.append(Recommendation(
             kind="licensing", scope="capacity", target=cap.CapacityId,
             headline=(f"{cap.CapacityId} is one step below {FREE_VIEWER_SKU} — "
@@ -308,11 +323,11 @@ def licensing(entities, window_days: int = 30) -> list[Recommendation]:
                 f"larger a Free licence and a viewer role are enough. Stepping up "
                 f"doubles the capacity units to {FREE_VIEWER_CU} and removes the "
                 f"per-viewer licence entirely. "
-                + (f"{len(pbi)} of the {len(here)} workspaces here run Power BI "
-                   f"as their primary workload."
+                + (f"{len(pbi)} of the {len(here)} workload(s) here run Power BI "
+                   f"as their Fabric workload type."
                    if len(pbi) else
-                   f"None of the {len(here)} workspaces here runs Power BI as its "
-                   f"primary workload, so size the viewer population before acting.")
+                   f"None of the {len(here)} workload(s) here runs Power BI, so "
+                   f"size the viewer population before acting.")
             ),
             urgency=round(20.0 + len(pbi) * 6, 1),
             evidence={
@@ -320,8 +335,8 @@ def licensing(entities, window_days: int = 30) -> list[Recommendation]:
                 "fabricSku": cap.FabricSku,
                 "capacityUnits": int(cap.CapacityUnits),
                 "stepTo": FREE_VIEWER_SKU, "stepToUnits": FREE_VIEWER_CU,
-                "workspaces": int(len(here)),
-                "powerBiWorkspaces": int(len(pbi)),
+                "workloads": int(len(here)),
+                "powerBiWorkloads": int(len(pbi)),
                 "rule": ("Fabric licensing: F64 or larger lets Free-licensed users "
                          "view Power BI content with a viewer role; below F64 each "
                          "viewer needs Pro, PPU or a trial."),

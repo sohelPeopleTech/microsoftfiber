@@ -1,7 +1,7 @@
 """Forecast the crossing, subtract the decision window, flag what is due.
 
 Everything here is arithmetic on a fitted trend. There is no model to trust and
-no threshold buried in code -- the safety line, the horizon, the trend window
+no threshold buried in code -- the capacity threshold, the horizon, the trend window
 and the decision window are all parameters, so a reviewer can move them and
 watch the answer move.
 
@@ -34,10 +34,18 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 
-#: Flag before usage crosses this share of deployed capacity. The design doc
-#: suggests 85%; it is a parameter because the right number is a policy choice
-#: about how much headroom the business wants to carry.
-DEFAULT_THRESHOLD_PCT = 85.0
+#: Flag before usage crosses this share of deployed capacity.
+#:
+#: THE one capacity threshold for the whole estate. Every site, every region, every
+#: forecast and every screen is judged against this single number -- it is
+#: imported rather than restated, so there is nowhere for a second figure to
+#: appear. It was 85% here while sites carried 80/85/90 and regions carried the
+#: capacity-weighted mean of those, so the same fleet was described against
+#: three different lines at once and a region could advertise "83.0%".
+#:
+#: Still a parameter, because how much headroom to carry is a policy choice --
+#: but a policy choice made once.
+DEFAULT_THRESHOLD_PCT = 80.0
 
 #: Days of history the trend is fitted on. Long enough to survive a weekend
 #: dip, short enough to notice a change in direction.
@@ -128,10 +136,10 @@ def project_region(
     crossing_for=None,
     decision_window_days: int = DEFAULT_DECISION_WINDOW_DAYS,
 ) -> ThresholdFlag:
-    """When does this region cross its own safety threshold?
+    """When does this region cross its own capacity threshold?
 
     `threshold_pct` is an override. Left as None -- which is the normal case --
-    the region's own threshold is used, because a safety line is a property of a
+    the region's own threshold is used, because a capacity threshold is a property of a
     region rather than one figure imposed on all of them: review put it as "this
     is a high utilised region, why should I keep the same threshold as a low
     utilisation region". Passing a value forces every region to that line, which

@@ -321,8 +321,8 @@ def test_the_working_out_line_reconciles_when_a_reader_checks_it():
 
 
 def test_every_ticket_is_attributed_to_a_datacentre_in_its_own_region():
-    """Region -> data centre -> ticket is the drill-down an engineer works in.
-    A ticket attributed to a data centre in the wrong region would make the
+    """Region -> capacity pool -> ticket is the drill-down an engineer works in.
+    A ticket attributed to a capacity pool in the wrong region would make the
     region totals and the data-centre totals disagree."""
     import dimensional
 
@@ -330,7 +330,7 @@ def test_every_ticket_is_attributed_to_a_datacentre_in_its_own_region():
     fact, dim = entities["fact_capacity_request"], entities["dim_datacentre"]
     by_dc = dict(zip(dim["DatacentreId"], dim["Region"], strict=True))
 
-    assert fact["DatacentreId"].notna().all(), "every ticket needs a data centre"
+    assert fact["DatacentreId"].notna().all(), "every ticket needs a capacity pool"
     for row in fact.itertuples():
         assert by_dc[row.DatacentreId] == row.Region, row.IncidentId
 
@@ -393,7 +393,7 @@ def test_outcome_labels_use_the_vocabulary_the_review_asked_for():
     labels = api.overview()["outcomeLabels"]
     assert "FTR" in labels["no_denial"]
     assert "SLA" in labels["same_day_approved"]
-    assert "SLA breached" in labels["denied_then_approved_late"]
+    assert "SLA delayed" in labels["denied_then_approved_late"]
     assert "Not approved" in labels["denied_unfulfilled"]
 
 
@@ -565,7 +565,7 @@ def test_methodology_publishes_the_weights_the_run_used():
 def test_every_ticket_row_carries_its_site_and_reason():
     """Module 5 loads tickets through its own ingest path, which never sees the
     two columns the dimensional model adds. Reading them off that frame with getattr
-    silently produced "" for every row -- the Data centre column rendered blank
+    silently produced "" for every row -- the Capacity Pool column rendered blank
     and every Reason showed a dash, while the panel directly above the table
     listed the same reasons correctly.
     """
@@ -610,7 +610,7 @@ def test_every_explainer_supplies_every_field_it_renders():
 def test_the_scale_calculator_works_on_a_capacity_not_a_building():
     """You scale a capacity, not a country and not a building.
 
-    The calculator this replaced asked which data centre to take offline and
+    The calculator this replaced asked which capacity pool to take offline and
     which hardware class to convert it to. Fabric exposes neither, and the unit
     an admin actually changes is one capacity's F SKU.
     """
@@ -733,7 +733,7 @@ def test_customers_are_named_not_just_numbered():
 def test_one_failure_count_everywhere():
     """The screen previously carried both a denial count and a failure count,
     and a row could show "Failed 1" beside a recommendation saying "2 requests
-    failed". One definition now: SLA breached, or never fulfilled.
+    failed". One definition now: SLA delayed, or never fulfilled.
     """
     for region in api.overview()["regions"]:
         d = api.region_detail(region["region"])
@@ -752,7 +752,7 @@ def test_every_site_in_the_region_is_listed():
     threshold. The page leads with threshold status, so a table filtered by
     failures was answering a different question from the one in the heading.
 
-    A data centre over its line with nothing yet failed is precisely the case
+    A capacity pool over its line with nothing yet failed is precisely the case
     worth seeing, because it is the one still cheap to fix.
     """
     entities = api.get_entities()
@@ -867,12 +867,22 @@ def test_an_imposed_model_still_reports_the_full_ranking():
 
 
 def test_a_crossing_date_carries_its_uncertainty():
-    """A single date implies a precision 150 days of history cannot support."""
+    """A single date implies a precision 150 days of history cannot support.
+
+    The optimistic edge of the band is a forecast too, and it does not always
+    reach the line inside the horizon: eastus crosses the 80% line in December
+    on the central projection while the lower edge never gets there within the
+    year. That end of the range is then genuinely open, and `crossingLatest` is
+    null rather than a date nobody computed -- what must not happen is a
+    headline date with no range under it at all.
+    """
     for f in api.forecast_all()["forecasts"]:
         if not f["crossingDate"]:
             continue
-        assert f["crossingEarliest"] and f["crossingLatest"]
-        assert f["crossingEarliest"] <= f["crossingDate"] <= f["crossingLatest"]
+        assert f["crossingEarliest"], f["region"]
+        assert f["crossingEarliest"] <= f["crossingDate"], f["region"]
+        if f["crossingLatest"]:
+            assert f["crossingDate"] <= f["crossingLatest"], f["region"]
 
 
 def test_a_region_already_past_its_line_is_not_given_a_forecast():
@@ -960,7 +970,7 @@ def test_no_screen_shows_a_placeholder_price_beside_a_real_one():
 
 
 def test_the_region_view_carries_a_recommendation_per_site():
-    """Review: the recommendation must sit beside the data centre scope. The
+    """Review: the recommendation must sit beside the capacity pool scope. The
     region page is where someone decides which building to open, and a cause
     on its own does not support that decision."""
     for region in api.overview()["regions"]:
@@ -1115,14 +1125,20 @@ def test_a_forecast_never_projects_more_capacity_than_exists():
             assert p["lower"] <= p["value"] <= p["upper"]
 
 
-def test_an_already_breached_region_reports_a_deadline_not_a_crossing():
-    """Its crossing date is history. The decision-relevant number is when it
-    fills completely."""
+def test_an_already_breached_region_has_no_crossing_date_to_report():
+    """Its crossing date is history, so the payload carries none.
+
+    `saturationDate` is still computed here and is still what sizes the chart,
+    but review removed it from the screen -- see
+    `test_static_assets.test_the_saturation_date_is_not_presented_as_a_fact`.
+    This asserts the data, not the presentation: the two are separate, and the
+    date has to stay sane for the trim even though nothing quotes it.
+    """
     breached = [f for f in api.forecast_all()["forecasts"] if f["alreadyBreached"]]
     assert breached
     for f in breached:
         assert f["crossingDate"] is None
-        assert "safety line" in f["note"]
+        assert "capacity threshold" in f["note"]
         if f["saturationDate"]:
             assert f["saturationDate"] > f["history"][-1]["date"]
 
@@ -1135,7 +1151,7 @@ def test_the_forecast_chart_explains_itself():
 
     # A key naming every mark on the chart.
     for mark in ("Measured", "Projected", "Range the forecast could be out by",
-                 "Safety line"):
+                 "Capacity threshold"):
         assert mark in src, mark
     # An axis label, so the units are on the picture.
     assert "how full (%)" in src
@@ -1169,11 +1185,28 @@ def test_history_is_not_swamped_by_the_projection():
     crossing is genuinely far out cannot satisfy both, and of the two, silently
     cropping the date the page reports is the worse failure. 65% leaves history
     a third of the frame; below that the trim is not doing its job.
+
+    Since the estate moved to one 80% line there is a region in exactly that
+    corner: eastus is at 66% and does not cross until December, so keeping its
+    date on the chart costs 360 days of projection against 149 of history. It is
+    allowed past the bound only while it is drawing no more than it needs to
+    reach that date, and only while the page is declaring the extrapolation --
+    which is what a reader needs in order to discount the date anyway.
     """
     for f in api.forecast_all()["forecasts"]:
         hist, proj = len(f["history"]), len(f["projection"])
         share = proj / (hist + proj)
-        assert share <= 0.65, f"{f['region']}: chart is {share:.0%} forecast"
+        if share <= 0.65:
+            continue
+        target = f["saturationDate"] if f["alreadyBreached"] else f["crossingDate"]
+        assert target, f"{f['region']}: chart is {share:.0%} forecast with no date to reach"
+        dates = [pt["date"] for pt in f["projection"]]
+        assert target in dates, f"{f['region']}: trimmed past the date it reports"
+        # Nothing beyond the headline date but the fixed margin the trim adds.
+        assert len(dates) - dates.index(target) - 1 <= api.PLOT_MARGIN_DAYS, (
+            f"{f['region']}: {share:.0%} forecast, further than the date needs")
+        assert f["extrapolatedBeyondHistory"], (
+            f"{f['region']}: {share:.0%} forecast and the page does not say so")
 
 
 def test_extrapolation_past_the_fitted_window_is_declared():
@@ -1396,18 +1429,26 @@ def test_region_recommendations_are_computed_not_canned():
             # the threshold; one that cannot is told it needs capacity, and must
             # not be offered a lever that does not reach.
             if covered:
-                assert rec["action"].startswith("Raising the safety line"), region
+                assert rec["action"].startswith("Raising the capacity threshold"), region
             else:
                 assert "needs capacity added" in rec["action"], region
 
 
-def test_each_region_is_judged_against_its_own_threshold():
-    """Review: "each region has their own thresholds -- this is a high utilised
-    region, why should I keep the same as a low utilisation region". One figure
-    imposed on eleven regions is a policy nobody chose."""
+def test_every_region_is_judged_against_the_one_safety_line():
+    """One estate, one line: 80%.
+
+    Regions used to carry a capacity-weighted mean of per-site lines dealt from
+    80/85/90, so they advertised figures like 83.0% and "past its safety line"
+    meant a different bar in every region -- two regions at the same utilisation
+    could be coloured differently. The line is a policy, and it is now stated
+    once in module1.threshold.DEFAULT_THRESHOLD_PCT.
+    """
     rows = api.threshold()["regions"]
     lines = {r["region"]: r["threshold_pct"] for r in rows}
-    assert len(set(lines.values())) > 1, "every region is on the same threshold"
+    assert set(lines.values()) == {api.SAFETY_THRESHOLD_PCT}, lines
+    assert api.SAFETY_THRESHOLD_PCT == 80.0
+    # Still "per region" in the sense that matters here: nobody has forced an
+    # override, so each row reports the line recorded against it.
     assert api.threshold()["thresholdIsPerRegion"] is True
 
 
@@ -1555,7 +1596,7 @@ def test_a_site_forecast_and_the_region_table_cannot_disagree():
 
     The Regions tab and the Forecast tab once each fitted their own and
     disagreed by up to ten days about the same region. The columns that moved
-    down to the data centres must not reintroduce that: `hitsThresholdIn` on the
+    down to the capacity pools must not reintroduce that: `hitsThresholdIn` on the
     region page has to be the same forecast the site page draws.
     """
     import pandas as pd
@@ -1782,7 +1823,7 @@ def test_a_facility_is_not_described_with_its_regions_utilisation():
 
 
 def test_the_assistant_sees_every_facility_not_only_the_busy_ones():
-    """Asked how many of southcentralus's data centres were over their
+    """Asked how many of southcentralus's capacity pools were over their
     threshold, the assistant answered from the 45 sites with activity while the
     region page listed all ten. A building over its line with nothing yet failed
     is exactly the one worth asking about, and it was invisible by construction."""
@@ -1827,7 +1868,7 @@ def test_the_fallback_answers_rather_than_raising():
 
 
 def test_the_assistant_is_given_counts_rather_than_asked_to_count():
-    """Asked how many data centres in southcentralus were in risk, the model
+    """Asked how many capacity pools in southcentralus were in risk, the model
     counted the facility rows itself and answered "seven" against an actual ten.
     Models read reliably and count badly, so the counts are computed here."""
     snap = api.get_snapshot()
@@ -1943,14 +1984,22 @@ def test_a_full_f32_site_is_told_to_buy_an_f8_not_an_f16():
                                   one_f32_cu / admission.UNITS_PER_CU)
     assert wrong["procureSku"] == "F16"
 
-    # And through the endpoint, on a real one-F32 site.
-    dc07 = next(x for x in api.datacentres()["datacentres"]
-                if x["datacentre"] == "northcentralus-dc07")
-    assert [s["sku"] for s in dc07["skus"]] == ["F32"], "dc07 is no longer one F32"
-    assert dc07["totalCU"] == pytest.approx(32.0)
-    assert dc07["procureSku"] == "F8"
-    # The same figures, on the same site, through the Regions drill-down.
-    assert api._site_position("northcentralus-dc07")["smallestSkuStep"] == "F8"
+    # And through the endpoint. This used to name northcentralus-dc07, which was
+    # a building holding a single F32 -- a shape the estate no longer has: every
+    # site is Shared (one capacity on F128 or F256) or Dedicated (two to five on
+    # F2..F64). Rather than pick a new site to hard-code and wait for the next
+    # model change to invalidate it, every site is checked against the same
+    # helper the unit assertions above pin down. The regression this guards is
+    # the endpoint handing raw compute units to a CU ladder, and that shows up
+    # on every row at once.
+    for x in api.datacentres()["datacentres"]:
+        want = api._site_procurement(x["totalCU"], x["utilisedCU"])
+        assert x["procureSku"] == want["procureSku"], x["datacentre"]
+        assert x["procureShortfallCU"] == pytest.approx(want["procureShortfallCU"]), \
+            x["datacentre"]
+        # The Regions drill-down reads the same figures for the same building.
+        assert api._site_position(x["datacentre"])["smallestSkuStep"] == \
+            want["procureSku"], x["datacentre"]
 
 
 def test_every_site_buys_the_smallest_rung_that_covers_its_shortfall():
@@ -1981,9 +2030,11 @@ def test_the_cu_columns_are_capacity_units_not_raw_compute_units():
         assert x["totalCU"] == pytest.approx(x["capacityUnits"], abs=0.05), (
             f"{x['datacentre']}: Total CU {x['totalCU']} disagrees with its own "
             f"{x['capacityUnits']} CU subtitle")
-        # The per-SKU rows are in the same unit, and add back up to the site.
-        if x["skus"]:
-            assert sum(s["totalCU"] for s in x["skus"]) == pytest.approx(
+        # The per-capacity rows are in the same unit, and add back up to the
+        # site. (These were per-SKU rows until a row had to mean one capacity
+        # and the one workload on it.)
+        if x["capacities"]:
+            assert sum(c["totalCU"] for c in x["capacities"]) == pytest.approx(
                 x["totalCU"], abs=0.05), x["datacentre"]
 
 
@@ -1997,11 +2048,11 @@ def test_a_one_capacity_site_reports_exactly_what_that_capacity_reports():
     published 28 CU / 86.2% above a child saying 28.7 CU / 89.8% for the one
     F32 that is the whole building.
     """
-    singles = [x for x in api.datacentres()["datacentres"] if len(x["skus"]) == 1
-               and x["skus"][0]["capacityCount"] == 1]
+    singles = [x for x in api.datacentres()["datacentres"]
+               if len(x["capacities"]) == 1]
     assert singles, "no single-capacity site to check, so this guard is idle"
     for x in singles:
-        child = x["skus"][0]
+        child = x["capacities"][0]
         assert x["utilisedCU"] == child["utilisedCU"], (
             f"{x['datacentre']}: row says {x['utilisedCU']} CU used, its only "
             f"capacity says {child['utilisedCU']}")
@@ -2010,23 +2061,70 @@ def test_a_one_capacity_site_reports_exactly_what_that_capacity_reports():
             f"capacity says {child['utilisationPct']}%")
 
 
-def test_every_site_is_the_cu_weighted_sum_of_its_own_sku_rows():
+def test_every_site_is_the_cu_weighted_sum_of_its_own_capacity_rows():
     """The parent is derived from the children, so the column adds up on screen.
     Weighted by CU, because an F2 at 90% and an F512 at 20% do not average to
     55% of the building."""
     for x in api.datacentres()["datacentres"]:
-        if not x["skus"]:
+        if not x["capacities"]:
             continue
-        assert sum(s["utilisedCU"] for s in x["skus"]) == pytest.approx(
+        assert sum(c["utilisedCU"] for c in x["capacities"]) == pytest.approx(
             x["utilisedCU"], abs=0.05), (
-            f"{x['datacentre']}: SKU rows use "
-            f"{sum(s['utilisedCU'] for s in x['skus'])} CU, row says "
+            f"{x['datacentre']}: capacity rows use "
+            f"{sum(c['utilisedCU'] for c in x['capacities'])} CU, row says "
             f"{x['utilisedCU']}")
-        weighted = (sum(s["utilisationPct"] * s["totalCU"] for s in x["skus"])
-                    / sum(s["totalCU"] for s in x["skus"]))
+        weighted = (sum(c["utilisationPct"] * c["totalCU"] for c in x["capacities"])
+                    / sum(c["totalCU"] for c in x["capacities"]))
         assert weighted == pytest.approx(x["siteUtilisationPct"], abs=0.1), (
-            f"{x['datacentre']}: SKU rows weight to {weighted:.2f}%, row says "
-            f"{x['siteUtilisationPct']}%")
+            f"{x['datacentre']}: capacity rows weight to {weighted:.2f}%, row "
+            f"says {x['siteUtilisationPct']}%")
+
+
+def test_the_children_of_a_site_follow_its_shape():
+    """What a row opens into depends on which of the two shapes it is.
+
+    A dedicated site opens into its capacities -- one rung, one workload at
+    100%, its own meter and its own runway. A shared site opens into the
+    workloads on its single capacity: their shares add up to 100%, and their CU
+    is that share of what the pool consumed, which is an apportionment and is
+    flagged as one. Nothing else can be said per workload, because there is one
+    daily series for the pool and none per workload.
+    """
+    for x in api.datacentres()["datacentres"]:
+        if not x["capacities"]:
+            continue
+        if x["siteType"] == "Shared":
+            assert x["childGrain"] == "workload", x["datacentre"]
+            assert len(x["capacities"]) == 1, x["datacentre"]
+            rows = x["workloadRows"]
+            assert 2 <= len(rows) <= 5, x["datacentre"]
+            assert sum(r["sharePct"] for r in rows) == pytest.approx(100.0, abs=0.05)
+            assert all(r["approximate"] for r in rows), x["datacentre"]
+            assert sum(r["utilisedCU"] for r in rows) == pytest.approx(
+                x["utilisedCU"], abs=0.2), x["datacentre"]
+        else:
+            assert x["childGrain"] == "capacity", x["datacentre"]
+            assert not x["workloadRows"], x["datacentre"]
+            for c in x["capacities"]:
+                assert c["workload"], c["capacityId"]
+                assert c["sharePct"] == 100.0, c["capacityId"]
+        assert x["workloadCount"] == (len(x["workloadRows"]) if x["siteType"] == "Shared"
+                                      else len(x["capacities"])), x["datacentre"]
+
+
+def test_two_capacities_on_the_same_rung_are_two_rows():
+    """The breakdown is per capacity, not per SKU.
+
+    38 of the 55 dedicated sites hold two capacities on the same rung, running
+    different workloads at different rates. Grouped by SKU they collapsed into
+    one line that belonged to neither.
+    """
+    doubled = [x for x in api.datacentres()["datacentres"]
+               if len({c["sku"] for c in x["capacities"]}) < len(x["capacities"])]
+    assert doubled, "no site holds two capacities on one rung, so this is idle"
+    for x in doubled:
+        ids = [c["capacityId"] for c in x["capacities"]]
+        assert len(set(ids)) == len(ids), x["datacentre"]
 
 
 def test_utilisation_is_not_capped_at_one_hundred_percent():

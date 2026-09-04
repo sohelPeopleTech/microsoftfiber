@@ -8,7 +8,7 @@ it *throttles*.
 
 What is modelled here is what a Fabric capacity admin actually sees:
 
-    dim_workspace          workspaces assigned to a capacity
+    dim_workspace          workloads assigned to a capacity
     fact_capacity_cu       CU seconds consumed per capacity per day
     fact_throttling        throttling events, by stage
 
@@ -76,19 +76,28 @@ THROTTLE_STAGES = [
 #: a recommendation that crosses it should say so.
 SLOW_SCALE_BOUNDARY = ("F256", "F512")
 
-#: Workload mix a workspace can be dedicated to. Real Fabric workloads; which
-#: workspace runs which is invented.
+#: The Fabric platform types a workload runs on -- `FabricWorkloadType` in the
+#: table. Real Fabric workloads; which one a given workload runs is invented.
 WORKLOADS = [
     "Power BI", "Data Engineering", "Data Warehouse", "Data Factory",
     "Real-Time Intelligence", "Data Science",
 ]
 
-#: Workspaces are named after the sort of team that owns one.
+#: What a workload is called -- `WorkloadName` in the table. Named after the
+#: team that owns it, which is how an admin refers to one.
+#:
+#: The two used to be `PrimaryWorkload` and `WorkspaceName`, and between them
+#: they gave "workload" two meanings in the same row: Sales-BI is a workload,
+#: and so is Power BI. The columns say which is which now.
 TEAMS = [
     "Sales-BI", "Finance-Reporting", "Supply-Chain", "Marketing-Analytics",
     "Ops-Telemetry", "Customer-360", "Risk-Models", "Exec-Dashboards",
     "Product-Analytics", "Data-Platform", "Field-Ops", "Pricing",
 ]
+
+#: How many workloads share a shared site's single capacity, inclusive. A
+#: dedicated capacity always carries exactly one, at 100%.
+SHARED_WORKLOAD_RANGE = (2, 5)
 
 
 def _rng(salt: int = 0) -> np.random.Generator:
@@ -135,43 +144,64 @@ def previous_sku(sku: str) -> str | None:
 
 
 # --------------------------------------------------------------------------
-# workspaces
+# workloads
 # --------------------------------------------------------------------------
 
 
 def workspaces(capacities: pd.DataFrame) -> pd.DataFrame:
-    """Grain: one workspace, assigned to one capacity.
+    """Grain: one workload, sitting on one capacity.
 
-    Fabric bills and sizes by capacity, and workspaces are what you move between
-    them. Without this table "load balance across capacities" is advice with no
-    object -- there is nothing to name as the thing to move.
+    Which shape the site is decides everything here:
 
-    Share of consumption is deliberately uneven. A capacity where four
-    workspaces each take a quarter has no load-balancing answer; one where a
-    single workspace takes two thirds does.
+    **Shared** -- the site's single capacity carries two to five workloads, and
+    their shares sum to exactly 100%. The split is deliberately uneven. A
+    capacity where four workloads each take a quarter has no load-balancing
+    answer; one where a single workload takes two thirds does, and that is the
+    case the rebalance recommendation exists for.
+
+    **Dedicated** -- one workload per capacity, at 100% of it. There is nothing
+    to rebalance: moving the workload does not relieve the capacity, it empties
+    it. Recommendations that read a share have to check the site type first.
+
+    Still written to `dim_workspace`: the table keeps its name, the two columns
+    that were ambiguous do not. `WorkloadName` is the team-shaped name
+    (Sales-BI, Pricing); `FabricWorkloadType` is the platform type it runs on
+    (Power BI, Data Factory).
     """
     rng = _rng(21)
     rows = []
     for cap in capacities.itertuples():
-        # Bigger capacities host more workspaces.
-        n = int(np.clip(1 + np.log2(max(cap.CapacityUnits, 2)) / 1.6, 1, 8))
-        n = max(1, int(rng.integers(max(1, n - 1), n + 2)))
-        # Dirichlet under 1 concentrates share on one or two workspaces, which
-        # is the shape that makes a move worth recommending.
-        share = rng.dirichlet(np.full(n, 0.7))
-        for i in range(n):
+        dedicated = getattr(cap, "SiteType", "") == "Dedicated"
+        if dedicated:
+            shares = [100.0]
+        else:
+            lo, hi = SHARED_WORKLOAD_RANGE
+            n = lo + _stable(cap.CapacityId, "workloads") % (hi - lo + 1)
+            # Dirichlet under 1 concentrates share on one or two workloads,
+            # which is the shape that makes a move worth recommending.
+            draw = rng.dirichlet(np.full(n, 0.7))
+            shares = [round(float(x) * 100, 1) for x in draw]
+            # Rounding to a decimal place leaves a few tenths unaccounted for.
+            # They go on the largest share, so the column a reader can add up
+            # adds up: a capacity whose workloads come to 99.8% invites the
+            # question of what the missing fifth is doing.
+            top = max(range(n), key=lambda i: shares[i])
+            shares[top] = round(shares[top] + (100.0 - sum(shares)), 1)
+        for i, share in enumerate(shares, start=1):
             pick = _stable(cap.CapacityId, str(i))
             rows.append({
-                "WorkspaceId": f"{cap.CapacityId}-ws{i + 1:02d}",
-                "WorkspaceName": TEAMS[pick % len(TEAMS)],
+                "WorkspaceId": f"{cap.CapacityId}-ws{i:02d}",
+                "WorkloadName": TEAMS[pick % len(TEAMS)],
                 "CapacityId": cap.CapacityId,
                 "Region": cap.Region,
-                "PrimaryWorkload": WORKLOADS[(pick // 7) % len(WORKLOADS)],
-                "ShareOfCapacityPct": round(float(share[i]) * 100, 1),
+                "FabricWorkloadType": WORKLOADS[(pick // 7) % len(WORKLOADS)],
+                "ShareOfCapacityPct": share,
             })
     return _tag(pd.DataFrame(rows),
-                "workspace assignment and consumption share invented; capacities "
-                "and the SKU ladder are real")
+                "workload assignment and consumption share invented; a shared "
+                "site's capacity carries two to five workloads summing to 100%, "
+                "a dedicated site's capacity carries exactly one at 100%; "
+                "capacities and the SKU ladder are real")
 
 
 # --------------------------------------------------------------------------
@@ -202,7 +232,7 @@ def capacity_cu_daily(capacities: pd.DataFrame,
     def _pressure(cid: str) -> float:
         h = _stable(cid, "cu") % 1000
         # A small number of capacities are badly undersized for what runs on
-        # them -- a heavy workspace parked on an F2. Without them the worst
+        # them -- a heavy workload parked on an F2. Without them the worst
         # throttling stage never occurs anywhere and the product would describe
         # a state it can never show, which is how a screen ends up asserting
         # something nobody has checked.
@@ -254,8 +284,10 @@ def capacity_cu_daily(capacities: pd.DataFrame,
                     "ThrottleStage": stage,
                 })
     return _tag(pd.DataFrame(rows),
-                "CU consumption distributed from the region series; overage and "
-                "throttle stage computed with Microsoft's published thresholds")
+                "one daily series per capacity in the Shared/Dedicated fleet -- CU "
+                "consumption distributed from the region series and varied by a "
+                "stable per-capacity pressure; overage and throttle stage computed "
+                "with Microsoft's published thresholds")
 
 
 def throttling_events(cu_daily: pd.DataFrame) -> pd.DataFrame:
@@ -301,8 +333,9 @@ def throttling_events(cu_daily: pd.DataFrame) -> pd.DataFrame:
             "FabricSku", "Stage", "FutureCapacityMinutes",
             "InteractiveRejected", "BackgroundRejected", "Effect"]
     df = pd.DataFrame(rows, columns=cols)
-    return _tag(df, "throttling days derived from the CU series; rejected "
-                    "operation counts invented in proportion to the overage")
+    return _tag(df, "throttling days derived from the per-capacity CU series of "
+                    "the Shared/Dedicated fleet; rejected operation counts invented "
+                    "in proportion to the overage")
 
 
 # --------------------------------------------------------------------------

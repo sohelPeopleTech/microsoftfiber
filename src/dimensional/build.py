@@ -37,7 +37,7 @@ ENTITIES = {
     # region holding one hardware class and ten identical buildings, which is
     # enough to say a region is filling and not enough to say what to buy.
     "dim_capacity": ("one row per Fabric capacity", SYNTH),
-    "dim_workspace": ("one row per workspace, assigned to a capacity", SYNTH),
+    "dim_workspace": ("one row per workload, assigned to a capacity", SYNTH),
     "fact_capacity_cu_daily": ("one row per capacity per day, in CU seconds", SYNTH),
     "fact_throttling_event": ("one row per throttling event", SYNTH),
     "fact_partial_grant": ("one row per partially-fulfilled request", SYNTH),
@@ -209,9 +209,9 @@ def build_dim_datacentre(dim_region, usage=None, capacities=None,
 
     dim = attribution.build_dim_datacentre(dim_region, datacentres_for)
 
-    # Per-site safety line and how much of the site is already committed.
+    # Per-site capacity threshold and how much of the site is already committed.
     # Review asked for both: "call out what cores they already have, how many
-    # are still left, and the threshold for each data centre".
+    # are still left, and the threshold for each capacity pool".
     dim["ThresholdPct"] = [attribution.site_threshold(d) for d in dim["DatacentreId"]]
 
     if capacities is not None and len(capacities):
@@ -223,9 +223,16 @@ def build_dim_datacentre(dim_region, usage=None, capacities=None,
         dim["CapacityUnits"] = dim["DatacentreId"].map(
             by_site["CapacityUnits"].sum()).fillna(0).astype(int)
         dim["CapacityCount"] = dim["DatacentreId"].map(by_site.size()).fillna(0).astype(int)
+        # Shared or Dedicated -- the shape of the site, and the thing half the
+        # advice in this product has to condition on. Read from the capacities
+        # rather than recomputed: the policy that decides it lives in the
+        # generator, and a second implementation here could disagree with it.
+        if "SiteType" in capacities.columns:
+            dim["SiteType"] = (dim["DatacentreId"]
+                               .map(by_site["SiteType"].first()).fillna(""))
         dim["Provenance"] = (
-            "GENERATED - units and hardware read from the capacities in this "
-            "site, not apportioned from its region."
+            "GENERATED - units, shape and hardware read from the capacities in "
+            "this site, not apportioned from its region."
         )
 
     if capacity_usage is not None and len(capacity_usage):
@@ -256,14 +263,14 @@ def build_dim_datacentre(dim_region, usage=None, capacities=None,
             for u, r in zip(dim["DeployedUnits"], dim["Region"], strict=True)
         ]
     dim["FreeUnits"] = (dim["DeployedUnits"] - dim["UsedUnits"]).round(1)
-    # Headroom before the site's own safety line, not before physical capacity.
+    # Headroom before the site's own capacity threshold, not before physical capacity.
     dim["HeadroomToThreshold"] = (
         dim["DeployedUnits"] * dim["ThresholdPct"] / 100.0 - dim["UsedUnits"]
     ).round(1)
     return dim
 
 
-#: How far a data centre may sit from its region's published point. Azure gives
+#: How far a capacity pool may sit from its region's published point. Azure gives
 #: one coordinate per region -- itself an approximate central point -- and none
 #: per building, so the sites are scattered within a metro-sized radius of it.
 #: 75 km keeps every region's sites on the right landmass while still giving the
@@ -272,9 +279,9 @@ SITE_SPREAD_KM = 75.0
 
 
 def attach_datacentre_coordinates(dim: pd.DataFrame, geo: pd.DataFrame) -> pd.DataFrame:
-    """Give every data centre a latitude and longitude.
+    """Give every capacity pool a latitude and longitude.
 
-    The extract has none: a data centre in this model is a generated name under
+    The extract has none: a capacity pool in this model is a generated name under
     a region. `dim_region_geography` carries a real coordinate per *region*
     (`az account list-locations`), but nothing per building, so each site is
     placed at its region's point plus a small deterministic offset -- a bearing
@@ -435,10 +442,17 @@ def build_dim_capacity(synthetic_dir) -> pd.DataFrame:
 
 
 def build_dim_workspace(synthetic_dir) -> pd.DataFrame:
-    """Grain: one workspace, assigned to one capacity.
+    """Grain: one workload, assigned to one capacity.
 
-    Fabric bills and sizes by capacity; workspaces are what you move between
-    them. Without this, "load balance across capacities" names no object.
+    Fabric bills and sizes by capacity; workloads are what sit on one. On a
+    shared site several of them share the one capacity and can be moved between
+    capacities, which is what makes "load balance" name an object at all. On a
+    dedicated site there is one per capacity at 100%, and moving it is not a
+    rebalance -- it is picking the building up and putting it down elsewhere.
+
+    `WorkloadName` is what the workload is called (Sales-BI); the platform type
+    it runs on (Power BI) is `FabricWorkloadType`. The table keeps the name
+    `dim_workspace`.
     """
     return _synth(synthetic_dir, "dim_workspace")
 
@@ -535,13 +549,12 @@ def build(
         "bridge_region_fabric_availability":
             build_bridge_region_fabric_availability(reference_dir),
     }
-    # A region's safety threshold is the aggregate of the thresholds its own
-    # facilities run at, weighted by how much capacity each holds. Review was
-    # explicit that a threshold belongs to a region rather than being one number
-    # imposed on all of them -- "this is a high utilised region, why should I keep
-    # the same as a low utilisation region" -- and deriving it from the sites is
-    # what keeps the two levels consistent: a region cannot claim a safety line
-    # its buildings are not actually holding.
+    # A region's capacity threshold is the aggregate of the thresholds its own
+    # facilities run at, weighted by how much capacity each holds. Every site now
+    # holds the one estate-wide line (module1.threshold.DEFAULT_THRESHOLD_PCT),
+    # so the weighted mean of it is itself -- the roll-up is kept because it is
+    # what guarantees that: a region cannot advertise a capacity threshold its buildings
+    # are not actually holding, whatever the policy underneath becomes.
     #
     # Computed here rather than in build_dim_region because sites do not exist
     # until after regions are built, the same ordering that denial reasons need.
@@ -557,7 +570,7 @@ def build(
         tables["dim_region"]["Region"].map(_weighted).round(1)
     )
 
-    # Put each data centre on the map. Needs both tables, and dim_region_geography
+    # Put each capacity pool on the map. Needs both tables, and dim_region_geography
     # is built above, so like the threshold roll-up this happens here rather than
     # inside the datacentre builder.
     tables["dim_datacentre"] = attach_datacentre_coordinates(

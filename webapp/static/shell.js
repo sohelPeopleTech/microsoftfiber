@@ -27,13 +27,13 @@ const $ = (id) => document.getElementById(id);
    those routes is still registered, still served and still backed by its
    endpoints, so a saved link or a demo bookmark still opens the page; it is
    simply no longer offered here. Forecasting in particular did not go away, it
-   moved: it is now on each data centre, beside the thing being forecast. */
+   moved: it is now on each capacity pool, beside the thing being forecast. */
 const NAV = [
   { path: "/",             icon: "◍", label: "Fleet map" },
   { path: "/overview",     icon: "▦", label: "Overview" },
   null,
   { path: "/regions",      icon: "◈", label: "Regions" },
-  { path: "/datacentres",  icon: "▤", label: "Data centres" },
+  { path: "/datacentres",  icon: "▤", label: "Capacity Pools" },
   { path: "/customers",    icon: "◉", label: "Customers" },
   null,
   { path: "/methodology",  icon: "ⓘ", label: "Methodology" },
@@ -275,7 +275,7 @@ function closeHowto() {
    are separate strings concatenated in fourteen places -- so they are joined
    here, after the view exists, rather than by touching any of them. The button
    goes *beside* the h1 rather than inside it: inside, its label joins the
-   heading's accessible name and a screen reader announces "Data centres, How
+   heading's accessible name and a screen reader announces "Capacity Pools, How
    to read this page". */
 function wireHowto() {
   closeHowto();
@@ -744,7 +744,7 @@ function wireColFilters(table, rowSelector, { onChange = null } = {}) {
 /* Click-to-sort on column headers that carry `data-sort`.
 
    Sorts the matching rows in the DOM (no refetch). When `groupAfter(tr)` is
-   set, satellite rows (e.g. per-SKU breakdown under a data centre) travel with
+   set, satellite rows (e.g. per-SKU breakdown under a capacity pool) travel with
    their parent so the table never splits a group. Raw compare values live in
    `data-sv-<key>` — prefer numbers there so "96.0%" sorts as 96, not as text. */
 function wireTableSort(table, rowSelector, {
@@ -971,7 +971,7 @@ function wireTabs(root) {
    with it. The key stays `due_now` because the data and the tests are built on
    it -- only what a reader sees changes. */
 const STATUS_LABEL = {
-  breached: "past its line",
+  breached: "past its threshold",
   overdue: "overdue",
   due_now: "decide this cycle",
   due_soon: "decide this cycle",

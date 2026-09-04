@@ -6,7 +6,7 @@ from the threshold, the alert arrives fifteen days after the decision needed
 making.
 
 This module moves the alarm backwards by the lead time. It forecasts when a
-region will cross its safety threshold, subtracts how long that region's
+region will cross its capacity threshold, subtracts how long that region's
 hardware actually takes to provision, and flags the request as due on the
 resulting date -- which is often while usage still looks comfortable.
 

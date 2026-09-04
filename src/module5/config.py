@@ -88,7 +88,7 @@ class Config:
     risk_weights: dict = field(
         default_factory=lambda: {
             "failureRate": 0.40,   # share of this entity's requests refused
-            "pressure": 0.25,      # how close its region is to the safety line
+            "pressure": 0.25,      # how close its region is to the capacity threshold
             "unresolved": 0.20,    # backlog against the busiest in the view
             # Was leadTime, at the same weight: Fabric has nothing to
             # provision and nothing to wait for.

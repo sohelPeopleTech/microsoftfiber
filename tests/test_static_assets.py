@@ -284,7 +284,7 @@ def test_no_region_status_is_shown_to_a_reader_as_breached():
 
     A region using the capacity it holds has not violated anything. The label is
     now "past its line". This checks the labels the shell defines rather than
-    every string in the app, because "SLA breached" on the outcomes funnel is a
+    every string in the app, because "SLA delayed" on the outcomes funnel is a
     different and correct use: a service level agreement genuinely is breached.
     """
     shell = (ROOT / "webapp" / "static" / "shell.js").read_text()
@@ -474,7 +474,7 @@ def test_site_tie_lines_stop_short_of_the_region_marker():
 def test_the_three_browsable_pages_all_carry_a_filter():
     """110 sites and 11 regions is past the point where scrolling finds one.
 
-    Data centres, Regions and the Fleet map each get a search box and a
+    Capacity Pools, Regions and the Fleet map each get a search box and a
     dropdown, built from one shared component rather than three near-copies
     that drift apart.
     """
@@ -491,9 +491,9 @@ def test_filterable_rows_carry_the_attributes_the_filter_reads():
     falls back to its rendered text, which silently matches on things like a
     revenue figure -- so the pages that filter must set them explicitly."""
     assert 'data-search="${esc(`${x.datacentre} ${x.region}' in JS, (
-        "data centre rows no longer carry the text the search matches")
+        "capacity pool rows no longer carry the text the search matches")
     assert 'data-filter="${esc(x.region)}"' in JS, (
-        "data centre rows no longer carry the region the dropdown filters on")
+        "capacity pool rows no longer carry the region the dropdown filters on")
     assert 'data-filter="${r.at_risk ? "risk" : "ok"}"' in JS, (
         "region rows no longer carry the threshold state the dropdown filters on")
 
@@ -601,5 +601,118 @@ def test_the_planning_columns_are_on_the_data_centre_table():
 
 
 def test_the_region_table_says_what_its_average_is_an_average_of():
-    assert 'label: "Data centres"' in JS, "the site count column is missing"
+    assert 'label: "Capacity Pools"' in JS, "the site count column is missing"
     assert 'label: "Utilised CU"' in JS, "the utilised CU column is missing"
+
+
+# --------------------------------------------------------------------------
+# the terminology review asked for
+# --------------------------------------------------------------------------
+
+#: Words review struck from the screen, and what replaced them.
+#:
+#: "Breached" reads as a security term and a region using capacity it holds has
+#: violated nothing. "Safety line" and "due to cross it" were the same idea
+#: under three different names -- the pages also said "safety threshold" and
+#: "its line" for the identical number -- so a reader could not tell whether
+#: they were reading about one figure or three. It is one figure and it is now
+#: called the capacity threshold everywhere.
+#:
+#: The keys underneath are untouched on purpose: `breached` is module 1's status
+#: and `alreadyBreached` is on the wire, guarded by
+#: `test_status_is_never_printed_raw` so neither can reach a reader.
+RETIRED_PHRASES = ["safety line", "safety threshold", "due to cross"]
+
+
+def _without_comments(src: str) -> str:
+    """`src` minus the comments, so a note may name what it removed.
+
+    Same exemption `ALLOWED_CONTEXT` grants above and for the same reason: the
+    comment recording why "safety line" was renamed has to be able to write
+    "safety line". Only what reaches a reader is being checked, and no comment
+    does. Block comments go first, then whole-line `//`; a `//` inside a string
+    is left alone, which is why the line has to start with it.
+    """
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    return "
+".join(ln for ln in src.splitlines() if not ln.strip().startswith("//"))
+
+
+#: pages.js as a reader receives it. Every test below reads this, never `JS`.
+JS_RENDERED = _without_comments(JS)
+
+
+@pytest.mark.parametrize("phrase", RETIRED_PHRASES)
+def test_the_retired_threshold_vocabulary_is_gone(phrase):
+    hits = [f"pages.js:{n}: {line.strip()[:110]}"
+            for n, line in enumerate(JS_RENDERED.splitlines(), start=1)
+            if phrase in line.lower()]
+    assert not hits, (
+        f"{phrase!r} was renamed to 'capacity threshold' on review:\n  "
+        + "\n  ".join(hits))
+
+
+def test_one_name_for_the_threshold_across_both_static_files():
+    """pages.js and shell.js render the same number and must agree on its name.
+
+    They did not: the shell's status pill said "past its line" while the page
+    beside it said "past its safety line" and the chart drew a "safety
+    threshold". Three names, one figure.
+    """
+    shell = _without_comments((ROOT / "webapp" / "static" / "shell.js").read_text())
+    for phrase in RETIRED_PHRASES:
+        assert phrase not in shell.lower(), (
+            f"shell.js still says {phrase!r}; pages.js calls it the capacity threshold")
+    assert "capacity threshold" in JS_RENDERED
+
+
+def test_capacity_owed_is_not_called_cu_pending():
+    """Review: "CU Pending" says nothing about who is waiting or for what. It
+    is capacity a customer has asked for and not been given."""
+    assert "CU pending" not in JS_RENDERED, "a 'CU pending' label survived the rename"
+    assert "Requested additional capacity" in JS_RENDERED
+
+
+def test_the_saturation_date_is_quoted_nowhere_on_the_page():
+    """Review: "let's not put that number ... it can happen in the next two
+    hours". A single workload landing moves it, and for a place already past its
+    threshold the date printed was frequently in the past.
+
+    `saturationDate` stays in the payload -- it is what sizes the chart trim,
+    see `test_webapp.test_the_headline_date_is_always_on_the_chart` -- so the
+    guard has to be that nothing *renders* it. What a reader gets instead is how
+    far past the threshold the place already is, which is measured rather than
+    projected.
+    """
+    assert "saturationDate" not in JS_RENDERED, (
+        "the 100% saturation date is being rendered again; it is data for the "
+        "chart trim, not a figure to quote")
+    for gone in ("Completely full", "Full by", "no capacity left"):
+        assert gone not in JS_RENDERED, f"{gone!r} is back on the page"
+    assert "Past its threshold by" in JS_RENDERED, (
+        "nothing replaced the removed date -- a place already past its "
+        "threshold now has an empty card where the finding was")
+
+
+def test_the_threshold_control_offers_only_what_the_endpoint_accepts():
+    """The slider's bounds come from the payload, not from a literal.
+
+    Hard-coding them lets the control drift from `Query(ge=..., le=...)`, and a
+    threshold outside the band comes back as a 422 with nothing on screen to
+    explain why the page stopped responding.
+    """
+    assert "thresholdMinPct" in JS_RENDERED and "thresholdMaxPct" in JS_RENDERED, (
+        "the threshold control is not reading its bounds from the API")
+    block = JS[JS.index("function thresholdControl"):]
+    block = block[:block.index("\n}")]
+    assert 'min="${lo}"' in block and 'max="${hi}"' in block, (
+        "the control hard-codes its range instead of using the served bounds")
+
+
+def test_moving_the_threshold_also_says_what_it_would_take():
+    """Review asked for three things together: a configurable threshold, when it
+    is reached, and how much to scale by. The first two without the third are a
+    number with no decision attached."""
+    assert "scaleToThresholdKpi" in JS_RENDERED, "no scale-by figure on the forecast page"
+    assert "To stay under it" in JS_RENDERED
+    assert "cuToStayUnder" in JS_RENDERED and "smallestSkuStep" in JS_RENDERED

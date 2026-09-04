@@ -9,7 +9,7 @@ means here:
   **served**    data that does not change with input -- regions, spikes,
                 features. Filtering and sorting these happens in the browser.
   **computed**  results that genuinely depend on what the user chose. Moving
-                the safety threshold re-runs Module 1; changing a SKU re-runs
+                the capacity threshold re-runs Module 1; changing a SKU re-runs
                 Module 2. Those cannot be precomputed, which is exactly why the
                 static page could not do them.
 """
@@ -39,6 +39,10 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import assistant  # noqa: E402
 import module1, module2, module3, module4, module6  # noqa: E402
+# The estate's single capacity threshold, imported rather than repeated: every
+# fallback below used to spell it 85, which is what showed up on screen
+# whenever a region or site had no line of its own to report.
+from module1.threshold import DEFAULT_THRESHOLD_PCT as SAFETY_THRESHOLD_PCT  # noqa: E402
 import dimensional  # noqa: E402
 from dimensional import attribution  # noqa: E402
 import riskindex  # noqa: E402
@@ -421,7 +425,7 @@ def _region_distribution(entities) -> list[dict]:
 
 @lru_cache(maxsize=1)
 def _failed_incident_ids() -> frozenset:
-    """The incidents that actually failed -- SLA breached, or never fulfilled.
+    """The incidents that actually failed -- SLA delayed, or never fulfilled.
 
     One definition, used everywhere. A request denied and then approved inside
     its SLA is not a target, so it is not counted anywhere: not in a tile, not
@@ -448,14 +452,14 @@ def _failure_causes(entities) -> dict[str, dict]:
     """Per region: why its requests failed, and whether capacity was the reason.
 
     This exists because of a question the Overview could not answer. Regions
-    sitting comfortably inside their safety line still carry revenue loss, and
+    sitting comfortably inside their capacity threshold still carry revenue loss, and
     a reader seeing a green pill beside a five-figure number reasonably asks
     how both can be true.
 
     They can be true because the two columns look in opposite directions. The
     status is a forecast about the region's ceiling; the loss is history about
     individual requests. Across the whole extract, every failure in a region
-    that is currently green landed on a data centre that had room -- they
+    that is currently green landed on a capacity pool that had room -- they
     failed on maintenance windows, quota policy, network faults and tickets
     nobody actioned.
 
@@ -485,7 +489,7 @@ def _failure_causes(entities) -> dict[str, dict]:
         # `landedOnAFullSite` asks where the failures happened. `sitesOverLine`
         # asks what the region contains. westeurope answers 0 and 2: none of its
         # failures hit a full building, and yet dc04 sits at 100% with nothing
-        # free. The column said "no data centre here is over its line", which
+        # free. The column said "no capacity pool here is over its line", which
         # was a claim about the region made from a measurement about the
         # failures, and the region page contradicted it one click later.
         on_full = sum(1 for dc in grp["DatacentreId"].astype(str) if over_its_line(dc))
@@ -543,7 +547,7 @@ def _region_context(entities):
     return {
         name: {
             "utilisation": float(f.get("current_utilisation_pct") or 0),
-            "threshold": float(f.get("threshold_pct") or 85),
+            "threshold": float(f.get("threshold_pct") or SAFETY_THRESHOLD_PCT),
             "status": f.get("status", ""),
         }
         for name, f in flags.items()
@@ -552,10 +556,10 @@ def _region_context(entities):
 
 @lru_cache(maxsize=1)
 def _region_thresholds() -> dict:
-    """Each region's own safety threshold, from the dimensional model.
+    """Each region's own capacity threshold, from the dimensional model.
 
     Derived there as the capacity-weighted mean of its facilities' thresholds,
-    so a region cannot advertise a safety line its buildings are not holding.
+    so a region cannot advertise a capacity threshold its buildings are not holding.
     """
     dim = get_entities()["dim_region"]
     if "ThresholdPct" not in dim.columns:
@@ -568,7 +572,7 @@ def _region_threshold(region: str, override: float | None = None) -> float:
     """The line to judge a region by: its own, unless one was forced."""
     if override is not None:
         return float(override)
-    return _region_thresholds().get(str(region), 85.0)
+    return _region_thresholds().get(str(region), SAFETY_THRESHOLD_PCT)
 
 
 @lru_cache(maxsize=1)
@@ -633,7 +637,7 @@ def _score_group(grp, ctx, busiest_unresolved, throttling_share: float = 0.0) ->
     unresolved = int((grp["NewLimitCapacity"] < grp["RequestedCapacity"]).sum())
     return riskindex.score(
         requests=len(grp), denied=len(denied), unresolved=unresolved,
-        utilisation_pct=ctx.get("utilisation", 0), threshold_pct=ctx.get("threshold", 85),
+        utilisation_pct=ctx.get("utilisation", 0), threshold_pct=ctx.get("threshold", SAFETY_THRESHOLD_PCT),
         throttling_share=throttling_share, busiest_unresolved=busiest_unresolved,
         weights=get_risk_weights(),
         prior_rate=_fleet_failure_rate(),
@@ -677,7 +681,7 @@ def datacentres():
             # served the region's vendor class ("Intel-highmem") and printed it
             # beside a provisioning lead time on a page that lists F SKUs.
             **_site_capacity_counts(entities, str(dc)),
-            # This facility's own safety line and how full it actually is. The
+            # This facility's own capacity threshold and how full it actually is. The
             # region page prints both in its table, but neither reached the
             # assistant, so asked what the "80%" and "over" against
             # southcentralus-dc01 meant it correctly answered that it had no
@@ -703,11 +707,22 @@ def datacentres():
             # And what the buy is: the CU short of the planning line, and the
             # smallest real F SKU that covers it -- CU is not bought loose.
             **_site_procurement(site_cu, site_used_cu),
-            # One entry per F SKU deployed in this building, smallest rung
-            # first. The row above is the building; these are what it is built
-            # from. Demand and risk are not repeated here -- they belong to the
-            # building, not to a SKU.
-            "skus": _all_site_sku_breakdowns().get(str(dc), []),
+            # What the building is built from, drawn under it when the row is
+            # opened. The grain follows the shape of the site, because the two
+            # shapes are built from different things: a dedicated site is its
+            # capacities, one workload each; a shared site is one capacity with
+            # several workloads on it, so its children are the workloads.
+            # Demand and risk are not repeated here -- they belong to the
+            # building, not to a capacity or a workload.
+            "capacities": _all_site_capacity_breakdowns().get(str(dc), []),
+            "workloadRows": _all_site_workload_breakdowns().get(str(dc), []),
+            "childGrain": ("workload"
+                           if _site_types().get(str(dc)) == "Shared"
+                           else "capacity"),
+            "workloadCount": _site_workload_counts().get(str(dc), 0),
+            # Smallest rung first, on the real ladder -- "F2 · F4 · F8", not
+            # "F128, F16, F2". A shared site has one entry by construction.
+            "skuMix": _site_sku_mix(str(dc)),
             "requests": int(len(grp)),
             "failed": int(len(denied)),
             "customers": int(grp["SubscriptionId"].nunique()),
@@ -734,6 +749,41 @@ def datacentres():
     }
 
 
+@lru_cache(maxsize=1)
+def _site_workload_counts() -> dict:
+    """datacentre_id -> how many workloads run in it.
+
+    Two to five on a shared site, all on its one capacity; two to five on a
+    dedicated site, one per capacity. The number a site row states before it is
+    opened, and the same number in both shapes -- what differs is how they are
+    arranged underneath.
+    """
+    caps = _all_site_capacity_breakdowns()
+    return {dc: sum(int(c["workloadCount"]) for c in rows)
+            for dc, rows in caps.items()}
+
+
+def _site_sku_mix(datacentre_id: str) -> list:
+    """The rungs in one building, smallest first, with how many sit on each."""
+    mix: dict[str, int] = {}
+    for c in _all_site_capacity_breakdowns().get(str(datacentre_id), []):
+        mix[c["sku"]] = mix.get(c["sku"], 0) + 1
+    return [{"sku": sku, "capacityCount": n} for sku, n in
+            sorted(mix.items(), key=lambda kv: admission.F_SKUS.get(kv[0], 0))]
+
+
+def _site_type(entities, datacentre_id: str) -> str:
+    """Shared or Dedicated -- what shape this building is.
+
+    Shared means one capacity carrying several workloads that share its CU;
+    Dedicated means a capacity per workload, each at 100% of its own. Half the
+    fleet each. Enough of this product's advice holds for only one of the two
+    that the shape travels with every site row rather than being guessed from a
+    capacity count downstream.
+    """
+    return _site_types().get(str(datacentre_id), "")
+
+
 def _site_capacity_counts(entities, datacentre_id: str) -> dict:
     """Just the counts, for a row in a list.
 
@@ -744,7 +794,8 @@ def _site_capacity_counts(entities, datacentre_id: str) -> dict:
     caps = entities["dim_capacity"]
     here = caps[caps["DatacentreId"].astype(str) == datacentre_id]
     if here.empty:
-        return {"capacityCount": 0, "capacityUnits": 0, "throttling": 0}
+        return {"capacityCount": 0, "capacityUnits": 0, "throttling": 0,
+                "siteType": _site_type(entities, datacentre_id)}
 
     health = recommend._health(entities).set_index("CapacityId")
     ids = [c for c in here["CapacityId"].astype(str) if c in health.index]
@@ -753,6 +804,7 @@ def _site_capacity_counts(entities, datacentre_id: str) -> dict:
         "capacityCount": int(len(here)),
         "capacityUnits": int(here["CapacityUnits"].sum()),
         "throttling": throttling,
+        "siteType": _site_type(entities, datacentre_id),
     }
 
 
@@ -767,14 +819,25 @@ def _site_fabric_position(entities, datacentre_id: str) -> dict:
 
     So: the capacities, what they are running at, how many are throttling, and
     for each one that is short, the rung to move it to.
+
+    Every capacity row carries the same planning figures the data-centre list
+    prints under a site -- utilised CU, utilisation, the 80% line, growth, the
+    runway and its status -- read from `_all_site_capacity_breakdowns`, which is
+    where the list gets them too. The two tables were showing the same
+    capacities against different columns, so a reader who opened a building
+    found a different set of facts from the one that sent them there. Sharing
+    the source means they cannot drift, rather than merely agreeing today.
     """
     caps = entities["dim_capacity"]
     here = caps[caps["DatacentreId"].astype(str) == datacentre_id]
     if here.empty:
         return {"capacities": [], "capacityCount": 0, "capacityUnits": 0,
-                "throttling": 0, "skuMix": {}, "freeViewerCapable": 0}
+                "throttling": 0, "skuMix": {}, "freeViewerCapable": 0,
+                "siteType": _site_type(entities, datacentre_id)}
 
     health = recommend._health(entities).set_index("CapacityId")
+    planning_rows = {c["capacityId"]: c for c in
+                     _all_site_capacity_breakdowns().get(str(datacentre_id), [])}
 
     rows, throttling, free_viewers = [], 0, 0
     for _, row in here.iterrows():
@@ -789,12 +852,31 @@ def _site_fabric_position(entities, datacentre_id: str) -> dict:
             free_viewers += 1
         target = view["recommended"]
         after = next((o for o in view["options"] if o["sku"] == target), None)
+        planned = planning_rows.get(cid, {})
         rows.append({
             "capacityId": cid,
             "sku": cur["sku"],
             "capacityUnits": cur["capacityUnits"],
             "meanPct": cur["meanPct"],
             "peakPct": cur["peakPct"],
+            # The list page's columns, on the same rows, from the same source.
+            # `utilisationPct` is `meanPct` rounded -- both are kept because the
+            # two tables print them to different precision, not because they are
+            # different measurements.
+            "totalCU": planned.get("totalCU"),
+            "utilisedCU": planned.get("utilisedCU"),
+            "utilisationPct": planned.get("utilisationPct"),
+            "planningThresholdPct": planned.get("planningThresholdPct"),
+            "growthPctPerWeek": planned.get("growthPctPerWeek"),
+            "leadTimeWeeks": planned.get("leadTimeWeeks"),
+            "weeksToDecide": planned.get("weeksToDecide"),
+            "planningStatus": planned.get("planningStatus"),
+            # The workload this capacity runs. One at 100% on a dedicated site;
+            # blank on a shared pool, where the workloads are their own rows.
+            "workload": planned.get("workload", ""),
+            "workloadType": planned.get("workloadType", ""),
+            "workloadId": planned.get("workloadId", ""),
+            "sharePct": planned.get("sharePct"),
             "throttledDays": cur["throttledDays"],
             "windowDays": cur["windowDays"],
             "worstStage": cur["worstStage"],
@@ -820,6 +902,16 @@ def _site_fabric_position(entities, datacentre_id: str) -> dict:
         "capacityUnits": int(sum(r["capacityUnits"] for r in rows)),
         "throttling": throttling,
         "freeViewerCapable": free_viewers,
+        # A shared building holds exactly one of these rows, and that is the
+        # shape of the site rather than a short list -- so the page draws the
+        # workloads on that capacity underneath it, exactly as the data-centre
+        # list does when the row is opened.
+        "siteType": _site_type(entities, datacentre_id),
+        "childGrain": ("workload"
+                       if _site_type(entities, datacentre_id) == "Shared"
+                       else "capacity"),
+        "workloadRows": _all_site_workload_breakdowns().get(str(datacentre_id), []),
+        "workloadCount": _site_workload_counts().get(str(datacentre_id), 0),
         # Smallest SKU first, on the real ladder rather than alphabetically
         # -- "F128, F16, F2" is what sorting these as strings gives you.
         "skuMix": dict(sorted(mix.items(),
@@ -832,7 +924,7 @@ def _site_fabric_position(entities, datacentre_id: str) -> dict:
 def _threshold_remediation(entities, datacentre_id: str) -> dict:
     """What a threshold denial at this facility actually needs.
 
-    Two levers, both quantified: how many cores the current safety line is
+    Two levers, both quantified: how many cores the current capacity threshold is
     holding back, and how much a higher line would release. Neither is a
     hardware change, so offering one would be answering a different question.
     """
@@ -937,7 +1029,7 @@ def datacentre_detail(datacentre_id: str):
         "fabric": _site_fabric_position(entities, datacentre_id),
         "deployedUnits": _clean(row.iloc[0].get("DeployedUnits")),
         "utilisation": ctx.get("utilisation", 0),
-        "threshold": ctx.get("threshold", 85),
+        "threshold": ctx.get("threshold", SAFETY_THRESHOLD_PCT),
         "requests": int(len(here)),
         "failedCount": len([x for x in tickets if x.get("isFlagged")]),
         "customers": int(here["SubscriptionId"].nunique()),
@@ -1069,7 +1161,7 @@ def _forecast(region: str, threshold: float):
 
 @lru_cache(maxsize=1)
 def _site_usage_daily():
-    """Daily utilisation per data centre, from the CU record.
+    """Daily utilisation per capacity pool, from the CU record.
 
     This endpoint used to say there was no per-site utilisation series and that
     splitting the region curve across ten buildings would draw ten identical
@@ -1103,7 +1195,7 @@ def _site_usage_daily():
 
 @lru_cache(maxsize=1)
 def _site_meta() -> dict:
-    """DatacentreId -> its region and its own safety threshold."""
+    """DatacentreId -> its region and its own capacity threshold."""
     sites = get_entities()["dim_datacentre"]
     return {str(r.DatacentreId): {"region": str(r.Region),
                                   "threshold": float(r.ThresholdPct)}
@@ -1114,7 +1206,7 @@ def _site_threshold(datacentre_id: str, override: float | None = None) -> float:
     """The line to judge a building by: its own, unless one was forced."""
     if override is not None:
         return float(override)
-    return _site_meta().get(str(datacentre_id), {}).get("threshold", 85.0)
+    return _site_meta().get(str(datacentre_id), {}).get("threshold", SAFETY_THRESHOLD_PCT)
 
 
 @lru_cache(maxsize=256)
@@ -1139,12 +1231,12 @@ def _forecast_site(datacentre_id: str, threshold: float):
 
 #: Review set these as fixed policy figures rather than per-site data.
 #:
-#: The planning threshold is one number for the whole estate. `dim_datacentre`
-#: does carry a per-site `ThresholdPct` (82.5% to 90%), and the forecast still
-#: judges each building against its own; this is the separate, deliberately
-#: uniform line the *procurement* decision is taken against, so that "overdue"
-#: means the same thing in every row of the table.
-PLANNING_THRESHOLD_PCT = 80.0
+#: The planning threshold is one number for the whole estate, and it is now the
+#: same number the forecast and the map use: `dim_datacentre.ThresholdPct` no
+#: longer varies per site (it used to run 80% to 90%, which rolled up into
+#: region lines like 83.0%), so procurement and monitoring cannot disagree about
+#: where the line is and "overdue" means the same thing in every row.
+PLANNING_THRESHOLD_PCT = SAFETY_THRESHOLD_PCT
 
 #: Procurement lead time, fixed across the estate. `dim_datacentre.LeadTimeDays`
 #: exists and varies, but it was generated per site and review asked for one
@@ -1184,7 +1276,7 @@ def _site_growth_rates() -> dict:
 
 @lru_cache(maxsize=1)
 def _sites_per_region() -> dict:
-    """Region -> how many data centres it holds. Every site, not only the ones
+    """Region -> how many capacity pools it holds. Every site, not only the ones
     that have seen a request: the question is how many places the region could
     place work in, and a quiet building still counts."""
     sites = get_entities()["dim_datacentre"]
@@ -1235,118 +1327,186 @@ def _site_planning(datacentre_id: str, utilisation_pct: float) -> dict:
 
 
 @lru_cache(maxsize=1)
-def _sku_usage_daily():
-    """Daily utilisation per (data centre, F SKU), on the CU-seconds basis.
-
-    `_site_usage_daily` sums the seconds across every capacity in a building;
-    this does the same one level finer, so a building's F64 line and its F16
-    line are separate series. Consumed over available, because an F2 at 90% and
-    an F512 at 20% are not 55% of anything.
-    """
-    cu = get_entities()["fact_capacity_cu_daily"]
-    grouped = (cu.groupby(["DatacentreId", "FabricSku", "Date"], as_index=False)
-                 .agg(Available=("CuSecondsAvailable", "sum"),
-                      Consumed=("CuSecondsConsumed", "sum")))
-    grouped["UtilisationPct"] = np.where(
-        grouped["Available"] > 0,
-        grouped["Consumed"] / grouped["Available"] * 100.0, 0.0)
-    grouped["Date"] = pd.to_datetime(grouped["Date"]).dt.date.astype(str)
-    return grouped.sort_values(["DatacentreId", "FabricSku", "Date"])
-
-
-@lru_cache(maxsize=1)
-def _sku_growth_rates() -> dict:
-    """(datacentre_id, sku) -> utilisation growth in points per week.
+def _capacity_growth_rates() -> dict:
+    """capacity_id -> utilisation growth in points per week.
 
     Same least-squares slope over the whole record that `_site_growth_rates`
-    takes for a building, so the per-SKU rows and the site row are the same
-    quantity measured the same way.
+    takes for a building, one level finer, so a child row and the site row are
+    the same quantity measured the same way.
+
+    This used to be computed per (site, SKU). That grain merged two capacities
+    that happen to sit on the same rung -- 38 of the 55 dedicated sites hold a
+    pair like that -- into a single line, which is fine while a row means "the
+    F64s in this building" and wrong the moment a row means "this capacity, and
+    the one workload running on it".
     """
-    df = _sku_usage_daily()
-    out: dict[tuple[str, str], float | None] = {}
-    for (dc, sku), grp in df.groupby(["DatacentreId", "FabricSku"], sort=False):
+    cu = get_entities()["fact_capacity_cu_daily"]
+    df = cu[["CapacityId", "Date", "UtilisationPct"]].copy()
+    df["Date"] = pd.to_datetime(df["Date"]).dt.date.astype(str)
+    df = df.sort_values(["CapacityId", "Date"])
+
+    out: dict[str, float | None] = {}
+    for cid, grp in df.groupby("CapacityId", sort=False):
         y = grp["UtilisationPct"].to_numpy(dtype=float)
         if len(y) < 14:
-            out[(str(dc), str(sku))] = None
+            out[str(cid)] = None
             continue
         x = np.arange(len(y), dtype=float)
-        slope_per_day = float(np.polyfit(x, y, 1)[0])
-        out[(str(dc), str(sku))] = round(slope_per_day * 7.0, 3)
+        out[str(cid)] = round(float(np.polyfit(x, y, 1)[0]) * 7.0, 3)
     return out
 
 
 @lru_cache(maxsize=1)
-def _all_site_sku_breakdowns() -> dict:
-    """{datacentre_id: [sku_row, ...]} -- every F SKU deployed in a building,
-    rolled up from the capacities on it.
+def _all_site_capacity_breakdowns() -> dict:
+    """{datacentre_id: [capacity_row, ...]} -- every capacity standing in a
+    building, one row each, with the workload running on it.
 
     Computed once for the whole estate. `recommend._health` scans the entire
     daily CU record, and `capacity_scale_view` prices every rung for every
     capacity; the data-centre list has dozens of rows and would otherwise pay
     that cost per row. `_site_capacity_counts` exists for the same reason.
 
-    A SKU row carries only what the SKU owns: how many capacities, the CU they
-    hold and use, their utilisation and its trend, throttling, and the rung the
-    short ones should move to. The demand and risk columns stay on the building
-    -- a capacity denial is never tagged with an F SKU.
+    **This was a per-SKU roll-up.** A row meant "the F64s in this building",
+    which was the right grain while a building was an arbitrary bag of
+    capacities. It is the wrong grain now that a dedicated site runs one
+    workload per capacity: two F64s in the same building are two different
+    workloads with two different growth rates, and merging them printed one
+    line that belonged to neither. 38 of the 55 dedicated sites hold at least
+    one such pair.
+
+    A capacity row carries only what the capacity owns: its rung, the CU it
+    holds and uses, its utilisation and trend, whether it is throttling, the
+    rung it should move to, and -- on a dedicated site -- the single workload
+    that is the whole of it. The demand and risk columns stay on the building;
+    a capacity denial is never tagged to a capacity.
     """
     entities = get_entities()
     caps = entities["dim_capacity"]
     health = recommend._health(entities).set_index("CapacityId")
-    growth = _sku_growth_rates()
+    growth = _capacity_growth_rates()
+    workloads = _workloads_by_capacity()
 
     out: dict[str, list] = {}
     for dc_id, here in caps.groupby(caps["DatacentreId"].astype(str), sort=False):
-        by_sku: dict[str, list] = {}
+        rows = []
         for _, cap in here.iterrows():
             cid = str(cap["CapacityId"])
             if cid not in health.index:
                 continue
             view = scale.capacity_scale_view(cap, health.loc[cid])
-            by_sku.setdefault(str(cap["FabricSku"]), []).append(view)
-
-        rows = []
-        for sku, views in by_sku.items():
+            cur = view["current"]
             # `capacity_scale_view` reads `CapacityUnits`, so this is already
             # real CU -- the raw-unit `DeployedUnits` column is deliberately not
-            # summed here. See `_units_to_cu`.
-            cu = sum(v["current"]["capacityUnits"] for v in views)
-            wmean = (sum(v["current"]["meanPct"] * v["current"]["capacityUnits"]
-                         for v in views) / cu) if cu else 0.0
-            peak = max((v["current"]["peakPct"] for v in views), default=0.0)
-
-            # The rung each short capacity of this SKU should move to. Same
-            # test capacity_scale_view uses; the target shown is the one most
-            # of them land on.
-            targets = [v["recommended"] for v in views
-                       if v["needsMore"] and v["recommended"]
-                       and v["recommended"] != v["current"]["sku"]]
-            procure_sku = max(set(targets), key=targets.count) if targets else ""
-
+            # read here. See `_units_to_cu`.
+            cu = cur["capacityUnits"]
+            mean = cur["meanPct"]
+            target = view["recommended"] if view["needsMore"] else ""
+            if target == cur["sku"]:
+                target = ""
+            mine = workloads.get(cid, [])
             rows.append({
-                "sku": sku,
-                "capacityCount": len(views),
+                "capacityId": cid,
+                "sku": cur["sku"],
+                # Kept at one so anything counting capacities across these rows
+                # keeps working now that a row is exactly one of them.
+                "capacityCount": 1,
                 "capacityUnits": int(cu),
                 "totalCU": round(cu, 1),
-                "utilisedCU": round(wmean / 100.0 * cu, 1),
-                "utilisationPct": round(wmean, 1),
-                "peakPct": round(peak, 1),
-                "throttling": sum(1 for v in views
-                                  if v["current"]["throttledDays"] > 0),
-                "freeViewerCapable": sum(1 for v in views
-                                         if v["current"]["freeViewers"]),
-                "scaleUpCount": len(targets),
-                "procureSku": procure_sku,
-                "procureSkuCU": admission.F_SKUS.get(procure_sku) if procure_sku else None,
+                "utilisedCU": round(mean / 100.0 * cu, 1),
+                "utilisationPct": round(mean, 1),
+                "peakPct": round(cur["peakPct"], 1),
+                "throttling": 1 if cur["throttledDays"] > 0 else 0,
+                "throttledDays": int(cur["throttledDays"]),
+                "windowDays": int(cur["windowDays"]),
+                "worstStage": cur["worstStage"],
+                "freeViewerCapable": 1 if cur["freeViewers"] else 0,
+                "scaleUpCount": 1 if target else 0,
+                "procureSku": target,
+                "procureSkuCU": admission.F_SKUS.get(target) if target else None,
+                # One workload at 100% on a dedicated capacity; on a shared
+                # pool the workloads are drawn as their own rows instead, so
+                # naming one of them here would pick a winner arbitrarily.
+                "workloadCount": len(mine),
+                "workload": mine[0]["workload"] if len(mine) == 1 else "",
+                "workloadType": mine[0]["workloadType"] if len(mine) == 1 else "",
+                "workloadId": mine[0]["workloadId"] if len(mine) == 1 else "",
+                "sharePct": mine[0]["sharePct"] if len(mine) == 1 else None,
                 "planningThresholdPct": PLANNING_THRESHOLD_PCT,
                 "leadTimeWeeks": PROCUREMENT_LEAD_WEEKS,
-                **_planning_from(wmean, growth.get((str(dc_id), sku))),
+                **_planning_from(mean, growth.get(cid)),
             })
 
         # Smallest rung first, on the real ladder -- not "F128, F16, F2".
-        rows.sort(key=lambda r: admission.F_SKUS.get(r["sku"], 0))
+        rows.sort(key=lambda r: (admission.F_SKUS.get(r["sku"], 0), r["capacityId"]))
         out[str(dc_id)] = rows
     return out
+
+
+@lru_cache(maxsize=1)
+def _workloads_by_capacity() -> dict:
+    """capacity_id -> the workloads sitting on it, heaviest share first.
+
+    One row per workload on a shared pool's single capacity (two to five,
+    summing to 100%); exactly one at 100% on a dedicated capacity.
+    """
+    ws = get_entities()["dim_workspace"]
+    out: dict[str, list] = {}
+    for r in ws.sort_values("ShareOfCapacityPct", ascending=False).itertuples():
+        out.setdefault(str(r.CapacityId), []).append({
+            "workloadId": str(r.WorkspaceId),
+            "workload": str(r.WorkloadName),
+            "workloadType": str(r.FabricWorkloadType),
+            "sharePct": round(float(r.ShareOfCapacityPct), 1),
+        })
+    return out
+
+
+@lru_cache(maxsize=1)
+def _all_site_workload_breakdowns() -> dict:
+    """{datacentre_id: [workload_row, ...]} -- what a *shared* pool is running.
+
+    A shared site is one capacity with several workloads on it. There is one
+    daily CU series for that capacity and none per workload, so a workload's CU
+    here is its recorded share of what the pool consumed -- an apportionment,
+    flagged `approximate` so the page can mark it, and the reason a workload row
+    carries no utilisation, growth, runway or status. Those are properties of a
+    capacity, and inventing them per workload would put four different crossing
+    dates on one meter.
+
+    Dedicated sites get nothing from here: their children are capacities, and
+    each already names the single workload that is the whole of it.
+    """
+    caps = _all_site_capacity_breakdowns()
+    types = _site_types()
+    workloads = _workloads_by_capacity()
+
+    out: dict[str, list] = {}
+    for dc_id, rows in caps.items():
+        if types.get(dc_id) != "Shared":
+            continue
+        here = []
+        for cap in rows:
+            for w in workloads.get(cap["capacityId"], []):
+                here.append({
+                    **w,
+                    "capacityId": cap["capacityId"],
+                    "sku": cap["sku"],
+                    "capacityUnits": cap["capacityUnits"],
+                    "utilisedCU": round(cap["utilisedCU"] * w["sharePct"] / 100.0, 1),
+                    "approximate": True,
+                })
+        out[dc_id] = here
+    return out
+
+
+@lru_cache(maxsize=1)
+def _site_types() -> dict:
+    """datacentre_id -> Shared or Dedicated, for the whole estate at once."""
+    dim = get_entities()["dim_datacentre"]
+    if "SiteType" not in dim.columns:
+        return {}
+    return {str(r.DatacentreId): str(r.SiteType or "")
+            for r in dim.itertuples()}
 
 
 @lru_cache(maxsize=1)
@@ -1374,7 +1534,7 @@ def _site_cu_positions() -> dict:
     answer available.
     """
     sites = get_entities()["dim_datacentre"]
-    by_sku = _all_site_sku_breakdowns()
+    by_sku = _all_site_capacity_breakdowns()
 
     out: dict[str, dict] = {}
     for r in sites.itertuples():
@@ -1393,6 +1553,66 @@ def _site_cu_positions() -> dict:
             util = (used / cu * 100.0) if cu else 0.0
         out[dc] = {"cu": round(cu, 1), "usedCU": round(used, 1),
                    "utilisationPct": round(util, 1)}
+    return out
+
+
+#: The band the threshold control offers, and the band every endpoint taking a
+#: `threshold` accepts. Declared once so the control and the validation cannot
+#: drift: a slider that offers 40% against a `Query(ge=50)` is a 422 with no
+#: message on screen.
+THRESHOLD_MIN_PCT, THRESHOLD_MAX_PCT = 50.0, 99.0
+
+
+def _region_scale_to_threshold(threshold_pct: float | None) -> dict[str, dict]:
+    """Per region: the Capacity Units it would take to sit under a threshold.
+
+    Review asked the configurable threshold to answer two questions, not one:
+    when a chosen line is reached, and *how much to scale by* to stay under it.
+    Moving the line said when a region would cross it and never what it would
+    take not to.
+
+    Summed per capacity pool, never computed from the region's average. Capacity
+    Units do not pool -- a region averaging 70% against an 80% threshold can
+    still hold one F8 at 182% that cannot borrow a single CU from the F32 beside
+    it, and arithmetic on the average reports that region as needing nothing.
+    Each building is asked what it is short by on its own and the region owes the
+    sum. Spare capacity in one building does not net off a shortfall in another,
+    for the same reason, so sites already under the line contribute zero rather
+    than a negative.
+
+    Utilisation is used over deployed, so to sit at or under T% a site needs
+    ``used * 100 / T`` deployed and is short by that less what it already holds.
+
+    Both figures come from `_site_cu_positions`, which is in Capacity Units by
+    construction. The raw `*Units` columns are a factor of `UNITS_PER_CU` out,
+    and a rung named off them is one size larger than the one actually needed --
+    see `_units_to_cu`.
+
+    `threshold_pct` of None asks each site against its own line.
+    """
+    sites = get_entities()["dim_datacentre"]
+    positions = _site_cu_positions()
+
+    out: dict[str, dict] = {}
+    for r in sites.itertuples():
+        dc, region = str(r.DatacentreId), str(r.Region)
+        pos = positions.get(dc)
+        acc = out.setdefault(region, {"cuToStayUnder": 0.0, "sitesShort": 0, "sites": 0})
+        if not pos or not pos.get("cu"):
+            continue
+        line = _site_threshold(dc, threshold_pct)
+        if line <= 0:
+            continue
+        acc["sites"] += 1
+        short = max(0.0, pos["usedCU"] * 100.0 / line - pos["cu"])
+        if short > 0:
+            acc["cuToStayUnder"] += short
+            acc["sitesShort"] += 1
+    for acc in out.values():
+        acc["cuToStayUnder"] = round(acc["cuToStayUnder"], 1)
+        # A floor, not a purchase order. The honest answer is one rung per short
+        # site; this is the smallest single rung that covers the regional total.
+        acc["smallestSkuStep"] = _smallest_sku_covering(acc["cuToStayUnder"])
     return out
 
 
@@ -1488,10 +1708,20 @@ def forecast_all(threshold: Annotated[float | None, Query(ge=50.0, le=99.0)] = N
             _forecast(region, _region_threshold(region, threshold)).to_dict())))
     # Soonest crossing first; regions already past the line lead.
     out.sort(key=lambda f: (f["crossingDate"] is None and not f["note"], f["crossingDate"] or ""))
+    # What it would take to stay under the line the crossing dates above were
+    # computed against. The two travel together deliberately: a date to act by
+    # without a size to act with is half an answer, and computing the size from
+    # a second threshold is how a page ends up disagreeing with itself.
+    scale = _region_scale_to_threshold(threshold)
+    empty = {"cuToStayUnder": 0.0, "smallestSkuStep": "", "sitesShort": 0, "sites": 0}
+    for f in out:
+        f.update(scale.get(str(f.get("region", "")), empty))
     return {
         "forecasts": out,
         "thresholdPct": threshold,
         "thresholdIsPerRegion": threshold is None,
+        "thresholdMinPct": THRESHOLD_MIN_PCT,
+        "thresholdMaxPct": THRESHOLD_MAX_PCT,
         "candidates": sorted(forecast.CANDIDATES),
         "arimaAvailable": "arima" in forecast.CANDIDATES,
         # Two different horizons, and conflating them misreports both: HORIZON is
@@ -1563,7 +1793,7 @@ def _trim_for_plotting(d: dict, trim: bool = True) -> dict:
 def forecast_site(datacentre_id: str,
                   threshold: Annotated[float | None, Query(ge=50.0, le=99.0)] = None,
                   full: Annotated[bool, Query()] = False):
-    """One building's projection against its own safety line.
+    """One building's projection against its own capacity threshold.
 
     Declared before `/api/forecast/{region}` for readability only -- the two
     cannot collide, since this path has a segment the other does not.
@@ -1762,7 +1992,7 @@ def _site_procurement(deployed_cu: float, used_cu: float) -> dict:
 
 
 def _site_utilisation(site) -> float:
-    """A data centre's own utilisation, from the capacities standing in it.
+    """A capacity pool's own utilisation, from the capacities standing in it.
 
     Reads `_site_cu_positions` rather than the site's `UsedUnits` column so the
     marker on the map is coloured by the same number the site's row and its SKU
@@ -1775,10 +2005,10 @@ def _site_utilisation(site) -> float:
 
 @lru_cache(maxsize=1)
 def _region_site_rollup() -> dict[str, dict]:
-    """A region read as the sum of its data centres, not as one average.
+    """A region read as the sum of its capacity pools, not as one average.
 
-    Review's objection: "the threshold should be part of a data centre, not at
-    a region level. First look at a data centre, then roll it up." A region
+    Review's objection: "the threshold should be part of a capacity pool, not at
+    a region level. First look at a capacity pool, then roll it up." A region
     holding ten sites where one is full is not a constrained region -- the work
     goes to one of the other nine, and the customer, who only ever picks a
     region, never notices. His analogy: no Home Depot in Bellevue is not a
@@ -1792,9 +2022,9 @@ def _region_site_rollup() -> dict[str, dict]:
     been asked for it answers the only question a region-level view should:
     can this region still take the work in front of it.
 
-    westeurope is the case that shows why. It averages 83.1% against a 90%
-    line and reads comfortable, while two of its ten sites are over their own
-    lines and only 125 CU remain placeable against 365 CU of pipeline.
+    westeurope is the case that shows why. Its average reads comfortable
+    against the 80% line while two of its ten sites are over that same line
+    and only 125 CU remain placeable against 365 CU of pipeline.
     """
     onto = get_entities()
     sites = onto["dim_datacentre"]
@@ -1838,9 +2068,9 @@ def _region_throttling() -> dict[str, dict]:
 
     A region's utilisation is an average and answers a procurement question:
     is there room here to grant more. It cannot answer the operational one --
-    is anybody being refused -- because Capacity Units do not pool. westeurope
-    reads 83.1% against a 90% line and is not in risk, and inside that average
-    one F8 runs at 182.5%, has throttled on all thirty days, and has refused
+    is anybody being refused -- because Capacity Units do not pool. A region can
+    read comfortably inside the 80% line and not be in risk while, inside that
+    average, one F8 runs at 182.5%, has throttled on all thirty days, and has refused
     1,338 operations that it cannot borrow a single CU from the F32 sitting at
     33% beside it.
 
@@ -1917,7 +2147,7 @@ def capacity_map():
     """Every region as a point, with enough to decide without opening it.
 
     The landing screen review asked for: "you yourself think you're a capacity
-    manager, you are sitting in front of all your data centres, you have your
+    manager, you are sitting in front of all your capacity pools, you have your
     map in front". A marker therefore carries the four things that would
     otherwise be four tabs -- how full, whether it crosses its line and when,
     what is waiting to be bought, and what Fabric will not run there.
@@ -1998,7 +2228,7 @@ def capacity_map():
         "asOf": str(entities["fact_usage_daily"]["Date"].max()),
         "provenance": {
             "coordinates": "REAL - Azure Resource Manager region metadata",
-            "siteCoordinates": ("GENERATED - each data centre is its region's real "
+            "siteCoordinates": ("GENERATED - each capacity pool is its region's real "
                                 "point plus a deterministic offset of up to 75 km; "
                                 "Azure publishes no per-building location"),
             "featureAvailability": "REAL - Microsoft Learn Fabric region availability",
@@ -2034,10 +2264,16 @@ def map_region(region: str):
     fc = _trim_for_plotting(_clean(
         _forecast(region, _region_threshold(region)).to_dict()), trim=True)
 
+    # Workloads per building. `dim_workspace` is one row per workload sitting on
+    # a capacity: several on a shared site's single capacity, exactly one per
+    # capacity on a dedicated site.
     ws = entities["dim_workspace"]
     ws_count = ws.groupby("DatacentreId").size().to_dict() if "DatacentreId" in ws.columns \
         else ws.merge(entities["dim_capacity"][["CapacityId", "DatacentreId"]],
                       on="CapacityId").groupby("DatacentreId").size().to_dict()
+    site_types = (dict(zip(entities["dim_datacentre"]["DatacentreId"].astype(str),
+                           entities["dim_datacentre"]["SiteType"].astype(str)))
+                  if "SiteType" in entities["dim_datacentre"].columns else {})
 
     sites = []
     for s_ in sites_dim.itertuples():
@@ -2049,8 +2285,9 @@ def map_region(region: str):
                  if len(here) else "none")
         sites.append({
             "datacentre": s_.DatacentreId,
+            "siteType": site_types.get(str(s_.DatacentreId), ""),
             "capacities": int(len(here)),
-            "workspaces": int(ws_count.get(s_.DatacentreId, 0)),
+            "workloads": int(ws_count.get(s_.DatacentreId, 0)),
             "capacityUnits": cu_total,
             "skuMix": {sku: int(n) for sku, n in
                        sorted(here["FabricSku"].value_counts().items())} if len(here) else {},
@@ -2063,8 +2300,8 @@ def map_region(region: str):
             "interactiveRejected": int(here["InteractiveRejected"].sum()) if len(here) else 0,
             "backgroundRejected": int(here["BackgroundRejected"].sum()) if len(here) else 0,
             "freeViewerCapable": int(here["SupportsFreeViewers"].sum()) if len(here) else 0,
-            # The site's own safety line, and where it stands against it. The
-            # threshold lives on the data centre -- review was explicit -- so a
+            # The site's own capacity threshold, and where it stands against it. The
+            # threshold lives on the capacity pool -- review was explicit -- so a
             # site drawn on the map has to be coloured by its own line rather
             # than inherit the region's.
             "thresholdPct": round(float(getattr(s_, "ThresholdPct", 0) or 0), 1),
@@ -2099,7 +2336,7 @@ def map_region(region: str):
             "saturationDate": fc.get("saturationDate"),
             "alreadyBreached": bool(fc.get("alreadyBreached")),
             "model": fc.get("model"),
-            "note": ("Crossing the safety line is not running out. The line is a "
+            "note": ("Crossing the capacity threshold is not running out. The line is a "
                      "margin below full; the saturation date is when there is "
                      "nothing left at all."),
         },
@@ -2108,8 +2345,10 @@ def map_region(region: str):
             "sites": len(sites),
             "capacities": int(len(mine)),
             "capacityUnits": int(mine["CapacityUnits"].sum()) if len(mine) else 0,
-            "workspaces": int(len(entities["dim_workspace"][
+            "workloads": int(len(entities["dim_workspace"][
                 entities["dim_workspace"]["Region"] == region])),
+            "sharedSites": sum(1 for x in sites if x["siteType"] == "Shared"),
+            "dedicatedSites": sum(1 for x in sites if x["siteType"] == "Dedicated"),
             "skuMix": {sku: int(n) for sku, n in
                        sorted(mine["FabricSku"].value_counts().items())} if len(mine) else {},
             "throttlingCapacities": int((mine["ThrottledDays"] > 0).sum()) if len(mine) else 0,
@@ -2138,7 +2377,7 @@ def recommendations(kind: Annotated[str | None, Query()] = None,
     """What to do, most urgent first.
 
     Filterable because the kinds answer to different people: a scale is the
-    capacity owner's, a rebalance is whoever places workspaces, the licensing
+    capacity owner's, a rebalance is whoever places workloads, the licensing
     case is commercial, and a reclaim is an account conversation.
     """
     recs = _recommendations()
@@ -2168,7 +2407,7 @@ def capacities(region: Annotated[str | None, Query()] = None,
     """The Fabric capacities themselves: SKU, hardware, how full, how healthy.
 
     The grain review kept asking for and the product did not have -- "these are
-    the SKUs there in this data centre, this is the capacity available, this is
+    the SKUs there in this capacity pool, this is the capacity available, this is
     what we don't have".
     """
     health = _capacity_health()
@@ -2179,17 +2418,22 @@ def capacities(region: Annotated[str | None, Query()] = None,
 
     from planning import STAGE_LABEL
 
-    ws = get_entities()["dim_workspace"]
+    listed = get_entities()
+    ws = listed["dim_workspace"]
     ws_count = ws.groupby("CapacityId").size().to_dict()
+    site_types = (dict(zip(listed["dim_datacentre"]["DatacentreId"].astype(str),
+                           listed["dim_datacentre"]["SiteType"].astype(str)))
+                  if "SiteType" in listed["dim_datacentre"].columns else {})
     rows = []
     for c in health.itertuples():
         rows.append({
             "capacityId": c.CapacityId,
             "datacentre": c.DatacentreId,
+            "siteType": site_types.get(str(c.DatacentreId), ""),
             "region": c.Region,
             "fabricSku": c.FabricSku,
             "capacityUnits": int(c.CapacityUnits),
-            "workspaces": int(ws_count.get(c.CapacityId, 0)),
+            "workloads": int(ws_count.get(c.CapacityId, 0)),
             "meanUtilisationPct": round(float(c.MeanUtilisationPct), 1),
             "peakUtilisationPct": round(float(c.PeakUtilisationPct), 1),
             "throttledDays": int(c.ThrottledDays),
@@ -2260,6 +2504,7 @@ def capacity_detail(capacity_id: str):
     return {
         "capacityId": capacity_id,
         "datacentre": c["DatacentreId"],
+        "siteType": _site_type(entities, str(c["DatacentreId"])),
         "region": c["Region"],
         "fabricSku": c["FabricSku"],
         "capacityUnits": int(c["CapacityUnits"]),
@@ -2284,8 +2529,11 @@ def capacity_detail(capacity_id: str):
                        "everything at 24 hours."),
         },
         "throttlingEvents": _records(mine.head(50)) if len(mine) else [],
-        "workspaces": _records(here[[
-            "WorkspaceId", "WorkspaceName", "PrimaryWorkload", "ShareOfCapacityPct"]]),
+        # One workload at 100% on a dedicated capacity; the two to five that
+        # split it on a shared one.
+        "workloads": _records(here[[
+            "WorkspaceId", "WorkloadName", "FabricWorkloadType",
+            "ShareOfCapacityPct"]]),
         "recommendations": [r for r in _recommendations() if r["target"] == capacity_id],
     }
 
@@ -2309,7 +2557,7 @@ def features(region: str | None = None):
 OUTCOME_LABELS = {
     "no_denial": "Approved first time (within FTR)",
     "same_day_approved": "Denied, then approved within SLA",
-    "denied_then_approved_late": "Denied, then approved — SLA breached",
+    "denied_then_approved_late": "Denied, then approved — SLA delayed",
     "denied_unfulfilled": "Not approved — still unfulfilled",
     "data_quality_error": "Could not be classified",
 }
@@ -2518,7 +2766,7 @@ def _customer_recommendation(customer: dict, grp, ctx) -> dict:
     healthy = [
         r for r in customer["regions"]
         if r != worst
-        and ctx.get(r, {}).get("utilisation", 100) < ctx.get(r, {}).get("threshold", 85)
+        and ctx.get(r, {}).get("utilisation", 100) < ctx.get(r, {}).get("threshold", SAFETY_THRESHOLD_PCT)
     ]
     reasons = failing["DenialReason"].value_counts()
     top_reason = str(reasons.index[0])
@@ -2529,7 +2777,7 @@ def _customer_recommendation(customer: dict, grp, ctx) -> dict:
             "detail": (
                 f"{len(failing)} refused request(s) here, mostly '{top_reason}'. "
                 f"{worst} is at {worst_ctx.get('utilisation', 0):.0f}% against a "
-                f"{worst_ctx.get('threshold', 85):.0f}% safety line, while this customer "
+                f"{worst_ctx.get('threshold', SAFETY_THRESHOLD_PCT):.0f}% capacity threshold, while this customer "
                 f"already runs in {', '.join(healthy)} with headroom. Worth asking "
                 f"whether the next workload has to land in {worst}."
             ),
@@ -2539,7 +2787,7 @@ def _customer_recommendation(customer: dict, grp, ctx) -> dict:
         "headline": f"Capacity work needed in {worst} — no alternative region for this customer.",
         "detail": (
             f"{len(failing)} refused request(s), mostly '{top_reason}'. Every region "
-            f"this customer runs in is at or past its safety line, so there is nowhere "
+            f"this customer runs in is at or past its capacity threshold, so there is nowhere "
             f"to move the workload. This one needs more Capacity Units, not a "
             f"conversation."
         ),
@@ -2599,7 +2847,7 @@ def region_detail(name: str):
 
     # Every facility in the region, not only the ones a ticket landed on.
     # Filtering to sites with a failure hid seven of southcentralus's ten
-    # buildings -- all ten are past their own safety threshold, and the page
+    # buildings -- all ten are past their own capacity threshold, and the page
     # leads with threshold status, so a table answering "where did something
     # fail" beneath a heading about being in risk was answering a different
     # question from the one asked.
@@ -2632,6 +2880,10 @@ def region_detail(name: str):
         util = s_pos["utilisationPct"]
         datacentres.append({
             "datacentre": str(dc),
+            # Shared or Dedicated. The reason a full building here has one
+            # answer or two: a shared site can have a workload moved off its
+            # capacity, a dedicated site can only be scaled.
+            "siteType": _site_type(entities, str(dc)),
             "utilisationPct": round(util, 1),
             # The status the page is actually about. A site can be over its line
             # with nothing having failed there yet, which is the case worth
@@ -2644,7 +2896,7 @@ def region_detail(name: str):
             "oldestOpenDays": round(max(open_days), 1) if open_days else None,
             "topReason": (denied["DenialReason"].mode().iloc[0] if len(denied) else ""),
             "reasonCount": int(denied["DenialReason"].nunique()),
-            # Review asked for the recommendation to sit beside the data centre
+            # Review asked for the recommendation to sit beside the capacity pool
             # scope, not only on the site's own page: the region view is where
             # someone decides which building to open, and they cannot decide
             # that from a cause alone.
@@ -2712,7 +2964,7 @@ def region_detail(name: str):
 @app.get("/api/threshold")
 def threshold(pct: Annotated[float | None, Query(ge=50.0, le=99.0)] = None,
               trend_days: Annotated[int, Query(ge=7, le=120)] = 45):
-    """Module 1 at each region's own safety threshold, or at a forced one.
+    """Module 1 at each region's own capacity threshold, or at a forced one.
 
     `pct` omitted -- the normal case -- gives every region its own line. Supplying
     it forces all regions to the same figure, which is what the what-if control
@@ -2795,7 +3047,7 @@ def convert(region: str, to_sku: str, mode: str = "same_footprint"):
 def scale_options_index():
     """Which capacities can be scaled, and what each is running now.
 
-    Replaces `/api/swap-options`, which listed every data centre with the
+    Replaces `/api/swap-options`, which listed every capacity pool with the
     hardware class it ran so a target class could be picked. The thing a Fabric
     admin actually changes is one capacity's SKU, so that is the unit here.
 
@@ -2879,7 +3131,7 @@ def region_recommendation(region: str):
     """What to do about a region, as opposed to about one of its buildings.
 
     Review drew the line clearly: a region recommendation is about the safety
-    threshold and where the region's own spare capacity is; a data centre
+    threshold and where the region's own spare capacity is; a capacity pool
     recommendation is about swapping that facility's hardware. Mixing them
     produced advice nobody owned. Everything here is computed from the region's
     own numbers -- no sentence is written in advance.
@@ -2898,7 +3150,7 @@ def region_recommendation(region: str):
     pending = _cores_pending_by_region().get(region, 0.0)
     waiting = _waiting_customers_by_region().get(region, 0)
 
-    #: Raising the safety line releases capacity already owned. It is the only
+    #: Raising the capacity threshold releases capacity already owned. It is the only
     #: lever that costs nothing, so it is always evaluated first.
     options = []
     for candidate in (line + 5, line + 10, 100.0):
@@ -2922,17 +3174,17 @@ def region_recommendation(region: str):
         action = "No region-level action. Monitor."
     elif covering:
         headline = (f"{region} owes {pending:.0f} cores to {waiting} customer(s).")
-        action = (f"Raising the safety line from {line:.0f}% to "
+        action = (f"Raising the capacity threshold from {line:.0f}% to "
                   f"{covering['thresholdPct']:.0f}% releases "
                   f"{covering['releasesCores']:.0f} cores, which covers the "
                   f"{pending:.0f} outstanding. This is a policy change and costs "
-                  f"nothing — but it consumes the margin the line exists to protect.")
+                  f"nothing — but it consumes the margin the threshold exists to protect.")
     else:
         best = options[-1] if options else None
         released = best["releasesCores"] if best else 0.0
         headline = (f"{region} owes {pending:.0f} cores to {waiting} customer(s), "
                     f"with {free:.0f} free.")
-        action = (f"No safety line up to 100% releases enough — even at 100% only "
+        action = (f"No capacity threshold up to 100% releases enough — even at 100% only "
                   f"{released:.0f} cores come back against {pending:.0f} owed. "
                   f"This region needs capacity added, not rationed differently. "
                   f"Hardware changes are decided per facility, not per region.")
@@ -3543,8 +3795,8 @@ def _snapshot_datacentres() -> list:
     """Every facility, not only the ones a ticket landed on.
 
     The assistant was given the 45 sites with activity, so asked how many of
-    southcentralus's data centres were over their threshold it answered from six
-    while the region page listed ten. A building over its safety line with
+    southcentralus's capacity pools were over their threshold it answered from six
+    while the region page listed ten. A building over its capacity threshold with
     nothing yet failed is exactly the one worth asking about, and it was
     invisible to the assistant by construction.
     """
@@ -3609,9 +3861,9 @@ def get_snapshot():
         provenance=_records(dimensional.sources(entities.tables)),
         customers=customers()["customers"],
         conversions=_conversion_readiness(entities),
-        # Asked "which data centres in eastus2 are in risk", the assistant
+        # Asked "which capacity pools in eastus2 are in risk", the assistant
         # correctly said it could not tell -- the snapshot held regions and
-        # incidents but never the facilities, so a question the Data centres tab
+        # incidents but never the facilities, so a question the Capacity Pools tab
         # answers in one glance was unanswerable here.
         datacentres=_snapshot_datacentres(),
         cores_pending=_cores_pending_by_region(),

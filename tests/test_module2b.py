@@ -41,7 +41,14 @@ def test_a_region_running_hot_cannot_convert(entities):
 def test_the_blocker_says_which_numbers_caused_it(entities):
     """A no is only useful if it names the constraint."""
     plan = plan_conversion(entities, "southcentralus", "AMD-standard")
-    assert "806" in plan.blocker and "826" in plan.blocker
+    # Read from the region rather than written down: the two figures are its
+    # used and deployed units, which moved when the fleet became Shared and
+    # Dedicated sites. What is under test is that the refusal names them.
+    region = entities["dim_region"].set_index("Region").loc["southcentralus"]
+    usage = entities["fact_usage_daily"]
+    latest = usage[usage["Region"] == "southcentralus"].sort_values("Date").iloc[-1]
+    assert f"{round(float(latest['UsedUnits'])):,}" in plan.blocker
+    assert f"{round(float(region['DeployedUnits'])):,}" in plan.blocker
 
 
 def test_an_infeasible_plan_offers_what_would_change_it(entities):

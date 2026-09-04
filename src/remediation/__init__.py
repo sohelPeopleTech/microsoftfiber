@@ -20,7 +20,7 @@ every site with the same cause got the same sentence.
 Every sentence below is produced by the module that owns the cause, using that
 facility's own numbers:
 
-    Threshold reached           module1 -- safety line, what raising it releases,
+    Threshold reached           module1 -- capacity threshold, what raising it releases,
                                 and when the order has to be placed
     Insufficient capacity       the F-SKU scale that actually helps -- which
     Platform incident           capacities in the building are short, what rung
@@ -75,7 +75,7 @@ def _site(entities, datacentre_id: str):
 
 
 # --------------------------------------------------------------------------
-# module 1 -- the safety line and the date it has to be decided by
+# module 1 -- the capacity threshold and the date it has to be decided by
 # --------------------------------------------------------------------------
 
 
@@ -116,18 +116,18 @@ def _threshold_remediation(entities, site, count: int, crossing_for=None) -> tup
     if usable:
         best = usable[0]
         action = (
-            f"{count} request(s) hit the {line:.0f}% safety line at "
+            f"{count} request(s) hit the {line:.0f}% capacity threshold at "
             f"{site['DatacentreId']}, which holds {units:.0f} CU with "
             f"{used:.0f} committed — "
-            f"{f'{headroom:.0f} CU of headroom' if headroom >= 0 else f'already {abs(headroom):.0f} CU past the line'}. "
-            f"Raising the line to {best['thresholdPct']:.0f}% releases "
+            f"{f'{headroom:.0f} CU of headroom' if headroom >= 0 else f'already {abs(headroom):.0f} CU past the threshold'}. "
+            f"Raising the threshold to {best['thresholdPct']:.0f}% releases "
             f"{best['releasesCores']:.0f} CU and leaves "
             f"{best['headroomAfter']:.0f} spare.{order_by}"
         )
     else:
         action = (
-            f"{count} request(s) hit the {line:.0f}% safety line at "
-            f"{site['DatacentreId']}. No safety line up to 100% releases enough — "
+            f"{count} request(s) hit the {line:.0f}% capacity threshold at "
+            f"{site['DatacentreId']}. No capacity threshold up to 100% releases enough — "
             f"{used:.0f} of {units:.0f} CU are already committed, so moving the "
             f"line cannot fix this. The capacities here need larger SKUs, which "
             f"takes effect immediately.{order_by}"
@@ -160,7 +160,7 @@ def _scale_remediation(entities, site, reason: str, count: int) -> tuple[str, li
     here = caps[caps["DatacentreId"].astype(str) == dc]
     if here.empty:
         return (f"{count} request(s) failed at {dc} for {reason.lower()}. "
-                f"No Fabric capacities are recorded in this data centre."), []
+                f"No Fabric capacities are recorded in this capacity pool."), []
 
     health = recommend._health(entities).set_index("CapacityId")
 
@@ -206,7 +206,8 @@ def _scale_remediation(entities, site, reason: str, count: int) -> tuple[str, li
                        f"operations in that window.")
         action = (
             f"{count} request(s) failed at {dc} for {reason.lower()}. "
-            f"{len(options)} of its {len(here)} capacities need a larger SKU. "
+            f"{len(options)} of its {len(here)} capacit"
+            f"{'y needs' if len(here) == 1 else 'ies need'} a larger SKU. "
             f"The worst is {first['capacityId']}, an {first['fromSku']} throttling "
             f"on {first['throttledDays']} of {first['windowDays']} days; moving it "
             f"to {first['toSku']} takes it from {first['cuBefore']} to "
@@ -215,7 +216,8 @@ def _scale_remediation(entities, site, reason: str, count: int) -> tuple[str, li
     else:
         action = (
             f"{count} request(s) failed at {dc} for {reason.lower()}, but none of "
-            f"its {len(here)} capacities is short of Capacity Units — none is "
+            f"its {len(here)} capacit{'y' if len(here) == 1 else 'ies'} is short "
+            f"of Capacity Units — none is "
             f"throttling and none is out of headroom. The constraint is not the "
             f"size of the capacities here, so scaling them would not have "
             f"admitted these requests."

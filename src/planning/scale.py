@@ -1,7 +1,7 @@
 """What moving a capacity along the F-SKU ladder would actually do.
 
 This replaces module 2's migration calculator, which answered a question Fabric
-cannot be asked. That model took a data centre offline, converted it from one
+cannot be asked. That model took a capacity pool offline, converted it from one
 hardware class to another, costed the conversion and quoted a provisioning lead
 time. A Fabric customer has none of those things: there is no server, no vendor,
 nothing to take offline, and no wait.
@@ -60,7 +60,7 @@ def _rescale(pct: float, from_cu: int, to_cu: int) -> float:
 
     Utilisation is CU-seconds consumed over CU-seconds available, and only the
     denominator moves when a SKU changes. The work the capacity was asked to do
-    is a property of the workspaces on it, not of the SKU underneath them.
+    is a property of the workloads on it, not of the SKU underneath them.
     """
     if to_cu <= 0:
         return 0.0

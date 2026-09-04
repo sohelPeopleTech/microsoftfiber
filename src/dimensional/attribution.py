@@ -29,6 +29,8 @@ import hashlib
 
 import pandas as pd
 
+from module1.threshold import DEFAULT_THRESHOLD_PCT
+
 #: Reasons a capacity request gets refused, and who can do something about it.
 #: `module` names the part of the platform that already produces a fix, or None
 #: where no automated recommendation is honest.
@@ -41,9 +43,9 @@ REASONS: dict[str, dict] = {
     },
     "Threshold reached": {
         "weight": 24,
-        "detail": "Granting it would have pushed the region past its safety line.",
+        "detail": "Granting it would have pushed the region past its capacity threshold.",
         "module": "module1",
-        "action": "Review the safety threshold, or scale now -- an F SKU applies immediately.",
+        "action": "Review the capacity threshold, or scale now -- an F SKU applies immediately.",
     },
     # Was "Hardware failure", describing units offline in a building. A Fabric
     # customer never sees the building or the units; what they experience when
@@ -173,7 +175,7 @@ def assign_denial_reason(fact: pd.DataFrame, failed_mask: pd.Series,
     an approver would actually hit the constraints:
 
       1. the site physically could not cover the ask   -> Insufficient capacity
-      2. granting it would cross the safety line       -> Threshold reached
+      2. granting it would cross the capacity threshold       -> Threshold reached
       3. neither -- the room existed                   -> an operational cause
 
     `site_capacity` maps DatacentreId -> {free, headroom}. Without it only the
@@ -266,14 +268,26 @@ def assign_company_names(subscription_ids) -> dict:
 # per-site capacity
 # --------------------------------------------------------------------------
 
-#: Safety threshold per site. The region-wide 85% is a policy default; real
-#: sites differ, so this varies them slightly and deterministically. Stated as
-#: an assumption because every "headroom remaining" figure moves with it.
-SITE_THRESHOLD_CHOICES = (80.0, 85.0, 90.0)
+#: Capacity threshold per site: the estate's single policy line, held by every
+#: facility.
+#:
+#: This used to deal each site one of 80/85/90 deterministically, on the
+#: argument that real sites differ. The cost was that nothing in the product
+#: meant one thing: dim_region takes the capacity-weighted mean of its sites, so
+#: regions advertised lines like 83.0% and 86.7%, "past its capacity threshold" was a
+#: different bar in every region, and two regions at the same utilisation could
+#: be coloured differently. The line is a policy, and policy is uniform, so
+#: there is now one number -- DEFAULT_THRESHOLD_PCT -- and the weighted mean of
+#: it is itself.
+#:
+#: Kept as a function, and the tuple kept as a one-entry tuple, so the callers
+#: that ask a site for its own line keep working and a future per-site policy
+#: has somewhere to land.
+SITE_THRESHOLD_CHOICES = (DEFAULT_THRESHOLD_PCT,)
 
 
 def site_threshold(datacentre_id: str) -> float:
-    return SITE_THRESHOLD_CHOICES[_bucket(datacentre_id, "thr", len(SITE_THRESHOLD_CHOICES))]
+    return DEFAULT_THRESHOLD_PCT
 
 
 # --------------------------------------------------------------------------

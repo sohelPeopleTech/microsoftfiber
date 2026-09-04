@@ -23,7 +23,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
 from planning import (  # noqa: E402
-    DOMINANT_WORKSPACE_PCT,
+    DOMINANT_WORKLOAD_PCT,
+    SITE_TYPE_SHARED,
     FREE_VIEWER_CU,
     IDLE_PCT,
     STAGE_RANK,
@@ -138,14 +139,29 @@ def test_scale_up_always_names_a_real_next_sku(entities):
 # --------------------------------------------------------------------------
 
 
-def test_a_move_needs_a_dominant_workspace_and_somewhere_to_go(entities):
+def test_a_move_needs_a_dominant_workload_and_somewhere_to_go(entities):
     for r in recommend.load_balance(entities):
         e = r.evidence
-        assert e["workspaceSharePct"] >= DOMINANT_WORKSPACE_PCT
-        assert e["workspacesOnCapacity"] > 1, (
-            "moving the only workspace empties the capacity -- that is "
+        assert e["workloadSharePct"] >= DOMINANT_WORKLOAD_PCT
+        assert e["workloadsOnCapacity"] > 1, (
+            "moving the only workload empties the capacity -- that is "
             "consolidation, not load balancing")
         assert e["moveTo"] and e["moveTo"] != r.target
+
+
+def test_a_move_is_only_ever_offered_on_a_shared_site(entities):
+    """A dedicated site holds a capacity per workload, each at 100% of it.
+
+    Share alone would fire on every one of them and recommend moving a workload
+    off the capacity that exists to run it -- which does not rebalance anything,
+    it empties one capacity into another. Half the fleet is dedicated, so this
+    is the difference between a rebalance list and a list of every capacity in
+    the estate.
+    """
+    sites = entities["dim_datacentre"].set_index("DatacentreId")["SiteType"]
+    for r in recommend.load_balance(entities):
+        assert r.evidence["siteType"] == SITE_TYPE_SHARED, r.target
+        assert sites[r.evidence["datacentre"]] == SITE_TYPE_SHARED, r.target
 
 
 def test_a_move_never_targets_a_throttling_capacity(entities):

@@ -41,6 +41,11 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+# The one capacity threshold, imported rather than restated: a forecast that judged a
+# region against a different number from the rest of the product would put a
+# crossing date on a line nobody else draws.
+from module1.threshold import DEFAULT_THRESHOLD_PCT
+
 #: Weekly seasonality. Capacity demand follows the working week, and a model
 #: that cannot see that will read every Monday as a trend change.
 SEASON = 7
@@ -306,12 +311,12 @@ class Forecast:
     scores: list = field(default_factory=list)
     history: list = field(default_factory=list)
     projection: list = field(default_factory=list)
-    threshold_pct: float = 85.0
+    threshold_pct: float = DEFAULT_THRESHOLD_PCT
     crossing_date: str | None = None
     crossing_earliest: str | None = None
     crossing_latest: str | None = None
     #: When the region is projected to run out entirely. For a region already
-    #: past its safety line this is the number that matters -- "you crossed the
+    #: past its capacity threshold this is the number that matters -- "you crossed the
     #: line in November" is history; "you are full on 26 March" is a deadline.
     saturation_date: str | None = None
     already_breached: bool = False
@@ -334,10 +339,11 @@ class Forecast:
         }
 
 
-def forecast_region(usage: pd.DataFrame, region: str, threshold_pct: float = 85.0,
+def forecast_region(usage: pd.DataFrame, region: str,
+                    threshold_pct: float = DEFAULT_THRESHOLD_PCT,
                     horizon_days: int = 90, exclude_anomalies=None,
                     force_model: str | None = None) -> Forecast:
-    """Project one region's utilisation and say when it crosses its safety line.
+    """Project one region's utilisation and say when it crosses its capacity threshold.
 
     `exclude_anomalies` is a set of dates to drop before fitting. Review was
     explicit about this: a spike caused by a signed deal is a known event, not a
@@ -393,7 +399,7 @@ def forecast_region(usage: pd.DataFrame, region: str, threshold_pct: float = 85.
     # 106%, which is not a forecast of anything, it is the line running off the
     # end of the physical quantity. Capping keeps the chart honest; the date it
     # first hits the ceiling is reported separately, because that is the real
-    # deadline for a region already over its safety line.
+    # deadline for a region already over its capacity threshold.
     projection = np.clip(raw, 0.0, 100.0)
 
     # Uncertainty from the error the chosen model actually made, not from a
@@ -414,7 +420,7 @@ def forecast_region(usage: pd.DataFrame, region: str, threshold_pct: float = 85.
     saturation = _first_at(raw, 100.0)
     note = ""
     if already:
-        note = (f"Already at {y[-1]:.1f}%, past the {threshold_pct:.0f}% safety line. "
+        note = (f"Already at {y[-1]:.1f}%, past the {threshold_pct:.0f}% capacity threshold. "
                 + (f"On this trend the region is full by {saturation}."
                    if saturation else
                    "It is not projected to fill completely within the horizon."))

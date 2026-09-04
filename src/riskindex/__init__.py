@@ -20,7 +20,7 @@ outrank one measured over months. See `PRIOR_STRENGTH`.
 
   failure rate   share of this entity's requests that were refused. The most
                  direct evidence that something here is not working.
-  pressure       how close the region is to its safety line, past the line
+  pressure       how close the region is to its capacity threshold, past the line
                  counting as full weight. A full region denies the next ask.
   unresolved     requests still unfulfilled, relative to the busiest entity.
                  A backlog that never clears is worse than one that does.
@@ -174,7 +174,7 @@ def score(
                         / (requests + prior_strength))
         failure_rate = min(max(failure_rate, 0.0), 1.0)
 
-    # Past the safety line is full weight; below it, the fraction of the way
+    # Past the capacity threshold is full weight; below it, the fraction of the way
     # there. A region at 97% and one at 120% are both simply "full".
     pressure = min(utilisation_pct / threshold_pct, 1.0) if threshold_pct else 0.0
 
@@ -216,7 +216,7 @@ def score(
 #: Human wording for each component, for tooltips and the methodology page.
 COMPONENT_LABELS = {
     "failureRate": "Share of requests here that were refused",
-    "pressure": "How close the region is to its safety line",
+    "pressure": "How close the region is to its capacity threshold",
     "unresolved": "Requests still unfulfilled, against the busiest in this view",
     "throttling": "Share of its capacities currently delaying or refusing work",
 }

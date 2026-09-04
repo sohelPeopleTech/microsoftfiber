@@ -103,22 +103,41 @@ def sku_reference() -> pd.DataFrame:
     return _tag(df, "relative cost/performance index, AMD-standard = 1.0")
 
 
-def hardware_inventory(tickets: pd.DataFrame, skus: pd.DataFrame) -> pd.DataFrame:
+def hardware_inventory(tickets: pd.DataFrame, skus: pd.DataFrame,
+                       capacities: pd.DataFrame | None = None) -> pd.DataFrame:
     """Units deployed per region.
 
-    Anchored on the largest CurrentLimitCapacity actually seen in each region:
-    whatever a customer already had, the region must at least have had that
-    much, plus headroom.
+    When the capacity table is supplied -- which is the normal path -- a
+    region's deployed units are the sum of the capacities standing in it. The
+    capacities are the fact: every site is Shared or Dedicated and holds the
+    rungs that follow from that, so the region total is a consequence, not an
+    input. Deriving it the other way would let the region screen and the
+    drill-down under it disagree about the same estate.
+
+    Without the capacity table it falls back to the older anchor -- the largest
+    CurrentLimitCapacity actually seen in the region, on the argument that a
+    region must have held at least what a customer already had, plus headroom.
+    That path is kept for callers with tickets and no fleet.
     """
     rng = _rng(1)
     largest = tickets.groupby("Region")["CurrentLimitCapacity"].max()
+    deployed_by_region = {}
+    if capacities is not None and len(capacities):
+        deployed_by_region = (capacities.groupby("Region")["DeployedUnits"]
+                              .sum().to_dict())
     rows = []
     for region, sku in skus.set_index("Region")["SKUClass"].items():
         floor = int(largest.get(region, 0))
-        deployed = int(max(floor * 4, 512) * rng.uniform(1.0, 1.8))
-        rows.append({"Region": region, "SKUClass": sku, "DeployedUnits": deployed,
+        deployed = deployed_by_region.get(region)
+        if deployed is None:
+            deployed = int(max(floor * 4, 512) * rng.uniform(1.0, 1.8))
+        rows.append({"Region": region, "SKUClass": sku,
+                     "DeployedUnits": int(deployed),
                      "LargestObservedCustomerLimit": floor})
-    return _tag(pd.DataFrame(rows), "deployed units scaled from the largest observed customer limit")
+    return _tag(pd.DataFrame(rows),
+                "deployed units summed from the Fabric capacities standing in "
+                "each region" if deployed_by_region else
+                "deployed units scaled from the largest observed customer limit")
 
 
 # --------------------------------------------------------------------------
@@ -292,7 +311,12 @@ def generate_all(tickets: pd.DataFrame) -> dict[str, pd.DataFrame]:
     from . import fleet
 
     skus = sku_by_region(tickets)
-    inventory = hardware_inventory(tickets, skus)
+    # The capacities come first now. What a site holds follows from whether it
+    # is Shared or Dedicated rather than from a unit budget dealt out by its
+    # region, so the region's deployed units are the sum of its capacities and
+    # the usage curve is grown against that total.
+    capacities = fleet.capacity_inventory(skus)
+    inventory = hardware_inventory(tickets, skus, capacities)
     usage = capacity_usage(tickets, inventory)
 
     tables = {
@@ -304,7 +328,8 @@ def generate_all(tickets: pd.DataFrame) -> dict[str, pd.DataFrame]:
         "feature_matrix": feature_matrix(tickets),
         "ticket_status": ticket_status(tickets),
     }
-    tables.update(fleet.generate_fleet(tickets, inventory, usage))
+    tables.update(fleet.generate_fleet(tickets, inventory, usage,
+                                       capacities=capacities))
     return tables
 
 

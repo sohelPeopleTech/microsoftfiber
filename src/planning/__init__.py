@@ -12,7 +12,7 @@ F-SKU is scaled in Azure and takes effect immediately, and a capacity does not
 fail -- it throttles. The remedies Microsoft actually names are the ones here:
 
     scale_up      the capacity is throttling; move it up the SKU ladder
-    load_balance  one workspace dominates; move it to a quieter capacity
+    load_balance  one workload dominates on a shared site; move it to a quieter capacity
     scale_down    consistently idle; a smaller SKU costs less per second
     licensing     step to F64, where Power BI reads on a free licence
 
@@ -31,11 +31,18 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from module1.threshold import DEFAULT_THRESHOLD_PCT
+
 # Imported as `synthdata.fabric`, not `src.synthdata.fabric`. The app puts
 # ROOT/src on sys.path and nothing else, so the `src.` prefix resolves only
 # where ROOT also happens to be on the path -- which is true of the tests and
 # of a dev server started from the repo root, and false in the container. That
 # difference shipped a 500 on every page the planning module touches.
+from synthdata.fleet import (  # noqa: F401  -- re-exported for callers
+    SITE_TYPE_DEDICATED,
+    SITE_TYPE_SHARED,
+    SITE_TYPES,
+)
 from synthdata.fabric import (  # noqa: F401  -- re-exported for callers
     FREE_VIEWER_SKU,
     F_SKUS,
@@ -59,12 +66,18 @@ THROTTLED_DAYS_FOR_SCALE = 3
 #: Sustained utilisation above this, even without throttling, means the next
 #: surge has nowhere to go. Below 100% there is no overage at all, so this sits
 #: under it deliberately: the recommendation is about headroom, not about being
-#: already broken.
-SUSTAINED_HIGH_PCT = 85.0
+#: already broken. It is the estate's capacity threshold, not a second figure -- a
+#: capacity that has crossed the line the map colours it red for is exactly the
+#: one this should be recommending action on.
+SUSTAINED_HIGH_PCT = DEFAULT_THRESHOLD_PCT
 
-#: A workspace taking more than this share of a capacity is worth moving on its
+#: A workload taking more than this share of a capacity is worth moving on its
 #: own, because moving it materially changes the picture.
-DOMINANT_WORKSPACE_PCT = 55.0
+#:
+#: Only ever applied to a shared site. Every capacity on a dedicated site holds
+#: one workload at 100%, so this would be true of all of them and would mean
+#: nothing about any of them.
+DOMINANT_WORKLOAD_PCT = 55.0
 
 #: Utilisation below which a capacity is paying for compute nobody uses. F SKUs
 #: bill per second, so an over-provisioned capacity is a standing cost rather

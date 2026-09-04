@@ -413,7 +413,7 @@ td.mono { font-family: var(--mono); font-size: .82rem; }
 /* ------------------------------------------------------------------ inputs */
 
 label.ctl { font-size: .82rem; color: var(--ink-2); display: flex; align-items: center; gap: .5rem; }
-input[type=text], input[type=search], input[type=password], select {
+input[type=text], input[type=search], input[type=password], input[type=number], select {
   font: inherit; font-size: .875rem; padding: .4rem .6rem;
   border: 1px solid var(--rule-strong); border-radius: 2px;
   background: var(--card); color: var(--ink);
@@ -430,6 +430,15 @@ input[type=range] { accent-color: var(--brand); }
 .btn.ghost { background: var(--card); color: var(--ink); border-color: var(--rule-strong); }
 .btn.ghost:hover { background: var(--page); }
 .btn:disabled { opacity: .5; cursor: default; }
+
+/* The what-if threshold control on the Forecast tab. Wraps rather than
+   scrolling: on a narrow panel the slider drops under the number box instead of
+   squeezing both to unusable widths. */
+.thr-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; }
+.thr-ctl input[type=range] { flex: 1 1 14rem; min-width: 10rem; }
+.thr-ctl input[type=number] { width: 5rem; }
+.thr-ctl .thr-note { flex: 1 0 100%; margin: 0; font-size: .82rem; color: var(--ink-2); }
+.thr-ctl[data-busy="1"] { opacity: .55; }
 
 /* ------------------------------------------------------------------ states */
 
@@ -901,7 +910,7 @@ table.caps td .t3 { display: block; color: var(--ink-3); font-size: .74rem; font
    asked for the separate Utilisation card to be folded into this one. */
 .kpi .kpi-of { font-size: .55em; font-weight: 400; color: var(--ink-3); }
 
-/* A data centre on the zoomed map. Sites are drawn on a ring anchored to the
+/* A capacity pool on the zoomed map. Sites are drawn on a ring anchored to the
    region because their real positions are not published -- the legend says so
    whenever the map is zoomed. */
 .site-mk { cursor: pointer; transition: r .12s ease; }
@@ -1409,9 +1418,21 @@ tbody tr.at-risk:hover { background: #f9dedc; }
 .pill.info { background: var(--brand-wash); color: var(--brand); border-color: var(--brand-wash-2); }
 .pill.mute { background: var(--surface-2); color: var(--ink-2); border-color: var(--rule); }
 
+/* Shared or Dedicated -- what shape a site is. Deliberately quiet: it is a fact
+   about the building, not a judgement on it, so it must not read like a status.
+   The two are given different grounds because a reader scanning a column of
+   them is asking which kind a row is, not reading the word each time. */
+.pill.site-type { font-weight: 600; letter-spacing: .01em; }
+.pill.site-shared {
+  background: var(--brand-wash); color: var(--brand); border-color: var(--brand-wash-2);
+}
+.pill.site-dedicated {
+  background: var(--surface-2); color: var(--ink-2); border-color: var(--rule);
+}
+
 /* ------------------------------------------------------------------ inputs */
 
-input[type=text], input[type=search], input[type=password], select {
+input[type=text], input[type=search], input[type=password], input[type=number], select {
   border: 1px solid var(--rule-strong); border-radius: var(--radius-sm);
   padding: .48rem .7rem; background: var(--card);
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
@@ -1553,7 +1574,7 @@ button:focus-visible, a.iconbtn:focus-visible, .nav a:focus-visible {
 
 /* ---- /datacentres: per-SKU breakdown rows -------------------------------- */
 
-/* The SKU cell on a data centre row: a disclosure caret plus the mix it holds
+/* The SKU cell on a capacity pool row: a disclosure caret plus the mix it holds
    ("3×F64 2×F32"), smallest rung first. */
 .sku-cell { white-space: nowrap; }
 .sku-expand {
@@ -1569,7 +1590,7 @@ tr.open .sku-expand { transform: rotate(90deg); color: var(--brand); }
 .sku-mix { font-size: .78rem; color: var(--ink-2); vertical-align: middle; }
 tr.open .sku-mix { color: var(--brand); font-weight: 650; }
 
-/* A SKU sub-row reads as a continuation of the data centre above it, not as a
+/* A SKU sub-row reads as a continuation of the capacity pool above it, not as a
    row in its own right: quieter ground, a rule up the left edge tying it to the
    parent, and the demand/risk columns left empty because those belong to the
    building. */

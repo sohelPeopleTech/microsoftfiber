@@ -195,5 +195,9 @@ def test_adding_holders_moved_no_existing_figure():
     """The owner column was added to a table every capacity screen reads. If it
     changed a total, every reviewed number in the product moved with it."""
     caps = api.get_entities()["dim_capacity"]
-    assert len(caps) == 317
-    assert int(caps["CapacityUnits"].sum()) == 9662
+    # 265 since every site became Shared (one capacity) or Dedicated (two to
+    # five); it was 317 when a site's capacities were a decomposition of a unit
+    # budget. The number is here as a canary -- if the owner column ever adds or
+    # drops a row, every capacity figure in the product moves with it.
+    assert len(caps) == 265
+    assert int(caps["CapacityUnits"].sum()) == 15148
