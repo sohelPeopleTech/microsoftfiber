@@ -46,6 +46,10 @@ from dimensional import attribution
 # sys.path and nothing else. module2 is gone from here -- it modelled hardware
 # conversions, and Fabric scales an F SKU instead.
 from planning import F_SKUS, recommend, scale
+# The conversion the whole product's CU figures rest on. `dim_datacentre`'s
+# `DeployedUnits` / `UsedUnits` are raw compute units -- `CU / UNITS_PER_CU` --
+# and every sentence built below is stated in Capacity Units.
+from admission import UNITS_PER_CU
 
 
 @dataclass
@@ -83,9 +87,11 @@ def _threshold_remediation(entities, site, count: int, crossing_for=None) -> tup
     """What module 1 says about this site's headroom and when to decide."""
     # Capacity Units. The variable was called `cores` and the sentences it built
     # said "184 cores with 155 committed", on a page whose every other figure
-    # was already in CU.
-    units = float(site["DeployedUnits"] or 0)
-    used = float(site["UsedUnits"] or 0)
+    # was already in CU. Renaming it was only half of it: the columns it reads
+    # are raw compute units, so the figure was also a factor of `UNITS_PER_CU`
+    # larger than the CU the site’s own row and its capacity list report.
+    units = float(site["DeployedUnits"] or 0) * UNITS_PER_CU
+    used = float(site["UsedUnits"] or 0) * UNITS_PER_CU
     line = float(site["ThresholdPct"] or 0)
     headroom = units * line / 100.0 - used
 

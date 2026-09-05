@@ -77,7 +77,8 @@ def scale_up(entities, window_days: int = 30) -> list[Recommendation]:
                         f"{c.ThrottledDays} of the last {c.WindowDays} days")
             detail = (
                 f"This capacity reached {stage}. At its worst it was "
-                f"{c.PeakFutureMinutes:.0f} minutes into future capacity, and "
+                f"{c.PeakMinutesOverLine:.0f} minutes of its worst day with no "
+                f"headroom left, and "
                 f"{'it refused ' + format(rejected, ',') + ' operations' if rejected else 'no operations were refused yet'}. "
                 f"Fabric only absorbs ten minutes of overage before it starts "
                 f"delaying interactive jobs, so this is not a spike it will "
@@ -119,7 +120,7 @@ def scale_up(entities, window_days: int = 30) -> list[Recommendation]:
                 "windowDays": int(c.WindowDays),
                 "worstStage": c.WorstStage,
                 "worstStageLabel": stage,
-                "peakFutureMinutes": float(c.PeakFutureMinutes),
+                "peakMinutesOverLine": float(c.PeakMinutesOverLine),
                 "interactiveRejected": int(c.InteractiveRejected),
                 "backgroundRejected": int(c.BackgroundRejected),
                 "isThrottling": bool(throttling),

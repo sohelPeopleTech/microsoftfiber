@@ -90,7 +90,11 @@ def scale_options(fabric_sku: str, capacity_units: int, mean_pct: float,
             # Headroom against the peak, not the mean. A capacity sized to its
             # average is a capacity that throttles at month end.
             "headroomPct": round(100.0 - peak_after, 1),
-            "stillBursts": peak_after > COMFORTABLE_PEAK_PCT,
+            # Was `stillBursts`. Nothing bursts in this model -- consumption
+            # is bounded by the SKU -- but the question the flag answers is
+            # still live on a scale *down*: rescaled onto a smaller rung, this
+            # capacity's own peak would not fit in it.
+            "overCeiling": peak_after > COMFORTABLE_PEAK_PCT,
             "comfortable": (mean_after <= COMFORTABLE_MEAN_PCT
                             and peak_after <= COMFORTABLE_PEAK_PCT),
             # F SKUs bill per CU per second, so the CU change is the cost

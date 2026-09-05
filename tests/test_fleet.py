@@ -79,21 +79,35 @@ def test_throttle_stage_matches_the_recorded_overage(entities):
     cu = entities["fact_capacity_cu_daily"]
     sample = cu.sample(min(500, len(cu)), random_state=2)
     for r in sample.itertuples():
-        stage, _ = fabric.throttle_stage(r.FutureCapacityMinutes)
+        stage, _ = fabric.throttle_stage(r.UtilisationPct)
         assert r.ThrottleStage == stage, (
-            f"{r.CapacityId} on {r.Date}: {r.FutureCapacityMinutes} min recorded "
+            f"{r.CapacityId} on {r.Date}: {r.UtilisationPct}% recorded "
             f"as {r.ThrottleStage}, policy says {stage}")
 
 
-def test_bursting_is_allowed_and_recorded(entities):
-    """Fabric lets operations use more compute than the SKU provides. A model
-    that clamped at 100% would make smoothing invisible and throttling
-    inexplicable."""
+def test_a_capacity_never_consumes_more_than_it_holds(entities):
+    """The bound the whole model rests on.
+
+    This asserted the opposite -- that capacities burst past their SKU, as they
+    do in Fabric, because the throttling stages were cut on the borrowed future
+    capacity that bursting produces. They are cut on remaining headroom now, so
+    consumption is bounded by the capacity and every ratio built on it is under
+    100% by construction rather than by clipping.
+    """
     cu = entities["fact_capacity_cu_daily"]
-    assert (cu["UtilisationPct"] > 100).any(), "nothing ever bursts"
-    over = cu[cu["UtilisationPct"] > 100]
-    assert (over["FutureCapacityMinutes"] > 0).all(), (
-        "bursting must produce overage, or smoothing is not being modelled")
+    assert (cu["CuSecondsConsumed"] <= cu["CuSecondsAvailable"]).all(), (
+        "a capacity consumed more CU seconds than its SKU provides")
+    assert cu["UtilisationPct"].max() < 100.0, (
+        "utilisation reached 100%, so something did spend what it does not hold")
+
+    # And the severity column follows from that utilisation alone: over the
+    # line and only over the line.
+    over = cu[cu["UtilisationPct"] > fabric.THROTTLE_LINE_PCT]
+    assert (over["MinutesOverLine"] > 0).all(), (
+        "a capacity past the throttling line recorded no time over it")
+    under = cu[cu["UtilisationPct"] <= fabric.THROTTLE_LINE_PCT]
+    assert (under["MinutesOverLine"] == 0).all(), (
+        "a capacity with headroom recorded time over the line")
 
 
 def test_every_throttling_stage_actually_occurs(entities):

@@ -155,7 +155,7 @@ def capacity_health(capacities: pd.DataFrame, cu_daily: pd.DataFrame,
         "ThrottledDays": grouped["ThrottleStage"].agg(lambda s: int((s != "none").sum())),
         "WorstStage": grouped["ThrottleStage"].agg(
             lambda s: max(s, key=lambda x: STAGE_RANK.get(x, 0))),
-        "PeakFutureMinutes": grouped["FutureCapacityMinutes"].max().round(1),
+        "PeakMinutesOverLine": grouped["MinutesOverLine"].max().round(1),
     })
 
     if len(throttling):
@@ -171,7 +171,7 @@ def capacity_health(capacities: pd.DataFrame, cu_daily: pd.DataFrame,
     out = capacities.merge(stats, left_on="CapacityId", right_index=True, how="left")
     out["ThrottledDays"] = out["ThrottledDays"].fillna(0).astype(int)
     out["WorstStage"] = out["WorstStage"].fillna("none")
-    for col in ("MeanUtilisationPct", "PeakUtilisationPct", "PeakFutureMinutes"):
+    for col in ("MeanUtilisationPct", "PeakUtilisationPct", "PeakMinutesOverLine"):
         out[col] = out[col].fillna(0.0)
     out["WindowDays"] = len(recent_days)
     return out

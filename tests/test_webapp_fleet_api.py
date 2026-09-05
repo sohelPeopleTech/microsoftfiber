@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "webapp"))
 sys.path.insert(0, str(ROOT / "src"))
 
+import admission  # noqa: E402
 import api  # noqa: E402
 
 
@@ -809,6 +810,12 @@ def test_a_region_reports_the_room_left_in_the_sites_that_have_any():
     building. So the figure that matters is the room left under each site's own
     line, added across the sites that still have some. Capacity inside a site
     already over its line cannot be handed out and must not be counted.
+
+    In Capacity Units. This recomputation once read `DeployedUnits` /
+    `UsedUnits` straight, which are raw compute units -- `CU / UNITS_PER_CU` --
+    so it asserted a `placeableCu` twice the size of the CU it is published as
+    and set against. The conversion is the only thing that changed: which sites
+    are over their line is a ratio, and unaffected by it.
     """
     sites = api.get_entities()["dim_datacentre"]
     for r in api.overview()["regions"]:
@@ -819,7 +826,8 @@ def test_a_region_reports_the_room_left_in_the_sites_that_have_any():
 
         want, over = 0.0, 0
         for s in group.itertuples():
-            dep, used = float(s.DeployedUnits or 0), float(s.UsedUnits or 0)
+            dep = float(s.DeployedUnits or 0) * admission.UNITS_PER_CU
+            used = float(s.UsedUnits or 0) * admission.UNITS_PER_CU
             line = float(s.ThresholdPct or 0)
             if not dep:
                 continue

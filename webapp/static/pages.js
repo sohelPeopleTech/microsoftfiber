@@ -849,10 +849,10 @@ async function capacityPanel(scope, id) {
       ${d.count === 1 ? "That single capacity is the whole of it — a shared site holds one." : ""}
       ${d.throttling
         ? `<b class="t-bad">${num(d.throttling)}</b> of them throttled at some point —
-           Fabric absorbs ten minutes of overage, then delays interactive jobs by
-           20 seconds, then rejects them at an hour, then rejects everything at 24.`
-        : `None of them throttled. Peaks above 100% are <i>bursting</i>, which Fabric
-           smooths over future timepoints and is not by itself a fault.`}
+           past 90% of its CUs a capacity delays interactive jobs by 20 seconds, past
+           95% it rejects them, and past 98% it rejects everything.`
+        : `None of them throttled. Every one kept headroom under the 90% line, which is
+           where delays begin.`}
       ${d.freeViewerCapable
         ? `${d.freeViewerCapable} ${d.freeViewerCapable === 1 ? "is" : "are"} F64 or larger,
            so Power BI content on ${d.freeViewerCapable === 1 ? "it" : "them"} reads on a free licence.`
@@ -926,11 +926,11 @@ async function forecastPanel(datacentreId) {
 
     <p style="color:var(--ink-3);font-size:.78rem;margin:.4rem 0 0">
       This line is CU consumed over CU held, across the capacities in the building.
-      <b>Above 100% is bursting, not an error</b> — a capacity can draw more CU than
-      it holds and Fabric smooths the overage over future timepoints, which is why a
-      site can sit past 100% without anything having failed. Note this is a different
-      measurement from the utilisation in the site table above, which is capped at
-      the CU deployed; the two agree everywhere a building is not bursting.
+      A capacity cannot consume more CU than it holds, so it never passes 100% — what
+      a full building looks like is a number just under it with nothing spare, which is
+      why the throttling stages are cut on headroom rather than on overage. It is the
+      same measurement as the utilisation in the site table above, summed over the same
+      capacities.
     </p>
 
     <div class="kpis" style="margin-top:1rem">
@@ -1442,8 +1442,8 @@ function whenBlock(d) {
 /* What is happening, in the words someone would use out loud.
 
    The first version of this table led with "Mean used 110%", which cannot be
-   read aloud without first explaining bursting and smoothing -- and review said
-   so: "I can not explain what that number is." A percentage over 100 is the
+   read aloud without first explaining what the number was measured against --
+   and review said so: "I can not explain what that number is." A ratio is the
    mechanism, not the finding.
 
    So the finding leads: this capacity is refusing queries, on this many days,
@@ -1452,20 +1452,131 @@ function whenBlock(d) {
    because the first is a sentence and the second needs a footnote. */
 const PROBLEM = {
   background_rejection: { text: "Refusing everything", tone: "bad",
-    why: "past 24 hours of borrowed capacity — every request, interactive and background, is refused" },
+    why: "past 98% of its CUs — every request, interactive and background, is refused" },
   interactive_rejection: { text: "Refusing queries", tone: "bad",
-    why: "past an hour of borrowed capacity — users' queries are turned away" },
+    why: "past 95% of its CUs — users' queries are turned away, background work continues" },
   interactive_delay: { text: "Delaying queries", tone: "warn",
-    why: "past ten minutes of borrowed capacity — every query waits an extra 20 seconds" },
+    why: "past 90% of its CUs — every query waits an extra 20 seconds" },
   none: { text: "No room left", tone: "warn",
     why: "not throttling yet, but there is almost nothing spare to absorb a busy day" },
 };
 
+/* Scale up, at the grain the decision is taken on.
+
+   A row is one Fabric capacity that needs a bigger rung -- which is the whole
+   of a shared pool, because a shared pool holds exactly one capacity, and one
+   of several rows on a dedicated pool, because each of its capacities is a
+   separate meter with a separate workload on it. CU does not pool between them,
+   so rolling a dedicated site up into one line would average an F4 at 120%
+   against the F64 beside it and hide the only row that matters.
+
+   Which capacities appear is unchanged: the planner's `scale_up`
+   recommendations for this region, in its urgency order. What is new is that a
+   row is read the way a row on /datacentres is read -- the same utilisation,
+   threshold, growth, lead time and runway columns, off the same `siteRows` the
+   pool table in the next tab is built from -- so moving between the two tabs
+   does not ask the reader to learn a second set of columns. */
+function scaleUpTable(list, d) {
+  const byCapacity = {};
+  (d.siteRows || []).forEach((site) => (site.capacities || []).forEach((cap) => {
+    byCapacity[cap.capacityId] = { site, cap };
+  }));
+
+  const dash = `<span class="t3">—</span>`;
+  const growth = (g) => g == null ? dash
+    : g > 0 ? `+${g.toFixed(2)}<span class="t3"> pp/wk</span>`
+    : `<span class="t3">${g.toFixed(2)} pp/wk</span>`;
+
+  /* What is running on the capacity being scaled. A dedicated capacity carries
+     exactly one workload at 100% of it, so it is named outright. A shared
+     capacity carries two to five, none of which is the reason on its own, so
+     they go in a dropdown with their shares rather than as a list that would
+     make every row four lines tall. */
+  const workloadCell = (site, cap) => {
+    if (site.childGrain !== "workload") {
+      return cap.workload
+        ? `<b>${esc(cap.workload)}</b>${cap.workloadType
+            ? `<br><span class="t3">${esc(cap.workloadType)}</span>` : ""}`
+        : dash;
+    }
+    const mine = (site.workloadRows || []).filter((w) => w.capacityId === cap.capacityId);
+    if (!mine.length) return dash;
+    return `<select class="wl-select" aria-label="Workloads sharing ${esc(cap.capacityId)}">
+      <option value="">${num(mine.length)} workload${mine.length === 1 ? "" : "s"} sharing it</option>
+      ${mine.map((w) => `<option value="${esc(w.workloadId)}">${esc(w.workload)} — ${
+        pct(w.sharePct, 0)}${w.workloadType ? ` · ${esc(w.workloadType)}` : ""}</option>`).join("")}
+    </select>`;
+  };
+
+  // A recommendation whose capacity is not among this region's rows has nothing
+  // to print in twelve of the fourteen columns, so it is left out rather than
+  // drawn as a row of dashes.
+  const known = list.filter((r) => byCapacity[r.target]);
+  if (!known.length) return `<p class="empty">Nothing to scale up in this region.</p>`;
+
+  return `
+  <p class="table-lede">Read a row as: <b>this capacity is trying to use more Capacity Units
+    than its SKU provides</b>, so Fabric has started delaying or refusing work on it.
+    One row per capacity — a shared pool has one, a dedicated pool one per workload.</p>
+  <div class="scroll-x"><table class="grid caps scale-up">
+    <thead><tr>
+      <th>Capacity pool</th><th>Type</th><th>Workload</th><th>Size</th>
+      <th>Capacity</th><th class="n">Total CU</th><th class="n">Utilised CU</th>
+      <th class="n">Utilisation</th><th class="n">Threshold</th><th class="n">Growth</th>
+      <th class="n">Lead time</th><th class="n">Weeks to decide</th><th>Status</th>
+      <th>Scale to</th>
+    </tr></thead>
+    <tbody>${known.map((r) => {
+      const { site, cap } = byCapacity[r.target];
+      const e = r.evidence || {};
+      const p = PROBLEM[e.isThrottling ? e.worstStage : "none"] || PROBLEM.none;
+      return `<tr class="${p.tone === "bad" ? "row-danger" : "row-soon"}">
+        <td><a href="/datacentre/${encodeURIComponent(site.datacentre)}">${esc(site.datacentre)}</a>
+          <span class="t3">${esc(site.region)}</span></td>
+        <td>${siteTypeBadge(site.siteType)}</td>
+        <td>${workloadCell(site, cap)}</td>
+        <td><b>${esc(cap.sku)}</b><span class="t3">${num(cap.capacityUnits)} CU</span></td>
+        <td><a class="mono" href="/capacity/${encodeURIComponent(cap.capacityId)}">${
+          esc(cap.capacityId)}</a></td>
+        <td class="n">${num(Math.round(cap.totalCU))}</td>
+        <td class="n">${cu1(cap.utilisedCU)}</td>
+        <td class="n"><b${cap.utilisationPct >= cap.planningThresholdPct
+          ? ` class="t-bad"` : ""}>${pct(cap.utilisationPct, 1)}</b>${cap.peakPct > 100
+            ? `<br><span class="t3">peak ${pct(cap.peakPct, 0)}</span>` : ""}</td>
+        <td class="n t3">${pct(cap.planningThresholdPct, 0)}</td>
+        <td class="n">${growth(cap.growthPctPerWeek)}</td>
+        <td class="n t3">${cap.leadTimeWeeks}w</td>
+        <td class="n">${cap.weeksToDecide == null ? dash
+          : cap.weeksToDecide <= 0 ? `<b class="t-bad">now</b>`
+          : `<b${cap.planningStatus === "overdue" ? ` class="t-bad"` : ""}>${
+               cap.weeksToDecide.toFixed(1)}</b><span class="t3"> wks</span>`}</td>
+        <td>${cap.planningStatus === "overdue"
+          ? `<span class="pill bad">Overdue</span>`
+          : `<span class="pill good">OK</span>`}</td>
+        <td class="act"><span class="pill ${p.tone === "bad" ? "bad" : "wash"}">Scale to ${
+          esc(e.scaleTo)}</span>
+          <span class="t3">${num(e.scaleToUnits)} CU · applies immediately${
+            e.crossesSlowBoundary ? " · crosses the F256/F512 boundary" : ""}</span></td>
+      </tr>`;
+    }).join("")}</tbody></table></div>
+  <div class="why-notes">
+    <p><b>Utilised CU</b> is what the capacity actually consumed on an average day, and
+      it is always less than the CU the SKU provides — a capacity cannot spend what it
+      does not hold. What makes a row urgent is therefore not that it went over but that
+      it has nothing left: past 90% of its CUs queries are delayed 20 seconds, past 95%
+      they are refused, and past 98% everything is.</p>
+    <p><b>Threshold, growth and weeks to decide</b> are the capacity's own, fitted to its
+      own daily CU record — the same quantities the capacity pool table carries, one level
+      finer. CU does not pool between capacities, so a dedicated pool's rows are read
+      separately rather than summed.</p>
+  </div>`;
+}
+
 function scaleTable(list, up) {
   if (!up) return scaleDownTable(list);
   return `
-  <p class="table-lede">Read a row as: <b>this capacity is trying to use more Capacity Units
-    than its SKU provides</b>, so Fabric has started delaying or refusing work on it.</p>
+  <p class="table-lede">Read a row as: <b>this capacity has run out of room inside its
+    SKU</b>, so Fabric has started delaying or refusing work on it.</p>
   <div class="tablewrap"><table class="grid caps">
     <thead><tr>
       <th>Capacity</th><th>Size</th><th class="n">Wants</th>
@@ -1494,13 +1605,12 @@ function scaleTable(list, up) {
       </tr>`;
     }).join("")}</tbody></table></div>
   <div class="why-notes">
-    <p><b>Wants</b> is what the capacity actually consumed on an average day, in CU. Fabric
-      lets a job use more than the SKU provides and spreads the cost over the next few
-      hours — so briefly going over is normal. Doing it every day is not: the borrowed
-      capacity accumulates until Fabric starts pushing back.</p>
-    <p><b>What is happening</b> is Fabric's own ladder. Ten minutes of borrowed capacity is
-      free. Past that, queries are delayed 20 seconds; past an hour, queries are refused;
-      past 24 hours, everything is refused.</p>
+    <p><b>Wants</b> is what the capacity actually consumed on an average day, in CU. It is
+      always less than the CU the capacity holds — nothing can spend what it does not
+      have — so what matters is not whether it went over but how little was left.</p>
+    <p><b>What is happening</b> is the headroom ladder. Below 90% of its CUs a capacity is
+      not throttled. Past that, queries are delayed 20 seconds; past 95%, queries are
+      refused; past 98%, everything is refused.</p>
   </div>`;
 }
 
@@ -1570,39 +1680,16 @@ function moveTable(list) {
   </div>`;
 }
 
-function licenceTable(list) {
-  const e0 = (list[0] || {}).evidence || {};
-  return `
-  <div class="tablewrap"><table class="grid caps">
-    <thead><tr>
-      <th>Capacity</th><th>Capacity Pool</th><th>SKU</th><th class="n">CU now</th>
-      <th>Step to</th><th class="n">CU after</th><th class="n">Power BI workloads</th>
-    </tr></thead>
-    <tbody>${list.map((r) => {
-      const e = r.evidence || {};
-      return `<tr>
-        <td><a href="/capacity/${encodeURIComponent(r.target)}">${esc(r.target)}</a></td>
-        <td>${esc(e.datacentre || "")}</td>
-        <td><b>${esc(e.fabricSku)}</b></td>
-        <td class="n">${num(e.capacityUnits)}</td>
-        <td><b>${esc(e.stepTo)}</b></td>
-        <td class="n">${num(e.stepToUnits)}</td>
-        <td class="n">${num(e.powerBiWorkloads)} of ${num(e.workloads)}</td>
-      </tr>`;
-    }).join("")}</tbody></table></div>
-  <div class="why-notes">
-    <p>${esc(e0.rule || "")}</p>
-    <p class="t3">Real and documented — <a href="${esc(e0.source || "")}">Microsoft Fabric
-      licensing</a>. A commercial decision, not a capacity one: none of these is short of CU.</p>
-  </div>`;
-}
-
 function changeBlock(d) {
+  /* No licensing group. It made a commercial case -- step this capacity up to
+     F64 so Power BI viewers stop needing a Pro licence each -- inside a tab that
+     answers "what has to change about capacity here", and not one of its rows
+     was short of CU. It still reads on /recommendations, which is where a
+     commercial decision belongs. */
   const kinds = [
-    ["scale_up", "Scale up", (l) => scaleTable(l, true)],
+    ["scale_up", "Scale up", (l) => scaleUpTable(l, d)],
     ["load_balance", "Move a workload", moveTable],
     ["scale_down", "Scale down", (l) => scaleTable(l, false)],
-    ["licensing", "Change the licence", licenceTable],
   ];
   const present = kinds.filter(([k]) => (d.recommendations || {})[k]?.length);
   if (!present.length) return `<p class="empty">Nothing outstanding in this region.</p>`;
@@ -1623,39 +1710,36 @@ function changeBlock(d) {
   }).join("");
 }
 
+/* What stands in this region, in the same table the fleet-wide site list uses.
+
+   This was a table of its own -- eight columns, a SKU-chip cell and a
+   throttling summary -- which meant a reader who had learned the twenty-two
+   columns on /datacentres arrived here and had to learn eight more that
+   overlapped it without matching it. The rows are now the same rows, drawn by
+   the same `dcTableHtml` off `siteRows`, which the server builds with the same
+   function that answers /api/datacentres. A building therefore cannot read one
+   way here and another way there.
+
+   One difference, and it is deliberate: this includes the buildings with no
+   capacity request ever raised against them. The fleet list ranks by risk and
+   risk comes from tickets, so a building with none has no place in a ranking;
+   an inventory of a region that silently dropped 3 of its 10 buildings would
+   just be wrong. Those rows carry every measured figure and an empty risk
+   cell. */
 function sitesBlock(d) {
+  const rows = d.siteRows || [];
+  if (!rows.length) return `<p class="empty">No capacity pools recorded in this region.</p>`;
+  const dormant = rows.filter((x) => x.dormant).length;
+
   return `
-  <div class="tablewrap"><table class="grid caps">
-    <thead><tr>
-      <th>Capacity Pool</th><th>Type</th><th class="n">Capacities</th><th>SKUs</th>
-      <th class="n">CU</th><th class="n">Workloads</th>
-      <th>What is happening</th><th class="n">Queries refused</th>
-    </tr></thead>
-    <tbody>${d.sites.map((s) => {
-      const rejected = s.interactiveRejected + s.backgroundRejected;
-      return `<tr class="${s.throttlingCapacities ? "row-danger" : ""}">
-        <td><a href="/datacentre/${encodeURIComponent(s.datacentre)}">${esc(s.datacentre)}</a></td>
-        <td>${siteTypeBadge(s.siteType)}</td>
-        <td class="n">${s.capacities}</td>
-        <td><span class="sku-mix tight">${Object.entries(s.skuMix).map(([sku, n]) =>
-          `<span class="sku-chip${["F64","F128","F256","F512","F1024","F2048"].includes(sku)
-            ? " free-ok" : ""}">${esc(sku)}${n > 1 ? `<b>×${n}</b>` : ""}</span>`).join("")}</span></td>
-        <td class="n">${num(s.capacityUnits)}</td>
-        <td class="n">${num(s.workloads)}</td>
-        ${/* No site-level "wants" figure. Averaging demand across a site's
-              capacities produced rows reading "wants 78 CU, has 92" beside
-              "refusing queries", which looks like a contradiction and is not:
-              CU does not pool. An F4 at 120% throttles while the F64 next to it
-              sits idle, and a site average hides exactly that. The count of
-              throttling capacities is the honest figure at this grain. */ ""}
-        <td>${s.throttlingCapacities
-          ? `<span class="pill ${(PROBLEM[s.worstStage] || PROBLEM.none).tone}">${
-              (PROBLEM[s.worstStage] || PROBLEM.none).text}</span>
-             <span class="t3">${s.throttlingCapacities} of ${s.capacities} capacities</span>`
-          : `<span class="t3">nothing throttling</span>`}</td>
-        <td class="n ${rejected ? "t-bad" : ""}">${rejected ? num(rejected) : "—"}</td>
-      </tr>`;
-    }).join("")}</tbody></table></div>
+  ${filterBar("region-dc-filter", {
+    placeholder: "Search capacity pools — name, SKU or workload",
+    label: "Type",
+    allLabel: "All types",
+    options: [...new Set(rows.map((x) => x.siteType).filter(Boolean))].sort(),
+  })}
+  ${dcTableHtml(rows, "region-dc-table")}
+  <p class="hint">click a column name to sort · click a row to open that capacity pool</p>
   <p class="sites-note">
     <b>CU does not pool across capacities.</b> Each Fabric capacity is throttled on its own
     consumption, so an F4 running hot is delayed or refused even when the F64 beside it is
@@ -1668,7 +1752,12 @@ function sitesBlock(d) {
     <b>dedicated</b> sites hold a capacity per workload, each at 100% of its own. Half the
     fleet each. It decides what can be done about a throttling capacity: a shared one can
     have a workload moved off it, a dedicated one can only be scaled.
-  </p>`;
+  </p>
+  ${dormant ? `<p class="sites-note t3">
+    ${num(dormant)} of these ${num(rows.length)} pools has never had a capacity request
+    raised against it, so the requests, failures, revenue and risk columns are empty for
+    them. Everything measured from their daily CU record — SKUs, CU, utilisation, growth,
+    runway and status — is as real as on any other row.</p>` : ""}`;
 }
 
 /* What Fabric actually runs here. Only the gaps: review asked for the available
@@ -1981,6 +2070,14 @@ view.innerHTML = howto({
       }
       detail.innerHTML = mapDetail(d);
       wireTabs(detail);
+      // The capacity pool table is the /datacentres one, so it gets the
+      // /datacentres wiring: row click opens the building, the chevron opens
+      // what is inside it, the box narrows and a column name sorts. `from`
+      // sends the back link on the site page to the map rather than the list.
+      if ($("region-dc-table")) {
+        wireDcTable(detail, { tableId: "region-dc-table",
+                              filterId: "region-dc-filter", from: "map" });
+      }
       const close = $("detail-close");
       if (close) close.onclick = (ev) => { ev.preventDefault(); detail.innerHTML = ""; };
     } catch (err) {
@@ -3133,10 +3230,10 @@ PAGES["/actions"] = async (view) => {
         notes.push(["warn", `This crosses the F256/F512 boundary, which Microsoft
           notes can scale more slowly than moves within either side of it.`]);
       }
-      if (t.stillBursts) {
-        notes.push(["warn", `At ${esc(t.sku)} the measured peak is still
-          ${pct(t.peakAfterPct)} — above the ceiling. Bursting is not a fault on its
-          own, but this capacity would keep generating overage.`]);
+      if (t.overCeiling) {
+        notes.push(["warn", `At ${esc(t.sku)} this capacity's measured peak would be
+          ${pct(t.peakAfterPct)} — more than the rung holds. It would run out of room
+          on its busiest day and be throttled there.`]);
       }
 
       out.innerHTML = `
@@ -3153,8 +3250,8 @@ PAGES["/actions"] = async (view) => {
           ${kpi("Peak after the move", pct(t.peakAfterPct),
                 `from ${pct(c.peakPct)}`, relief ? "good" : "bad")}
           ${kpi("Headroom against peak", pct(t.headroomPct),
-                t.stillBursts ? "still bursting past the ceiling" : "below the ceiling",
-                t.stillBursts ? "bad" : "good")}
+                t.overCeiling ? "peak would not fit the rung" : "below the ceiling",
+                t.overCeiling ? "bad" : "good")}
           ${kpi("When it takes effect", "Immediately",
                 "an F SKU is scaled in Azure", "good")}
         </div>
@@ -3380,8 +3477,8 @@ PAGES["/recommendations"] = async (view, _unused, query) => {
     ],
     words: [
       { term: "Capacity Units (CU)", means: "What a Fabric SKU provides. An F64 gives 64 CUs, so a day of it is 64 \u00d7 86,400 CU seconds. Consumption is measured against that." },
-      { term: "Bursting and smoothing", means: "Fabric lets an operation use more compute than the SKU provides, then spreads the cost over future 30-second timepoints \u2014 interactive over 5 to 64 minutes, background over 24 hours. So <b>utilisation above 100% is normal</b> and is not by itself a fault." },
-      { term: "Throttling stages", means: "Only when smoothed consumption eats into future capacity does throttling begin. Ten minutes is free (overage protection); past that, interactive delay at 20 seconds, interactive rejection at an hour, background rejection at 24 hours." },
+      { term: "Utilisation", means: "CU consumed over CU held, for one capacity. A capacity cannot consume more than its SKU provides, so this is <b>always under 100%</b> \u2014 a capacity in trouble shows as a number just under it with no headroom left, not as one above it." },
+      { term: "Throttling stages", means: "Cut on the headroom a capacity has left. Below 90% of its CUs nothing is throttled; past 90% interactive jobs are delayed 20 seconds; past 95% they are rejected while background work continues; past 98% everything is rejected. <b>These thresholds are this model\u2019s, not Microsoft\u2019s</b> \u2014 Fabric itself throttles on borrowed future capacity, which this data does not generate." },
       { term: "Why these are separate", means: "A throttling capacity and an idle one are opposite problems, and an average of them describes neither. Blending them into one score is how a capacity refusing user queries reads as calm." },
       { term: "Why so few reclaims exist", means: "Capacity is not divisible and the ladder doubles, so slack is only recoverable when the <b>whole next rung down</b> still fits. An F64 running 40 CU cannot give up 24 \u2014 there is no F24, and F32 would take eight CU away from what it is using. That is why a fleet of hundreds yields a handful, and the value is naming the region, the account and the amount rather than the volume." },
     ],
@@ -3444,7 +3541,7 @@ PAGES["/capacity"] = async (view, id) => {
       <div class="value${bad ? " bad" : " good"}" style="font-size:1.5rem;line-height:1.5">
         ${esc((PROBLEM[bad ? h.worstStage : "none"] || PROBLEM.none).text)}</div>
       <div class="sub">${bad
-        ? `borrowed ${num(Math.round(h.peakFutureMinutes))} minutes of future capacity at its worst`
+        ? `ran ${num(Math.round(h.peakMinutesOverLine))} minutes of its worst day with no headroom left`
         : "never delayed or refused anything"}</div></div>
     <div class="kpi"><div class="label">Queries refused</div>
       <div class="value${(h.interactiveRejected + h.backgroundRejected) ? " bad" : ""}">
@@ -3513,12 +3610,12 @@ PAGES["/capacity"] = async (view, id) => {
       hint: "recorded throttling history",
       body: `<div class="capacity-tab-body">${d.throttlingEvents.length ? `
         <div class="tablewrap"><table class="grid">
-          <thead><tr><th>Date</th><th>Stage</th><th class="n">Into future capacity</th>
+          <thead><tr><th>Date</th><th>Stage</th><th class="n">Without headroom</th>
             <th class="n">Interactive refused</th><th class="n">Background refused</th><th>Effect</th></tr></thead>
           <tbody>${d.throttlingEvents.map((e) => `<tr>
             <td>${esc(e.Date)}</td>
             <td>${stageCell(e.Stage, (e.Stage || "").replace(/_/g, " "))}</td>
-            <td class="n">${num(Math.round(e.FutureCapacityMinutes))} min</td>
+            <td class="n">${num(Math.round(e.MinutesOverLine))} min</td>
             <td class="n">${num(e.InteractiveRejected)}</td>
             <td class="n">${num(e.BackgroundRejected)}</td>
             <td class="t3">${esc(e.Effect)}</td>
@@ -3670,7 +3767,7 @@ PAGES["/methodology"] = async (view) => {
     <p class="mono" style="background:var(--page);padding:.7rem 1rem;border-radius:3px;margin:0 0 .5rem">
       order hardware by = the day the region is forecast to fill up
       − how long that hardware takes to arrive</p>
-    <p style="color:var(--ink-2);margin:0">A region at 71% capacity can outrank one at 94% when its capacities are throttling and the other's are not. Fullness alone does not decide it, because the system throttles based on borrowed future capacity rather than strictly on how full a capacity looks, and that depends on 45 days rather than 10. Getting that the right way round is the whole point of this page.</p>`)}
+    <p style="color:var(--ink-2);margin:0">A region at 71% capacity can outrank one at 94% when its capacities are throttling and the other's are not. Fullness alone does not decide it: a region average hides which capacity ran out of room, and CU does not pool between them \u2014 an F4 with no headroom is throttled while the F64 beside it sits idle. Getting that the right way round is the whole point of this page.</p>`)}
 
   ${panel("Capacity Pool table — identity & utilisation", `
     <div class="scroll-x"><table>
@@ -3699,12 +3796,11 @@ PAGES["/methodology"] = async (view) => {
         <tr>
           <td><b>Utilised CU</b></td>
           <td class="why"><strong>Used units</strong> = <strong>Deployed units</strong> × <strong>Usage ratio</strong>. The 
-            Usage ratio is the total <strong>Consumed capacity seconds</strong> divided by the total <strong>Available capacity seconds</strong> on the most recent day, clipped so it never exceeds 100%.</td>
+            Usage ratio is the total <strong>Consumed capacity seconds</strong> divided by the total <strong>Available capacity seconds</strong> on the most recent day. Consumption is bounded by what the capacities hold, so the ratio cannot exceed 100% and nothing is clipped to make it so.</td>
         </tr>
         <tr>
           <td><b>Utilisation</b></td>
-          <td class="why">The percentage of consumed versus available capacity on the latest day, capped at 100%. Shown in red when it hits 80% or higher. The Forecast panel
-            uses an uncapped version that can exceed 100% to show bursting.</td>
+          <td class="why">The percentage of consumed versus available capacity on the latest day. Shown in red when it hits 80% or higher. It needs no cap: a capacity cannot consume more CU than it holds, so the same figure serves the table and the Forecast panel.</td>
         </tr>
         <tr>
           <td><b>Threshold</b></td>
@@ -4386,36 +4482,22 @@ function dcChildRows(x) {
 //     onSorted: () => applyAll && applyAll(),
 //   });
 // };
-PAGES["/datacentres"] = async (view) => {
-  const d = await get("/api/datacentres");
-  const solid = d.datacentres.filter((x) => !x.lowEvidence);
+/* The capacity-pool table, as markup and as wiring.
 
-  view.innerHTML = howto({
-    answers: "<b>Site-level risk ranking.</b> A region identifies the geography; a capacity pool identifies the facility requiring intervention.",
-    steps: [
-      { what: "Site table", is: `all facilities with recorded activity, ranked by risk score. ${d.withActivity} of ${d.totalSites} sites have recorded incidents; the remainder are dormant and excluded.` },
-      { what: "Risk score", is: "computed from that facility\u2019s own incidents, with the highest-weighted component named beneath." },
-      { what: "Clicking a row", is: "opens that site \u2014 how its score was built line by line, why its requests were refused, every ticket, and <b>its own forecast</b>: when this building crosses its capacity threshold, fitted to its own daily CU record. The region name in there is a link if you want the wider picture." },
-      { what: "Evidence base", is: "stated under every score, because nearly every facility here has one or two incidents. Where a facility has too few to judge on its own, its failure rate is pulled toward the fleet average and both figures are shown \u2014 a single denial is a 100% failure rate arithmetically, but it is one observation, not a finding." },
-    ],
-    words: [
-      { term: "How the score is built", is: "", means: `${Object.entries(d.weights).map(([k, w]) => `${Math.round(w * 100)}% ${esc(words(k))}`).join(", ")}. Each site is scored from its own rows — this is not a region total divided up.` },
-      { term: "Primary denial reason", means: "The most frequent denial cause at that facility \u2014 the fastest indicator of whether the constraint is capacity, licensing or policy." },
-      { term: "What to do about a full site", means: "Open the row. A <b>dedicated</b> site breaks into its capacities, each with the one workload running on it, its own utilisation and its own runway \u2014 scaling that capacity\u2019s SKU is the change that applies. A <b>shared</b> site breaks into the workloads on its single capacity: their shares add up to 100%, and the CU beside each is marked <code>~</code> because it is that share of the pool\u2019s consumption, not a meter of its own." },
-      { term: "Shared and dedicated", means: "A <b>shared</b> site holds one capacity on a large SKU with two to five workloads sharing its CU \u2014 if it throttles, moving the heaviest workload elsewhere is an option. A <b>dedicated</b> site holds a capacity per workload, each at 100% of its own \u2014 nothing to rebalance, so the SKU is the only lever. The fleet is half of each." },
-    ],
-    next: `Rank by score, but read the evidence line beneath it before acting: ${solid.length} of ${d.datacentres.length} sites here have three or more requests, so for most of them the ranking is driven by utilisation and throttling — which are measured continuously — rather than by a failure rate drawn from one or two tickets.`,
-    sources: "ICM capacity requests attributed to a facility, and the Fabric capacities in it.",
-  }) + title("Capacity Pools", `${d.withActivity} sites with activity, of ${d.totalSites} across all regions`) + `
+   Two pages draw it: /datacentres for the whole fleet, and the region
+   drill-down on the fleet map for the buildings in one region. It is one
+   function rather than two near-copies because the columns are the point --
+   twenty-two of them, each with its own help text, its own sort key and its own
+   `data-sv-` sort value. A second copy would drift on the first column added to
+   either page, and the two tables would then quietly disagree about the same
+   building.
 
-  ${panel("Capacity Pools by risk score",
-    filterBar("dc-filter", {
-      placeholder: "Search capacity pools — name or region",
-      label: "Region",
-      allLabel: "All regions",
-      options: [...new Set(d.datacentres.map((x) => x.region))].sort(),
-    })
-    + `<div class="scroll-x"><table id="dc-table">
+   `rows` is `/api/datacentres`'s `datacentres` array, or the `siteRows` a region
+   payload carries -- the same builder on the server, so the same shape. A row
+   with no tickets against it has `risk: null`, which is the one thing this has
+   to handle that the fleet list never sees. */
+function dcTableHtml(rows, tableId = "dc-table") {
+  return `<div class="scroll-x"><table id="${esc(tableId)}">
     <thead><tr>
       ${th("Region", "Azure region this building sits in. Several capacity pools can "
          + "share a region; scaling is always per capacity in a building, never for "
@@ -4489,7 +4571,7 @@ PAGES["/datacentres"] = async (view) => {
          + "utilisation. The highest-weighted component is named on the site page.",
          "", "risk")}
     </tr></thead>
-    <tbody>${d.datacentres.map((x) => {
+    <tbody>${rows.map((x) => {
       const mix = x.skuMix || [];
       const skuLabel = mix.length
         ? mix.map((s) => s.capacityCount > 1 ? `${s.capacityCount}×${s.sku}` : s.sku).join(" ")
@@ -4602,27 +4684,34 @@ PAGES["/datacentres"] = async (view) => {
       <td class="n">${num(x.customers)}</td>
       <td class="n">${x.revenueLoss ? money(x.revenueLoss) : "—"}</td>
       <td>${x.topReason ? esc(x.topReason) : "—"}</td>
-      <td class="risk-cell">${riskCell(x.risk)}</td>
+      <td class="risk-cell">${x.risk ? riskCell(x.risk) : `<span class="t3">no requests</span>`}</td>
     </tr>${dcChildRows(x)}`;
-    }).join("")}</tbody></table></div>`,
-    { hint: "click a column name to sort · click a row for detail", flush: true })}
-  <div id="dc-detail"></div>`;
+    }).join("")}</tbody></table></div>`;
+}
 
-  view.querySelectorAll("tr[data-dc]").forEach((tr) =>
-    (tr.onclick = () => navigate(`/datacentre/${encodeURIComponent(tr.dataset.dc)}?from=datacentres`)));
+/* Row click opens the building, the chevron opens what is inside it, the box
+   above narrows the list and a column name sorts it. Bound once the markup is
+   in the DOM; `root` is whatever element it was written into. */
+function wireDcTable(root, { tableId = "dc-table", filterId = "dc-filter",
+                             from = "datacentres" } = {}) {
+  const rowSel = `#${tableId} tr[data-dc]`;
+  root.querySelectorAll(rowSel).forEach((tr) =>
+    (tr.onclick = () => navigate(
+      `/datacentre/${encodeURIComponent(tr.dataset.dc)}?from=${encodeURIComponent(from)}`)));
 
-  /* The per-SKU rows sit in the DOM right after their capacity pool. They are
-     shown only when that row is open, and hidden the moment the filter takes
-     the parent out -- otherwise a search would leave orphaned SKU rows behind. */
+  /* The per-capacity rows sit in the DOM right after their capacity pool. They
+     are shown only when that row is open, and hidden the moment the filter
+     takes the parent out -- otherwise a search would leave orphaned child rows
+     behind. */
   function syncSkuRows() {
-    view.querySelectorAll("tr[data-dc]").forEach((tr) => {
+    root.querySelectorAll(rowSel).forEach((tr) => {
       const open = tr.classList.contains("open");
-      view.querySelectorAll(`tr[data-sub="${tr.dataset.dc}"]`).forEach((s) => {
-        s.hidden = tr.hidden || !open;
+      root.querySelectorAll(`#${tableId} tr[data-sub="${tr.dataset.dc}"]`).forEach((sub) => {
+        sub.hidden = tr.hidden || !open;
       });
     });
   }
-  view.querySelectorAll(".sku-expand").forEach((btn) => {
+  root.querySelectorAll(`#${tableId} .sku-expand`).forEach((btn) => {
     btn.addEventListener("click", (ev) => {
       ev.stopPropagation();               // the row itself navigates; this does not
       const tr = btn.closest("tr[data-dc]");
@@ -4633,12 +4722,12 @@ PAGES["/datacentres"] = async (view) => {
   });
 
   /* Search narrows the list; clicking a column name sorts ascending /
-     descending. Per-SKU rows stay attached to their parent when rows move. */
-  const dcTable = $("dc-table");
-  const applyAll = wireFilter("dc-filter", "#view tr[data-dc]", {
+     descending. Per-capacity rows stay attached to their parent when rows
+     move. */
+  const applyAll = wireFilter(filterId, rowSel, {
     noun: "capacity pools", onApply: syncSkuRows,
   });
-  wireTableSort(dcTable, "#view tr[data-dc]", {
+  wireTableSort($(tableId), rowSel, {
     defaultKey: "risk",
     defaultAsc: false,
     numericKeys: [
@@ -4646,9 +4735,46 @@ PAGES["/datacentres"] = async (view) => {
       "threshold", "growth", "leadTime", "weeksToDecide", "requests", "failed",
       "customers", "revenue", "risk",
     ],
-    groupAfter: (tr) => [...view.querySelectorAll(`tr[data-sub="${tr.dataset.dc}"]`)],
+    groupAfter: (tr) => [...root.querySelectorAll(`#${tableId} tr[data-sub="${tr.dataset.dc}"]`)],
     onSorted: () => applyAll && applyAll(),
   });
+  return applyAll;
+}
+
+PAGES["/datacentres"] = async (view) => {
+  const d = await get("/api/datacentres");
+  const solid = d.datacentres.filter((x) => !x.lowEvidence);
+
+  view.innerHTML = howto({
+    answers: "<b>Site-level risk ranking.</b> A region identifies the geography; a capacity pool identifies the facility requiring intervention.",
+    steps: [
+      { what: "Site table", is: `all facilities with recorded activity, ranked by risk score. ${d.withActivity} of ${d.totalSites} sites have recorded incidents; the remainder are dormant and excluded.` },
+      { what: "Risk score", is: "computed from that facility\u2019s own incidents, with the highest-weighted component named beneath." },
+      { what: "Clicking a row", is: "opens that site \u2014 how its score was built line by line, why its requests were refused, every ticket, and <b>its own forecast</b>: when this building crosses its capacity threshold, fitted to its own daily CU record. The region name in there is a link if you want the wider picture." },
+      { what: "Evidence base", is: "stated under every score, because nearly every facility here has one or two incidents. Where a facility has too few to judge on its own, its failure rate is pulled toward the fleet average and both figures are shown \u2014 a single denial is a 100% failure rate arithmetically, but it is one observation, not a finding." },
+    ],
+    words: [
+      { term: "How the score is built", is: "", means: `${Object.entries(d.weights).map(([k, w]) => `${Math.round(w * 100)}% ${esc(words(k))}`).join(", ")}. Each site is scored from its own rows — this is not a region total divided up.` },
+      { term: "Primary denial reason", means: "The most frequent denial cause at that facility \u2014 the fastest indicator of whether the constraint is capacity, licensing or policy." },
+      { term: "What to do about a full site", means: "Open the row. A <b>dedicated</b> site breaks into its capacities, each with the one workload running on it, its own utilisation and its own runway \u2014 scaling that capacity\u2019s SKU is the change that applies. A <b>shared</b> site breaks into the workloads on its single capacity: their shares add up to 100%, and the CU beside each is marked <code>~</code> because it is that share of the pool\u2019s consumption, not a meter of its own." },
+      { term: "Shared and dedicated", means: "A <b>shared</b> site holds one capacity on a large SKU with two to five workloads sharing its CU \u2014 if it throttles, moving the heaviest workload elsewhere is an option. A <b>dedicated</b> site holds a capacity per workload, each at 100% of its own \u2014 nothing to rebalance, so the SKU is the only lever. The fleet is half of each." },
+    ],
+    next: `Rank by score, but read the evidence line beneath it before acting: ${solid.length} of ${d.datacentres.length} sites here have three or more requests, so for most of them the ranking is driven by utilisation and throttling — which are measured continuously — rather than by a failure rate drawn from one or two tickets.`,
+    sources: "ICM capacity requests attributed to a facility, and the Fabric capacities in it.",
+  }) + title("Capacity Pools", `${d.withActivity} sites with activity, of ${d.totalSites} across all regions`) + `
+
+  ${panel("Capacity Pools by risk score",
+    filterBar("dc-filter", {
+      placeholder: "Search capacity pools — name or region",
+      label: "Region",
+      allLabel: "All regions",
+      options: [...new Set(d.datacentres.map((x) => x.region))].sort(),
+    })
+    + dcTableHtml(d.datacentres, "dc-table"),
+    { hint: "click a column name to sort · click a row for detail", flush: true })}
+  <div id="dc-detail"></div>`;
+
+  wireDcTable(view, { tableId: "dc-table", filterId: "dc-filter", from: "datacentres" });
 };
 /* ==================================================================== deep */
 /* One capacity pool — its own page, reachable from Regions or Capacity Pools.    */
@@ -5068,14 +5194,13 @@ function forecastChart(f, place = "region") {
   // nothing. Five of the eleven regions showed it. The floor is clamped for
   // the same reason -- a region cannot be less than empty.
   const lo = Math.max(0, Math.floor(Math.min(...all) - 2));
-  /* 100% is the ceiling for a *region*: utilisation there is used over deployed
-     capacity and a line past it forecasts nothing. A single Fabric capacity is
-     not bound by that. It can consume more CU than it holds -- that is bursting,
-     which Fabric smooths over future timepoints -- so a building whose
-     capacities are bursting genuinely runs above 100%, and westeurope-dc04 sits
-     at 185%. Clamping the axis unconditionally drew that line off the top of the
-     chart, out of the viewBox, where it was simply invisible. So the ceiling
-     applies only when the data stays under it. */
+  /* 100% is the ceiling: utilisation is consumed over held and neither a
+     region nor a capacity can pass it, so a line above it forecasts nothing.
+     The guard stays anyway. A *projection* is a fitted trend rather than a
+     reading, and a steeply growing capacity can be projected past a ceiling it
+     could never reach -- clamping the axis unconditionally drew that line out
+     of the viewBox, where it was simply invisible rather than obviously
+     wrong. So the ceiling applies only when the data stays under it. */
   const top = Math.max(...all);
   const hi = top > 100 ? Math.ceil(top + 2) : Math.min(100, Math.ceil(top + 2));
   const n = hist.length + proj.length;

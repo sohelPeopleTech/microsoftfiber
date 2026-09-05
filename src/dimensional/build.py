@@ -242,12 +242,10 @@ def build_dim_datacentre(dim_region, usage=None, capacities=None,
         # site's own units so the column keeps the meaning the rest of the
         # product gives it.
         by = latest.groupby("DatacentreId")[["CuSecondsConsumed", "CuSecondsAvailable"]].sum()
-        # Not capped at 1.0. A Fabric capacity genuinely consumes past its
-        # nameplate -- that is bursting, and smoothing is what absorbs it -- so a
-        # rate above 1 is a reading, not an error. Clipping it reported
-        # northcentralus-dc07 at exactly 100.0% while the single capacity in it
-        # was running at 113% and peaking above 110%, which is precisely the
-        # overload the page exists to surface.
+        # No cap needed. Consumption is bounded by the capacity's own CU
+        # seconds upstream, so this ratio cannot reach 1.0 and there is nothing
+        # to clip. It is still summed rather than averaged: an F2 at 90% and an
+        # F512 at 20% do not average to 55% of the building.
         rate = by["CuSecondsConsumed"] / by["CuSecondsAvailable"].replace(0, pd.NA)
         dim["UsedUnits"] = (dim["DeployedUnits"]
                             * dim["DatacentreId"].map(rate).fillna(0.0)).round(1)
@@ -462,9 +460,9 @@ def build_fact_capacity_cu_daily(synthetic_dir) -> pd.DataFrame:
 
     The Fabric-native measure. An F64 provides 64 CUs, so a day of it is
     64 x 86,400 CU seconds, and consumption is measured against that.
-    Utilisation over 100% is bursting and is not by itself a fault -- what
-    matters is `FutureCapacityMinutes`, the smoothed overage that decides
-    which throttling stage the capacity is in.
+    Consumption never exceeds what the capacity holds, so utilisation is
+    always under 100%. What decides the throttling stage is how close to that
+    ceiling it ran: `MinutesOverLine` is the time spent above the 90% line.
     """
     cu = _synth(synthetic_dir, "capacity_cu_daily")
     cu["Date"] = pd.to_datetime(cu["Date"]).dt.date.astype(str)

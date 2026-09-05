@@ -581,10 +581,14 @@ def _cores_pending_by_region() -> dict:
 
     The count review actually wants next to a region: not how many tickets
     failed, but how much capacity the region still owes its customers.
+
+    In Capacity Units. `BlockedUnits` is the raw ICM ask, which `ratecard` also
+    converts before it prices it; this figure is set beside placeable CU and
+    printed as "CU owed", so it has to be on the same scale as both.
     """
     priced = get_module5().priced
     failed = priced[priced["IsFlagged"]]
-    return {str(r): float(g["BlockedUnits"].sum())
+    return {str(r): _units_to_cu(float(g["BlockedUnits"].sum()))
             for r, g in failed.groupby("Region")}
 
 
@@ -644,10 +648,24 @@ def _score_group(grp, ctx, busiest_unresolved, throttling_share: float = 0.0) ->
     ).to_dict()
 
 
-@app.get("/api/datacentres")
-def datacentres():
-    """Every datacentre, scored. The review's point: a region tells you which
-    country to worry about, a datacentre tells you which building."""
+def _datacentre_rows(region: str | None = None,
+                     include_dormant: bool = False) -> list[dict]:
+    """Every capacity pool as the site table reads it, one row each.
+
+    `region` narrows to a single region; `include_dormant` adds the buildings
+    that have never had a capacity request raised against them.
+
+    Two callers with two different needs, and the difference is honest rather
+    than cosmetic. The fleet-wide list ranks by risk, and risk is built from
+    tickets -- a building with no tickets has no score, so listing it there
+    would put an unranked row in a ranked table. The region drill-down is an
+    inventory of what stands in one region, where leaving out 3 of its 10
+    buildings because nobody happened to file against them would misstate the
+    region. A dormant row therefore carries every figure measured from the daily
+    CU record -- SKUs, CU, utilisation, growth, runway, status, all as real as
+    on any other row -- and nothing at all in the ticket-derived columns:
+    `risk` is null rather than zero, because no evidence is not a good score.
+    """
     entities = get_entities()
     fact = entities["fact_capacity_request"]
     ctx = _region_context(entities)
@@ -655,17 +673,43 @@ def datacentres():
 
     sites_by_id = {str(r["DatacentreId"]): r
                    for _, r in entities["dim_datacentre"].iterrows()}
-    groups = list(fact.groupby("DatacentreId"))
+    groups = {str(dc): g for dc, g in fact.groupby("DatacentreId")}
     busiest = max((int((g["NewLimitCapacity"] < g["RequestedCapacity"]).sum())
-                   for _, g in groups), default=1) or 1
+                   for g in groups.values()), default=1) or 1
+
+    ids = list(sites_by_id) if include_dormant else list(groups)
 
     rows = []
-    for dc, grp in groups:
-        region = str(grp["Region"].iloc[0])
-        denied = _failed_rows(grp)
-        denied = denied[denied["DenialReason"] != ""]
-        loss = sum(float(priced.get(str(i), {}).get("exposure", 0)) for i in grp["IncidentId"])
+    for dc in ids:
+        grp = groups.get(str(dc))
         site = sites_by_id.get(str(dc))
+        dc_region = (str(grp["Region"].iloc[0]) if grp is not None and len(grp)
+                     else (str(site["Region"]) if site is not None else ""))
+        if region is not None and dc_region != region:
+            continue
+        if grp is not None:
+            denied = _failed_rows(grp)
+            denied = denied[denied["DenialReason"] != ""]
+            loss = sum(float(priced.get(str(i), {}).get("exposure", 0)) for i in grp["IncidentId"])
+            demand = {
+                "requests": int(len(grp)),
+                "failed": int(len(denied)),
+                "customers": int(grp["SubscriptionId"].nunique()),
+                "revenueLoss": round(loss, 2),
+                "topReason": (denied["DenialReason"].mode().iloc[0] if len(denied) else ""),
+                "risk": _score_group(grp, ctx.get(dc_region, {}), busiest,
+                                     _throttling_share(entities, str(dc))),
+                # Flagged rather than smoothed away: a 100% failure rate over one
+                # request is arithmetic, not evidence, and the reader should see
+                # which it is before acting on the ranking.
+                "lowEvidence": bool(len(grp) < 3),
+            }
+        else:
+            demand = {
+                "requests": 0, "failed": 0, "customers": 0, "revenueLoss": 0.0,
+                "topReason": "", "risk": None, "lowEvidence": True,
+            }
+        demand["dormant"] = grp is None
         site_thr = float(site["ThresholdPct"]) if site is not None else 0.0
         # The building read as the sum of the capacities in it, in CU. Every
         # figure on the row that depends on how full this site is comes from
@@ -676,7 +720,7 @@ def datacentres():
         site_util = pos["utilisationPct"]
         rows.append({
             "datacentre": str(dc),
-            "region": region,
+            "region": dc_region,
             # What this building holds, in Fabric's terms. Was `hardware`, which
             # served the region's vendor class ("Intel-highmem") and printed it
             # beside a provisioning lead time on a page that lists F SKUs.
@@ -723,20 +767,23 @@ def datacentres():
             # Smallest rung first, on the real ladder -- "F2 · F4 · F8", not
             # "F128, F16, F2". A shared site has one entry by construction.
             "skuMix": _site_sku_mix(str(dc)),
-            "requests": int(len(grp)),
-            "failed": int(len(denied)),
-            "customers": int(grp["SubscriptionId"].nunique()),
-            "revenueLoss": round(loss, 2),
-            "topReason": (denied["DenialReason"].mode().iloc[0] if len(denied) else ""),
-            "utilisation": ctx.get(region, {}).get("utilisation", 0),
-            "risk": _score_group(grp, ctx.get(region, {}), busiest,
-                                 _throttling_share(entities, str(dc))),
-            # Flagged rather than smoothed away: a 100% failure rate over one
-            # request is arithmetic, not evidence, and the reader should see
-            # which it is before acting on the ranking.
-            "lowEvidence": bool(len(grp) < 3),
+            "utilisation": ctx.get(dc_region, {}).get("utilisation", 0),
+            # Requests, failures, customers, revenue and risk -- everything the
+            # tickets carry, and nothing at all when there are none.
+            **demand,
         })
-    rows.sort(key=lambda r: -r["risk"]["score"])
+    # Dormant buildings last whatever else is going on: they are not scored, so
+    # they cannot hold a place in a ranking that is by score.
+    rows.sort(key=lambda r: (r["risk"] is None, -(r["risk"]["score"] if r["risk"] else 0)))
+    return rows
+
+
+@app.get("/api/datacentres")
+def datacentres():
+    """Every datacentre, scored. The review's point: a region tells you which
+    country to worry about, a datacentre tells you which building."""
+    entities = get_entities()
+    rows = _datacentre_rows()
     return {
         "datacentres": rows,
         # Only sites that have seen a request appear. Saying how many did not
@@ -933,8 +980,12 @@ def _threshold_remediation(entities, datacentre_id: str) -> dict:
     if row.empty:
         return {}
     s = row.iloc[0]
-    cores = float(s["DeployedUnits"] or 0)
-    used = float(s["UsedUnits"] or 0)
+    # Capacity Units, from the capacities in the building. The raw `*Units`
+    # columns are a factor of `UNITS_PER_CU` out, and every figure below is
+    # printed under a heading that says CU -- see `_units_to_cu`.
+    pos = _site_cu_positions().get(str(datacentre_id), {"cu": 0.0, "usedCU": 0.0})
+    cores = pos["cu"]
+    used = pos["usedCU"]
     current = float(s["ThresholdPct"] or 0)
 
     options = []
@@ -978,6 +1029,14 @@ def datacentre_detail(datacentre_id: str):
     here = fact[fact["DatacentreId"].astype(str) == datacentre_id]
 
     ctx = _region_context(entities).get(region, {})
+    # In Capacity Units, from the capacities standing in this building -- the
+    # same position `/api/datacentres` publishes as `totalCU` for the row that
+    # opens this page. Reading `DeployedUnits` / `FreeUnits` here printed a
+    # figure exactly `1 / UNITS_PER_CU` larger than the row it came from, under
+    # a heading that says CU. See `_units_to_cu`.
+    pos = _site_cu_positions().get(str(datacentre_id),
+                                   {"cu": 0.0, "usedCU": 0.0, "utilisationPct": 0.0})
+    site_thr = float(site.get("ThresholdPct") or 0)
     busiest = max(
         (int((g["NewLimitCapacity"] < g["RequestedCapacity"]).sum())
          for _, g in fact.groupby("DatacentreId")), default=1) or 1
@@ -1018,16 +1077,16 @@ def datacentre_detail(datacentre_id: str):
         "region": region,
         "lat": _clean(site.get("Latitude")),
         "lon": _clean(site.get("Longitude")),
-        "capacityUnits": _clean(site.get("DeployedUnits")),
-        "capacityUnitsFree": _clean(site.get("FreeUnits")),
+        "capacityUnits": pos["cu"],
+        "capacityUnitsFree": round(pos["cu"] - pos["usedCU"], 1),
         "thresholdPct": _clean(site.get("ThresholdPct")),
-        "headroom": _clean(site.get("HeadroomToThreshold")),
+        "headroom": round(pos["cu"] * site_thr / 100.0 - pos["usedCU"], 1),
         "recommendations": reasons,
         # Was `hardware` ("Intel-highmem") and `leadTimeDays` (45). Fabric
         # exposes neither, and the page printed both above a table of F SKUs.
         # What a building actually holds is capacities, so that is what it says.
         "fabric": _site_fabric_position(entities, datacentre_id),
-        "deployedUnits": _clean(row.iloc[0].get("DeployedUnits")),
+        "deployedUnits": pos["cu"],
         "utilisation": ctx.get("utilisation", 0),
         "threshold": ctx.get("threshold", SAFETY_THRESHOLD_PCT),
         "requests": int(len(here)),
@@ -1412,8 +1471,13 @@ def _all_site_capacity_breakdowns() -> dict:
                 "capacityCount": 1,
                 "capacityUnits": int(cu),
                 "totalCU": round(cu, 1),
-                "utilisedCU": round(mean / 100.0 * cu, 1),
+                # Derived from the published percentage rather than from the raw
+                # mean beside it: the CU figure and the percentage are the same
+                # fact, and a reader checking one against the other has to get
+                # the other back. Two decimals because an F2 read to one would
+                # only be able to move in five-point steps.
                 "utilisationPct": round(mean, 1),
+                "utilisedCU": round(round(mean, 1) / 100.0 * cu, 2),
                 "peakPct": round(cur["peakPct"], 1),
                 "throttling": 1 if cur["throttledDays"] > 0 else 0,
                 "throttledDays": int(cur["throttledDays"]),
@@ -1526,8 +1590,10 @@ def _site_cu_positions() -> dict:
     a multi-capacity site reports their CU-weighted mean, weighted because an F2
     at 90% and an F512 at 20% do not average to 55% of the building.
 
-    Nothing is capped at 100%. Bursting past the nameplate is a real state that
-    smoothing absorbs, and hiding it removes the signal the page is for.
+    Nothing needs capping. A capacity cannot consume more CU seconds than its
+    SKU provides in this model, so a building summed from its capacities cannot
+    either -- `usedCU` is always under `cu`, and the percentage is the ratio of
+    the two rather than a separately rounded weighted mean.
 
     The dimensional columns remain the fallback for a building with no
     capacities recorded on it -- the only case where they are still the best
@@ -1545,14 +1611,20 @@ def _site_cu_positions() -> dict:
             # The children's own published figures, summed -- so the column
             # visibly adds up on screen rather than merely agreeing in principle.
             used = sum(s["utilisedCU"] for s in rows)
-            util = (sum(s["utilisationPct"] * s["totalCU"] for s in rows) / cu
-                    if cu else 0.0)
+            # The percentage comes from those two sums below, not from a
+            # CU-weighted mean of the children's percentages. The two are the
+            # same quantity algebraically, but only this one is guaranteed to
+            # equal the `usedCU / cu` a reader can do in their head off the row.
         else:
             cu = _units_to_cu(getattr(r, "DeployedUnits", 0) or 0)
             used = _units_to_cu(getattr(r, "UsedUnits", 0) or 0)
-            util = (used / cu * 100.0) if cu else 0.0
-        out[dc] = {"cu": round(cu, 1), "usedCU": round(used, 1),
-                   "utilisationPct": round(util, 1)}
+        # Published to two decimals and the percentage taken from the published
+        # pair, not from the unrounded sums: an eight-CU building whose children
+        # add to 3.775 was printing "3.8 CU of 8" beside "47.2%", and 3.8 / 8 is
+        # 47.5. Small, and exactly the kind of thing a reader checks first.
+        cu, used = round(cu, 2), round(used, 2)
+        out[dc] = {"cu": cu, "usedCU": used,
+                   "utilisationPct": round(used / cu * 100.0, 1) if cu else 0.0}
     return out
 
 
@@ -1960,6 +2032,32 @@ def _units_to_cu(units: float) -> float:
     return float(units) * admission.UNITS_PER_CU
 
 
+#: The fields on a `module1.ThresholdFlag` that are quantities of capacity. The
+#: module works in the raw units its source series carries; every page that
+#: prints them labels them CU.
+_FLAG_UNIT_FIELDS = ("deployed_units", "used_units", "units_short_at_cross")
+
+
+def _flags_in_cu(flags: list[dict]) -> list[dict]:
+    """Region threshold flags with their unit quantities converted to CU.
+
+    `module1` reads `fact_usage_daily.TotalUnits` / `UsedUnits`, which are raw
+    compute units -- `CU / UNITS_PER_CU`. The Regions table prints them under
+    "Total CU" and "Utilised CU", and everything derived from them here
+    (`free_units`, `cu_to_stay_under`, and the SKU rung named off it) inherits
+    the same factor. Converting once, at the boundary, keeps the region row on
+    the same scale as the capacity pools it rolls up. See `_units_to_cu`.
+    """
+    out = []
+    for f in flags:
+        g = dict(f)
+        for k in _FLAG_UNIT_FIELDS:
+            if g.get(k) is not None:
+                g[k] = round(_units_to_cu(float(g[k])), 1)
+        out.append(g)
+    return out
+
+
 def _site_procurement(deployed_cu: float, used_cu: float) -> dict:
     """What a site would have to buy to sit back under the planning line.
 
@@ -2034,8 +2132,12 @@ def _region_site_rollup() -> dict[str, dict]:
     for region, group in sites.groupby("Region"):
         over, placeable, full_names = 0, 0.0, []
         for s in group.itertuples():
-            deployed = float(getattr(s, "DeployedUnits", 0) or 0)
-            used = float(getattr(s, "UsedUnits", 0) or 0)
+            # In Capacity Units. `placeableCu` is published as CU and set
+            # against `pendingCu`; the `*Units` columns are raw compute units,
+            # a factor of `UNITS_PER_CU` out. Only the scale changes here --
+            # which sites are over their line is a ratio, and unaffected.
+            deployed = _units_to_cu(getattr(s, "DeployedUnits", 0) or 0)
+            used = _units_to_cu(getattr(s, "UsedUnits", 0) or 0)
             line = float(getattr(s, "ThresholdPct", 0) or 0)
             if not deployed:
                 continue
@@ -2341,6 +2443,12 @@ def map_region(region: str):
                      "nothing left at all."),
         },
         "sites": sites,
+        # The same rows the site table on /datacentres is built from, narrowed
+        # to this region and with its dormant buildings included -- so the
+        # region drill-down lists what actually stands here rather than only the
+        # part of it that has ever had a ticket raised. One builder, so the two
+        # tables cannot come to disagree about a building they both show.
+        "siteRows": _datacentre_rows(region=region, include_dormant=True),
         "totals": {
             "sites": len(sites),
             "capacities": int(len(mine)),
@@ -2440,7 +2548,7 @@ def capacities(region: Annotated[str | None, Query()] = None,
             "windowDays": int(c.WindowDays),
             "worstStage": c.WorstStage,
             "worstStageLabel": STAGE_LABEL.get(c.WorstStage, c.WorstStage),
-            "peakFutureMinutes": round(float(c.PeakFutureMinutes), 1),
+            "peakMinutesOverLine": round(float(c.PeakMinutesOverLine), 1),
             "interactiveRejected": int(c.InteractiveRejected),
             "backgroundRejected": int(c.BackgroundRejected),
             "supportsFreeViewers": bool(c.SupportsFreeViewers),
@@ -2512,7 +2620,7 @@ def capacity_detail(capacity_id: str):
         "supportsFreeViewers": bool(c["SupportsFreeViewers"]),
         "consumption": _records(series[[
             "Date", "UtilisationPct", "CuSecondsConsumed", "CuSecondsAvailable",
-            "FutureCapacityMinutes", "ThrottleStage"]]),
+            "MinutesOverLine", "ThrottleStage"]]),
         "health": {
             "meanUtilisationPct": round(float(c["MeanUtilisationPct"]), 1),
             "peakUtilisationPct": round(float(c["PeakUtilisationPct"]), 1),
@@ -2520,13 +2628,13 @@ def capacity_detail(capacity_id: str):
             "windowDays": int(c["WindowDays"]),
             "worstStage": c["WorstStage"],
             "worstStageLabel": STAGE_LABEL.get(c["WorstStage"], c["WorstStage"]),
-            "peakFutureMinutes": round(float(c["PeakFutureMinutes"]), 1),
+            "peakMinutesOverLine": round(float(c["PeakMinutesOverLine"]), 1),
             "interactiveRejected": int(c["InteractiveRejected"]),
             "backgroundRejected": int(c["BackgroundRejected"]),
-            "policy": ("Fabric absorbs ten minutes of future capacity without "
-                       "throttling. Past that it delays interactive jobs by 20 "
-                       "seconds, then rejects them at an hour, then rejects "
-                       "everything at 24 hours."),
+            "policy": ("A capacity with headroom is not throttled. Past 90% of "
+                       "its CUs interactive jobs are delayed by 20 seconds, past "
+                       "95% they are rejected while background work continues, and "
+                       "past 98% everything is rejected."),
         },
         "throttlingEvents": _records(mine.head(50)) if len(mine) else [],
         # One workload at 100% on a dedicated capacity; the two to five that
@@ -2905,9 +3013,9 @@ def region_detail(name: str):
                     entities, str(dc), denied, crossing_for=_forecast_crossing)
             ],
             # In CU, from the same position as the utilisation above it, so the
-            # "free" figure and the percentage cannot tell different stories. A
-            # site consuming past its nameplate reports negative free CU, which
-            # is what bursting is.
+            # "free" figure and the percentage cannot tell different stories.
+            # Consumption is bounded by what the site holds, so free CU is never
+            # negative -- a full building reports nearly nought, not less.
             "capacityUnits": dep,
             "capacityUnitsFree": round(dep - used, 1),
             "thresholdPct": _clean(meta["ThresholdPct"]) if meta is not None else None,
@@ -2915,7 +3023,8 @@ def region_detail(name: str):
             # Moved down from the Regions tab. What this building still owes and
             # who is waiting on it -- counted from the failed requests raised
             # here, not from a region total divided across its sites.
-            "cuPending": round(sum(float(x.get("blocked", 0)) for x in failed), 1),
+            "cuPending": round(_units_to_cu(
+                sum(float(x.get("blocked", 0)) for x in failed)), 1),
             "customersWaiting": len({str(x.get("subscriptionId", "")) for x in failed
                                      if x.get("subscriptionId")}),
             # And the two forecast-derived ones, at the grain they belong to.
@@ -2937,15 +3046,24 @@ def region_detail(name: str):
         # The region read as the sum of its sites, which is where its threshold
         # actually lives. Same computation the region tables use.
         "sitesRollup": _region_site_rollup().get(name, {}),
-        "capacityUnits": _clean(all_sites["DeployedUnits"].sum()),
-        "capacityUnitsFree": _clean(all_sites["FreeUnits"].sum()),
+        # The region as the sum of its buildings' CU positions, so the two KPIs
+        # add up to the rows underneath them. Summing `DeployedUnits` /
+        # `FreeUnits` here reported the region at `1 / UNITS_PER_CU` times the
+        # sites it lists -- see `_units_to_cu`.
+        "capacityUnits": round(sum(
+            _site_cu_positions().get(str(dc), {}).get("cu", 0.0)
+            for dc in all_sites["DatacentreId"].astype(str)), 1),
+        "capacityUnitsFree": round(sum(
+            _site_cu_positions().get(str(dc), {}).get("cu", 0.0)
+            - _site_cu_positions().get(str(dc), {}).get("usedCU", 0.0)
+            for dc in all_sites["DatacentreId"].astype(str)), 1),
         "failedCount": len([r for r in rows if r["isFlagged"]]),
         "revenueLoss": round(sum(float(r["exposure"]) for r in rows), 2),
         "reasons": _reason_breakdown(entities, name),
         # Same enrichment the region table carries, so the row and the page it
         # opens cannot show different figures for the same region.
         "threshold": {
-            **_clean(flag.to_dict()),
+            **_flags_in_cu([_clean(flag.to_dict())])[0],
             "cores_pending": round(_cores_pending_by_region().get(name, 0.0), 1),
             "customers_waiting": int(_waiting_customers_by_region().get(name, 0)),
         },
@@ -2970,9 +3088,9 @@ def threshold(pct: Annotated[float | None, Query(ge=50.0, le=99.0)] = None,
     it forces all regions to the same figure, which is what the what-if control
     on the Regions tab does and is a recalculation, not a filter.
     """
-    flags = _records(module1.project_all(get_entities(), threshold_pct=pct,
-                                         trend_days=trend_days,
-                                         crossing_for=_forecast_crossing))
+    flags = _flags_in_cu(_records(module1.project_all(
+        get_entities(), threshold_pct=pct, trend_days=trend_days,
+        crossing_for=_forecast_crossing)))
     # Review asked the region table to answer "how many cores are still owed"
     # and "how many customers are waiting" without a drill-down, so both are
     # attached here rather than left for the reader to assemble across tabs.
@@ -3143,8 +3261,11 @@ def region_recommendation(region: str):
     flag = module1.project_region(entities, region, crossing_for=_forecast_crossing)
     dim = entities["dim_region"]
     row = dim[dim["Region"] == region].iloc[0]
-    deployed = float(row["DeployedUnits"])
-    used = float(_clean(flag.to_dict()).get("used_units") or 0.0)
+    # Capacity Units. Every figure below -- what a higher line releases, the
+    # headroom left after it, what is still owed -- is printed as CU, and
+    # `dim_region.DeployedUnits` is raw compute units. See `_units_to_cu`.
+    deployed = _units_to_cu(float(row["DeployedUnits"]))
+    used = _units_to_cu(float(_clean(flag.to_dict()).get("used_units") or 0.0))
     line = float(flag.threshold_pct)
     free = deployed - used
     pending = _cores_pending_by_region().get(region, 0.0)
@@ -3173,19 +3294,19 @@ def region_recommendation(region: str):
                     f"{flag.current_utilisation_pct:.1f}% against a {line:.0f}% line.")
         action = "No region-level action. Monitor."
     elif covering:
-        headline = (f"{region} owes {pending:.0f} cores to {waiting} customer(s).")
+        headline = (f"{region} owes {pending:.0f} CU to {waiting} customer(s).")
         action = (f"Raising the capacity threshold from {line:.0f}% to "
                   f"{covering['thresholdPct']:.0f}% releases "
-                  f"{covering['releasesCores']:.0f} cores, which covers the "
+                  f"{covering['releasesCores']:.0f} CU, which covers the "
                   f"{pending:.0f} outstanding. This is a policy change and costs "
                   f"nothing — but it consumes the margin the threshold exists to protect.")
     else:
         best = options[-1] if options else None
         released = best["releasesCores"] if best else 0.0
-        headline = (f"{region} owes {pending:.0f} cores to {waiting} customer(s), "
+        headline = (f"{region} owes {pending:.0f} CU to {waiting} customer(s), "
                     f"with {free:.0f} free.")
         action = (f"No capacity threshold up to 100% releases enough — even at 100% only "
-                  f"{released:.0f} cores come back against {pending:.0f} owed. "
+                  f"{released:.0f} CU come back against {pending:.0f} owed. "
                   f"This region needs capacity added, not rationed differently. "
                   f"Hardware changes are decided per facility, not per region.")
 
@@ -3242,16 +3363,20 @@ def _demand_series(fact, events, key_col: str, key: str) -> dict:
                     "date": str(getattr(e, "EventDate", ""))[:10],
                 }
 
+    # `AdditionalLimitCapacity` is the raw ICM ask -- the same quantity
+    # `ratecard.estimate` converts before it prices it. Every chart drawn from
+    # this series is labelled CU, so it is converted here. See `_units_to_cu`.
     out = []
     for month, grp in rows.groupby("Month", sort=True):
         evs = []
         for r in grp.itertuples():
             hit = linked.get(str(r.IncidentId))
             if hit:
-                evs.append({**hit, "cores": round(float(r.AdditionalLimitCapacity or 0), 1)})
+                evs.append({**hit, "cores": round(
+                    _units_to_cu(float(r.AdditionalLimitCapacity or 0)), 1)})
         out.append({
             "month": str(month),
-            "cores": round(float(grp["AdditionalLimitCapacity"].sum()), 1),
+            "cores": round(_units_to_cu(float(grp["AdditionalLimitCapacity"].sum())), 1),
             "tickets": int(len(grp)),
             "eventDriven": bool(evs),
             "events": evs,
@@ -3542,14 +3667,18 @@ def demand_customer(subscription_id: str):
         raise HTTPException(404, f"unknown subscription {subscription_id!r}")
     here = here.sort_values("Month")
 
+    # `CoresRequested` aggregates `AdditionalLimitCapacity`, the raw ICM ask.
+    # The chart is drawn by the same renderer the region and site series use and
+    # is labelled CU, so it is converted here too. See `_units_to_cu`.
     months = [{
         "month": str(r.Month),
-        "cores": round(float(r.CoresRequested), 1),
+        "cores": round(_units_to_cu(float(r.CoresRequested)), 1),
         "tickets": int(r.RequestCount),
         "eventDriven": bool(r.IsDealMonth),
         "isReal": not bool(r.IsSynthetic),
         "events": ([{"type": "Deal-sized month", "date": str(r.Month), "cores":
-                     round(float(r.CoresRequested), 1)}] if bool(r.IsDealMonth) else []),
+                     round(_units_to_cu(float(r.CoresRequested)), 1)}]
+                   if bool(r.IsDealMonth) else []),
     } for r in here.itertuples()]
 
     ordinary = [m["cores"] for m in months if not m["eventDriven"]]
@@ -3854,7 +3983,8 @@ def get_snapshot():
     return assistant.build_snapshot(
         entities=entities,
         m5=m5,
-        flags=_records(module1.project_all(entities, crossing_for=_forecast_crossing)),
+        flags=_flags_in_cu(
+            _records(module1.project_all(entities, crossing_for=_forecast_crossing))),
         growth=_records(module3.growth_ranking(get_demand())),
         coverage=_records(module6.region_summary(entities)),
         spikes=module4.explain_anomalies(get_demand(), entities["fact_event"]),

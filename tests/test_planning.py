@@ -51,21 +51,25 @@ def entities():
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("minutes,expected", [
-    (0, "none"), (10, "none"),
-    (10.5, "interactive_delay"), (60, "interactive_delay"),
-    (61, "interactive_rejection"), (24 * 60, "interactive_rejection"),
-    (24 * 60 + 1, "background_rejection"), (99_999, "background_rejection"),
+@pytest.mark.parametrize("utilisation,expected", [
+    (0, "none"), (50, "none"), (90, "none"),
+    (90.1, "interactive_delay"), (95, "interactive_delay"),
+    (95.1, "interactive_rejection"), (98, "interactive_rejection"),
+    (98.1, "background_rejection"), (99.99, "background_rejection"),
 ])
-def test_throttling_stages_match_microsofts_thresholds(minutes, expected):
-    """Ten minutes free, then delay, then interactive rejection, then all of it.
+def test_throttling_stages_are_cut_on_remaining_headroom(utilisation, expected):
+    """Headroom to 90%, then delay, then interactive rejection, then all of it.
 
-    https://learn.microsoft.com/en-us/fabric/enterprise/throttling
-    These boundaries are policy, not a choice this project gets to make, so they
-    are pinned at the exact minute rather than approximately.
+    These were Microsoft's published thresholds, in minutes of borrowed future
+    capacity: https://learn.microsoft.com/en-us/fabric/enterprise/throttling.
+    Nothing borrows future capacity in this model -- consumption is bounded by
+    the SKU -- so every capacity would have sat in `none` forever. The stages
+    are cut on how little room is left instead, and these boundaries are this
+    project's choice rather than policy. Pinned exactly all the same: a stage
+    that moves is a stage nobody can reconcile against a row.
     """
-    stage, effect = throttle_stage(minutes)
-    assert stage == expected, f"{minutes} min should be {expected}, got {stage}"
+    stage, effect = throttle_stage(utilisation)
+    assert stage == expected, f"{utilisation}% should be {expected}, got {stage}"
     assert effect, "every stage has to say what a user actually experiences"
 
 
@@ -240,17 +244,20 @@ def test_capacity_health_reads_a_window_not_a_day(entities):
     assert (h["ThrottledDays"] <= h["WindowDays"]).all()
 
 
-def test_bursting_is_not_treated_as_a_fault(entities):
-    """Utilisation over 100% is normal in Fabric -- it is what smoothing exists
-    for. If every bursting capacity were flagged, the list would be noise."""
+def test_being_busy_is_not_treated_as_a_fault(entities):
+    """A capacity with room left is not a problem, however busy it looks.
+
+    This asked the same question of bursting, back when a capacity could consume
+    past its SKU and most that did were fine. Nothing bursts now, so the
+    equivalent noise would be flagging every capacity that merely runs warm.
+    """
     h = recommend._health(entities)
-    bursting = h[h["PeakUtilisationPct"] > 100]
-    assert len(bursting), "expected some capacities to burst"
-    quiet = bursting[bursting["ThrottledDays"] == 0]
-    assert len(quiet), "every bursting capacity is flagged -- bursting is not a fault"
+    quiet = h[(h["ThrottledDays"] == 0)
+              & (h["MeanUtilisationPct"] < SUSTAINED_HIGH_PCT)]
+    assert len(quiet), "expected capacities that are neither throttling nor airless"
     flagged = {r.target for r in recommend.scale_up(entities)}
-    assert not (set(quiet[quiet["MeanUtilisationPct"] < SUSTAINED_HIGH_PCT]["CapacityId"])
-                & flagged)
+    assert not (set(quiet["CapacityId"]) & flagged), (
+        "a capacity with headroom and no throttling was told to scale up")
 
 
 def test_every_recommendation_carries_its_evidence(entities):

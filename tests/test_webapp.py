@@ -2127,21 +2127,26 @@ def test_two_capacities_on_the_same_rung_are_two_rows():
         assert len(set(ids)) == len(ids), x["datacentre"]
 
 
-def test_utilisation_is_not_capped_at_one_hundred_percent():
-    """`build_dim_datacentre` clipped the consumption rate at 1.0, so a site
-    consuming past its nameplate reported exactly 100.0% -- northcentralus-dc07
-    did, while the single capacity in it peaked above 110%. Bursting is a real
-    state that smoothing absorbs; capping it removes the signal this page is
-    for.
+def test_utilisation_needs_no_cap_because_nothing_exceeds_its_capacity():
+    """This used to assert the opposite, and the distinction still matters.
+
+    `build_dim_datacentre` once clipped the consumption rate at 1.0, which hid a
+    site genuinely running past its nameplate behind an honest-looking 100.0%.
+    The clip is still gone. What changed is upstream: a capacity can no longer
+    consume more CU seconds than its SKU provides, so the rate is under 1 on its
+    own arithmetic rather than because something rounded it down. A figure at
+    exactly 100.0% would now mean the bound had failed, not that a cap had been
+    reinstated.
     """
     rows = api.datacentres()["datacentres"]
     over = [x for x in rows if x["siteUtilisationPct"] > 100.0]
-    assert over, (
-        "no site reports above 100%, which is what the clip used to guarantee")
-    # And the clip is gone at source, not just routed around in the API.
+    assert not over, f"sites reporting above 100%: {[x['datacentre'] for x in over][:5]}"
+
     sites = api.get_entities()["dim_datacentre"]
-    rate = sites["UsedUnits"] / sites["DeployedUnits"].replace(0, float("nan"))
-    assert (rate > 1.0).any(), "dim_datacentre.UsedUnits is still capped"
+    rate = (sites["UsedUnits"] / sites["DeployedUnits"].replace(0, float("nan"))).dropna()
+    assert (rate < 1.0).all(), "a site consumed more than it holds"
+    # Not a clip: clipping would pile sites onto exactly 1.0.
+    assert not (rate == 1.0).any(), "a rate of exactly 1.0 suggests a cap, not a bound"
 
 
 def test_the_region_row_carries_its_site_count_and_utilised_cu():
